@@ -1,0 +1,4874 @@
+{
+  "updatedAt": "2026-04-29T08:21:12.322Z",
+  "createdAt": "2026-04-29T08:21:03.889Z",
+  "id": "cTGnzAFC977R3Bn2",
+  "name": "PE prod - Refund requests flow",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -9856,
+        -2752
+      ],
+      "id": "55be6326-1a98-49fa-a9c4-eecb0a411ae7",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "content": "NO_SPLIT_TRIAL = 'no_split_trial',\nTRIAL = 'trial',\nSPLIT_TRIAL = 'split_trial',\nRECURRENT = 'recurrent',\nUPSELL = 'upsell'",
+        "height": 224,
+        "width": 272,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -6272,
+        -1424
+      ],
+      "id": "8fffe5d1-50fe-409e-b364-c984a6c6a616",
+      "name": "Sticky Note7",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const transactions = $json.body.transactions ?? [];\n\n// Define your type families\nconst TRIAL_TYPES = new Set(['trial', 'split_trial', 'no_split_trial']);\nconst UPSELL_TYPES = new Set(['upsell']);\nconst RECURRENT_TYPES = new Set(['recurrent']);\n\n// Optional: treat unknown types explicitly\n// If you want unknown types to push the user into an \"OTHER/UNKNOWN\" bucket,\n// keep this flag true and see the logic below.\nconst FLAG_UNKNOWN_TYPES = true;\n\nlet hasTrial = false;\nlet hasUpsell = false;\nlet hasRecurrent = false;\n\nconst unknownTypes = new Set();\n\n// Scan transactions once\nfor (const t of transactions) {\n  const type = String(t?.type ?? '').trim();\n\n  if (TRIAL_TYPES.has(type)) hasTrial = true;\n  else if (UPSELL_TYPES.has(type)) hasUpsell = true;\n  else if (RECURRENT_TYPES.has(type)) hasRecurrent = true;\n  else if (type) unknownTypes.add(type);\n  else unknownTypes.add('(missing_type)');\n}\n\n// Decide category based on which families are present\n// Unique outputs for easy filtering:\nlet category;\n\n// If you want to handle empty transactions specially:\nif (transactions.length === 0) {\n  category = 'CAT__NO_TRANSACTIONS';\n} else if (FLAG_UNKNOWN_TYPES && unknownTypes.size > 0) {\n  category = 'CAT__UNKNOWN_TYPE_PRESENT';\n} else if (hasTrial && !hasUpsell && !hasRecurrent) {\n  category = 'CAT__TRIAL_ONLY';\n} else if (!hasTrial && hasUpsell && !hasRecurrent) {\n  category = 'CAT__UPSELL_ONLY';\n} else if (!hasTrial && !hasUpsell && hasRecurrent) {\n  category = 'CAT__RECURRENT_ONLY';\n} else if (hasTrial && !hasUpsell && hasRecurrent) {\n  category = 'CAT__RECURRENT_AND_TRIAL';\n} else if (!hasTrial && hasUpsell && hasRecurrent) {\n  category = 'CAT__RECURRENT_AND_UPSELL';\n} else if (hasTrial && hasUpsell && !hasRecurrent) {\n  category = 'CAT__UPSELL_AND_TRIAL';\n} else if (hasTrial && hasUpsell && hasRecurrent) {\n  category = 'CAT__ALL_THREE_PRESENT';\n} else {\n  // Fallback (should be rare if the above is exhaustive)\n  category = 'CAT__UNCLASSIFIED';\n}\n\nreturn [\n  {\n    json: {\n      ...$json,\n      transactionCategory: category,\n\n      // Helpful debug fields (you can remove these later)\n      categoryFlags: {\n        hasTrial,\n        hasUpsell,\n        hasRecurrent,\n      },\n      unknownTypes: Array.from(unknownTypes),\n    },\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6208,
+        -1152
+      ],
+      "id": "8fb334a1-e136-4e49-94e7-ce94b0567cd5",
+      "name": "Categorise request based on transaction types"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.transactionCategory }}",
+                    "rightValue": "CAT__TRIAL_ONLY",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "3806a64b-1d1c-4590-83d7-ae27ff76138f"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Trial only"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "b43fa728-f8c8-4cd8-a4af-4c4781e43282",
+                    "leftValue": "={{ $json.transactionCategory }}",
+                    "rightValue": "CAT__UPSELL_ONLY",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Upsell only"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "14b766a3-5d4d-400e-8c1a-0287ca2b8703",
+                    "leftValue": "={{ $json.transactionCategory }}",
+                    "rightValue": "CAT__RECURRENT_ONLY",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Recurrent only"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "21c53a2b-7e80-42ba-a0ae-1abd94f92eee",
+                    "leftValue": "={{ $json.transactionCategory }}",
+                    "rightValue": "CAT__RECURRENT_AND_TRIAL",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Recurrent and trial"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "b5050cc7-c318-46b0-96b4-a6d06cdde3b8",
+                    "leftValue": "={{ $json.transactionCategory }}",
+                    "rightValue": "CAT__RECURRENT_AND_UPSELL",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Recurrent and upsell"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "63861dff-da1f-400d-810c-5a287a143931",
+                    "leftValue": "={{ $json.transactionCategory }}",
+                    "rightValue": "CAT__UPSELL_AND_TRIAL",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Upsell and trial"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "57c7960c-dce8-4da6-b403-09b2c87680f0",
+                    "leftValue": "={{ $json.transactionCategory }}",
+                    "rightValue": "CAT__ALL_THREE_PRESENT",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "All transaction types"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "73562016-ede5-4715-bf4b-1404d4827657",
+                    "leftValue": "={{ $json.transactionCategory }}",
+                    "rightValue": "CAT__UNKNOWN_TYPE_PRESENT",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Unknown type"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "697735bf-f1b6-41ff-ba5e-dd515eada2e8",
+                    "leftValue": "={{ $json.transactionCategory }}",
+                    "rightValue": "CAT__NO_TRANSACTIONS",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "No transactions"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -5936,
+        -1264
+      ],
+      "id": "9ceec8a6-c51e-40c7-a71b-95101916c17f",
+      "name": "Redirect based on last transactions"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"original_ticket_content\": {\n    \"ticket_id\": {{ $('When Executed by Another Workflow').item.json.original_ticket_content.ticket_id }},\n    \"title\": \"{{ $('When Executed by Another Workflow').item.json.original_ticket_content.title }}\",\n    \"description\": \"{{ $('When Executed by Another Workflow').item.json.original_ticket_content.description }}\",\n    \"ticket_url\": \"{{ $('When Executed by Another Workflow').item.json.original_ticket_content.ticket_url }}\",\n    \"user_email\": \"{{ $('When Executed by Another Workflow').item.json.original_ticket_content.user_email }}\",\n    \"full_refund_request\":{{ $json.output[0].content[0].text.full_refund }}\n  },\n  \"translated_data\": {\n    \"originalLanguage\": \"{{ $('When Executed by Another Workflow').item.json.translated_data.originalLanguage }}\",\n    \"is_translated\":{{ $('When Executed by Another Workflow').item.json.translated_data.is_translated }},\n    \"translations\": {\n      \"title\": \"{{ $('When Executed by Another Workflow').item.json.translated_data.translations.title }}\",\n      \"description\": \"{{ $('When Executed by Another Workflow').item.json.translated_data.translations.description }}\"\n    }\n  }\n} ",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -6784,
+        -1152
+      ],
+      "id": "c4bc5355-72d4-4327-b00b-c8ffc483a696",
+      "name": "Set request data test4"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-5.1",
+          "mode": "list",
+          "cachedResultName": "GPT-5.1"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=Customer ticket title: {{ $('Set request data test').item.json.translated_data.translations.title || $('Set request data test').item.json.original_ticket_content.title}}\nCustomer ticket description: {{ $('Set request data test').item.json.translated_data.translations.description || $('Set request data test').item.json.original_ticket_content.description}}"
+            },
+            {
+              "role": "system",
+              "content": "Your task is to determine whether the customer explicitly requested a full refund, meaning a refund that covers more than one transaction/order/charge etc.\n\nYou must answer only this question: Did the customer explicitly request a full refund covering multiple transactions/orders/charges?\n\nCommon phrases that indicate TRUE\n\"full refund\"\n“I want a full refund.”\n“Please issue a full refund for everything.”\n“Refund all charges on my account.”\n“Refund all transactions.”\n“Refund everything I paid.”\n“Cancel and refund all of it.”\n\n\nReturn FALSE if:\nThe customer requests an upsell-only refund (single add-on) or a single order refund.\nThe customer asks for a refund of last charge or transaction.\nThe customer is only asking about refund policy/eligibility/timing without explicitly requesting a full refund.\nThe message is ambiguous about scope (e.g., “I want a refund” or \"please refund\" or simply just \"refund\" with no indication it covers multiple transactions). In ambiguity, return FALSE.\n\nKey Trigger Requirements (must be explicit)\n\nTo return TRUE, the ticket must clearly express:\n\t1.\ta request for a refund, AND\n\t2.\tthat the scope is full / everything / all, OR explicitly references multiple transactions/orders/charges (e.g., “all charges,” “multiple orders,” “main + upsells,” “everything I paid”).\n\nClassification Rules\n\t•\tRespond TRUE only if the customer explicitly requests a full refund covering multiple transactions/orders/charges.\n\t•\tOtherwise respond FALSE.\n\t•\tDo not infer intent beyond the text.\n\t•\tIf unclear, respond FALSE.\n\nOutput Format\n\nReturn a valid JSON object only:\n{\n“full_refund”: true or false\n}\n"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_object",
+              "verbosity": "low"
+            }
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        -7168,
+        -1152
+      ],
+      "id": "3d7dd85b-de48-48ad-9224-6b2be992b16e",
+      "name": "Full refund",
+      "retryOnFail": true,
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f0dfd4cf-b2b1-4648-98e0-29ad7abc30e5",
+              "leftValue": "={{ $('Set request data test4').item.json.original_ticket_content.full_refund_request }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -4288,
+        -1712
+      ],
+      "id": "0bb2191b-a9de-4b55-9c46-3fb52587756d",
+      "name": "Is full refund1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f0dfd4cf-b2b1-4648-98e0-29ad7abc30e5",
+              "leftValue": "={{ $('Set request data test4').item.json.original_ticket_content.full_refund_request }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -4304,
+        -2304
+      ],
+      "id": "306c5f75-7b90-48ee-bd54-b4a3fe80bd9a",
+      "name": "Is full refund"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f0dfd4cf-b2b1-4648-98e0-29ad7abc30e5",
+              "leftValue": "={{ $('Set request data test4').item.json.original_ticket_content.full_refund_request }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -4304,
+        -1152
+      ],
+      "id": "a4670181-067d-40fa-bcc5-da8cbb90d0a3",
+      "name": "Is full refund2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f0dfd4cf-b2b1-4648-98e0-29ad7abc30e5",
+              "leftValue": "={{ $('Set request data test4').item.json.original_ticket_content.full_refund_request }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -4304,
+        -608
+      ],
+      "id": "9bf6f4b7-8a80-4593-8e96-79e5b06c96dd",
+      "name": "Is full refund3"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f0dfd4cf-b2b1-4648-98e0-29ad7abc30e5",
+              "leftValue": "={{ $('Set request data test4').item.json.original_ticket_content.full_refund_request }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -4304,
+        -64
+      ],
+      "id": "6552dd97-70f1-4fcb-a935-f44bb22ca1ab",
+      "name": "Is full refund8"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://lovestylehelp.zendesk.com/api/v2/tickets/{{ $node[\"Set request data test4\"].json[\"original_ticket_content\"][\"ticket_id\"] }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ticket.comment.public",
+              "value": "false"
+            },
+            {
+              "name": "ticket.comment.body",
+              "value": "=Note: This ticket has been analysed by the CS automation and it cannot be handled automatically. Please handle this request manually. "
+            },
+            {
+              "name": "ticket.custom_status_id",
+              "value": "24200859183260"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -4240,
+        448
+      ],
+      "id": "dbba6f6b-7725-4d70-9745-786106af89a7",
+      "name": "Reply to internally and set status to open3",
+      "retryOnFail": true,
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "content": "# Unknown transaction\n",
+        "height": 416,
+        "width": 640,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -4304,
+        352
+      ],
+      "id": "a6e5a457-913a-4024-a3be-a7ba9d290734",
+      "name": "Sticky Note49",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "content": "## Status: open\n## Category: none\n## Assign to CS\n",
+        "height": 208,
+        "width": 288,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -3984,
+        512
+      ],
+      "id": "3ba85e3f-ffa6-4eab-81a5-3c3532c84fc4",
+      "name": "Sticky Note51"
+    },
+    {
+      "parameters": {
+        "content": "# Rejection",
+        "height": 336,
+        "width": 640,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -4304,
+        832
+      ],
+      "id": "cf675799-f820-4d0a-a2e6-adb7c78018c3",
+      "name": "Sticky Note52",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": 26043992552348,
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Set request data test4').item.json.translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Set request data test4').item.json.translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": 24200840157980,
+              "type": "number"
+            },
+            {
+              "id": "8da77562-74be-4f42-bce8-57687feb07dc",
+              "name": "ticketCustomFieldID",
+              "value": 24285840352924,
+              "type": "number"
+            },
+            {
+              "id": "01995528-60a5-45c1-96a7-bfa68ab0a999",
+              "name": "ticketCustomFieldValue",
+              "value": "refund__within_30_days__trial_",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -3600,
+        -3168
+      ],
+      "id": "23228476-4952-4b80-aa16-dee8675e2b2b",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SvnSceDOCIdM6MEa",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SvnSceDOCIdM6MEa",
+          "cachedResultName": "Operations Department — LS prod - Refund and cancellation request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3824,
+        -3168
+      ],
+      "id": "6d23348d-820f-4969-94c8-b7151f14f50d",
+      "name": "Refund and cancellation"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6274c4a8-5f7c-4e6d-a638-44d5313a136e",
+              "name": "transactionToRefund",
+              "value": "={{ $json.transactions }}",
+              "type": "array"
+            },
+            {
+              "id": "544827e8-eb8c-419e-b2e7-3fb0e6dc0f32",
+              "name": "subscriptionID",
+              "value": "={{ $('bot/search4').item.json.body.subscriptionId }}",
+              "type": "string"
+            },
+            {
+              "id": "abcae689-500d-4ab6-ba56-285a3f848fd1",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "98de2d14-7c5c-4ea5-819e-05c559d4191b",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "32ca5044-28dd-49a5-9b6e-2c4e809c096b",
+              "name": "ticketCustomStatusID",
+              "value": 24200859183260,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -4048,
+        -3168
+      ],
+      "id": "cba5c7e0-5b84-48f6-b1e7-252e5834fce9",
+      "name": "Set refund and cancellation vars"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "UPh58ZwqHFeZRPBe",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/UPh58ZwqHFeZRPBe",
+          "cachedResultName": "Operations Department — LS prod - Zendesk ticket update request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3376,
+        -3168
+      ],
+      "id": "817a33f3-ce1d-403f-bf6e-7aace1a8742a",
+      "name": "Update zendesk ticket"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node (JavaScript)\n\n// 🔧 Change this to the word you want to search for\nconst SEARCH_WORD = \"trial\";\n\nconst inputItem = $input.first().json;\nconst transactions = Array.isArray(inputItem.body?.transactions)\n  ? inputItem.body.transactions\n  : [];\n\n// Normalize search word (case-insensitive)\nconst normalizedSearch = SEARCH_WORD.toLowerCase();\n\n// Filter transactions containing the word in ANY field\nconst filteredTransactions = transactions.filter(transaction => {\n  if (!transaction || typeof transaction !== \"object\") return false;\n\n  return Object.values(transaction).some(value => {\n    if (value === null || value === undefined) return false;\n    return String(value).toLowerCase().includes(normalizedSearch);\n  });\n});\n\n// Always return a single item\nif (filteredTransactions.length === 0) {\n  return [\n    {\n      json: {\n        noMatchingTransactions: true,\n        searchWord: SEARCH_WORD,\n        transactions: []\n      }\n    }\n  ];\n}\n\nreturn [\n  {\n    json: {\n      searchWord: SEARCH_WORD,\n      transactions: filteredTransactions\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4288,
+        -3168
+      ],
+      "id": "15817370-88b1-462c-b06e-c2132457c45b",
+      "name": "Return all trial transactions as single array"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": 24547791844764,
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Set request data test4').item.json.translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Set request data test4').item.json.translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": 24200840157980,
+              "type": "number"
+            },
+            {
+              "id": "8da77562-74be-4f42-bce8-57687feb07dc",
+              "name": "ticketCustomFieldID",
+              "value": 24285840352924,
+              "type": "number"
+            },
+            {
+              "id": "01995528-60a5-45c1-96a7-bfa68ab0a999",
+              "name": "ticketCustomFieldValue",
+              "value": "refund__rejection",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -4272,
+        944
+      ],
+      "id": "8bfbfb37-1d2d-4668-863c-521feae83628",
+      "name": "Edit Fields4"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "UPh58ZwqHFeZRPBe",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/UPh58ZwqHFeZRPBe",
+          "cachedResultName": "Operations Department — LS prod - Zendesk ticket update request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -4048,
+        944
+      ],
+      "id": "d18a570a-a37b-4b4f-bb3b-3b6b958cc108",
+      "name": "Update zendesk ticket4"
+    },
+    {
+      "parameters": {
+        "content": "## Trial only\n## Category: “Refund within 30 days (trial)”\n## Status: Solved",
+        "height": 192,
+        "width": 656,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2912,
+        -3168
+      ],
+      "id": "84da2d3c-c58b-4381-b5ec-030b4cfa9e31",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": 26043992552348,
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Set request data test4').item.json.translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Set request data test4').item.json.translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": 24200840157980,
+              "type": "number"
+            },
+            {
+              "id": "8da77562-74be-4f42-bce8-57687feb07dc",
+              "name": "ticketCustomFieldID",
+              "value": 24285840352924,
+              "type": "number"
+            },
+            {
+              "id": "01995528-60a5-45c1-96a7-bfa68ab0a999",
+              "name": "ticketCustomFieldValue",
+              "value": "refund__within_30_days__trial_",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -3344,
+        -496
+      ],
+      "id": "100a38f6-604b-469f-9700-844cfcf6733b",
+      "name": "Edit Fields5"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SvnSceDOCIdM6MEa",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SvnSceDOCIdM6MEa",
+          "cachedResultName": "Operations Department — LS prod - Refund and cancellation request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3568,
+        -496
+      ],
+      "id": "bdf737f8-00cd-43cd-8790-fac6ef9465c8",
+      "name": "Refund and cancellation1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6274c4a8-5f7c-4e6d-a638-44d5313a136e",
+              "name": "transactionToRefund",
+              "value": "={{ $json.transactions }}",
+              "type": "array"
+            },
+            {
+              "id": "544827e8-eb8c-419e-b2e7-3fb0e6dc0f32",
+              "name": "subscriptionID",
+              "value": "={{ $('bot/search4').item.json.body.subscriptionId }}",
+              "type": "string"
+            },
+            {
+              "id": "abcae689-500d-4ab6-ba56-285a3f848fd1",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "98de2d14-7c5c-4ea5-819e-05c559d4191b",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "32ca5044-28dd-49a5-9b6e-2c4e809c096b",
+              "name": "ticketCustomStatusID",
+              "value": 24200859183260,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -3792,
+        -496
+      ],
+      "id": "aaea7fb6-d39d-4df0-aa23-b95efaf18683",
+      "name": "Set refund and cancellation vars2"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "UPh58ZwqHFeZRPBe",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/UPh58ZwqHFeZRPBe",
+          "cachedResultName": "Operations Department — LS prod - Zendesk ticket update request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3120,
+        -496
+      ],
+      "id": "5be24d20-39cc-4922-943e-990b30e9523b",
+      "name": "Update zendesk ticket5"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node (JavaScript)\n\n// 🔧 Change this to the word you want to search for\nconst SEARCH_WORD = \"trial\";\n\nconst inputItem = $input.first().json;\nconst transactions = Array.isArray(inputItem.body?.transactions)\n  ? inputItem.body.transactions\n  : [];\n\n// Normalize search word (case-insensitive)\nconst normalizedSearch = SEARCH_WORD.toLowerCase();\n\n// Filter transactions containing the word in ANY field\nconst filteredTransactions = transactions.filter(transaction => {\n  if (!transaction || typeof transaction !== \"object\") return false;\n\n  return Object.values(transaction).some(value => {\n    if (value === null || value === undefined) return false;\n    return String(value).toLowerCase().includes(normalizedSearch);\n  });\n});\n\n// Always return a single item\nif (filteredTransactions.length === 0) {\n  return [\n    {\n      json: {\n        noMatchingTransactions: true,\n        searchWord: SEARCH_WORD,\n        transactions: []\n      }\n    }\n  ];\n}\n\nreturn [\n  {\n    json: {\n      searchWord: SEARCH_WORD,\n      transactions: filteredTransactions\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4016,
+        -496
+      ],
+      "id": "41e1fd2d-d00c-425b-ad5e-9cac9ca1bc8b",
+      "name": "Return all trial transactions as single array1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": 26043992552348,
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Set request data test4').item.json.translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Set request data test4').item.json.translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": 24200840157980,
+              "type": "number"
+            },
+            {
+              "id": "8da77562-74be-4f42-bce8-57687feb07dc",
+              "name": "ticketCustomFieldID",
+              "value": 24285840352924,
+              "type": "number"
+            },
+            {
+              "id": "01995528-60a5-45c1-96a7-bfa68ab0a999",
+              "name": "ticketCustomFieldValue",
+              "value": "refund__within_30_days__trial_",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -3568,
+        -704
+      ],
+      "id": "5b7b87d5-65f4-4b6e-8540-62f712f49ade",
+      "name": "Edit Fields6"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SvnSceDOCIdM6MEa",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SvnSceDOCIdM6MEa",
+          "cachedResultName": "Operations Department — LS prod - Refund and cancellation request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3792,
+        -704
+      ],
+      "id": "762f843e-43fb-43d7-bdee-7ba69fdda94d",
+      "name": "Refund and cancellation2"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6274c4a8-5f7c-4e6d-a638-44d5313a136e",
+              "name": "transactionToRefund",
+              "value": "={{ $json.body.transactions }}",
+              "type": "array"
+            },
+            {
+              "id": "544827e8-eb8c-419e-b2e7-3fb0e6dc0f32",
+              "name": "subscriptionID",
+              "value": "={{ $('bot/search4').item.json.body.subscriptionId }}",
+              "type": "string"
+            },
+            {
+              "id": "abcae689-500d-4ab6-ba56-285a3f848fd1",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "98de2d14-7c5c-4ea5-819e-05c559d4191b",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "32ca5044-28dd-49a5-9b6e-2c4e809c096b",
+              "name": "ticketCustomStatusID",
+              "value": 24200859183260,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -4016,
+        -704
+      ],
+      "id": "d256af01-1d30-4ae6-876b-cb0c158fa89f",
+      "name": "Set refund and cancellation vars3"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "UPh58ZwqHFeZRPBe",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/UPh58ZwqHFeZRPBe",
+          "cachedResultName": "Operations Department — LS prod - Zendesk ticket update request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3344,
+        -704
+      ],
+      "id": "c46a3048-ac6d-455a-8adc-37c418920ec8",
+      "name": "Update zendesk ticket6"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": 26043992552348,
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Set request data test4').item.json.translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Set request data test4').item.json.translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": 24200840157980,
+              "type": "number"
+            },
+            {
+              "id": "8da77562-74be-4f42-bce8-57687feb07dc",
+              "name": "ticketCustomFieldID",
+              "value": 24285840352924,
+              "type": "number"
+            },
+            {
+              "id": "01995528-60a5-45c1-96a7-bfa68ab0a999",
+              "name": "ticketCustomFieldValue",
+              "value": "refund__within_30_days__monthly_",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -3344,
+        -1056
+      ],
+      "id": "b31e338d-9d7b-4ade-bc14-82ca5c2f4cba",
+      "name": "Edit Fields7"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SvnSceDOCIdM6MEa",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SvnSceDOCIdM6MEa",
+          "cachedResultName": "Operations Department — LS prod - Refund and cancellation request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3568,
+        -1056
+      ],
+      "id": "4508db99-f7db-4324-bcda-c39901e471c2",
+      "name": "Refund and cancellation3"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6274c4a8-5f7c-4e6d-a638-44d5313a136e",
+              "name": "transactionToRefund",
+              "value": "={{ $json.transactions }}",
+              "type": "array"
+            },
+            {
+              "id": "544827e8-eb8c-419e-b2e7-3fb0e6dc0f32",
+              "name": "subscriptionID",
+              "value": "={{ $('bot/search4').item.json.body.subscriptionId }}",
+              "type": "string"
+            },
+            {
+              "id": "abcae689-500d-4ab6-ba56-285a3f848fd1",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "98de2d14-7c5c-4ea5-819e-05c559d4191b",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "32ca5044-28dd-49a5-9b6e-2c4e809c096b",
+              "name": "ticketCustomStatusID",
+              "value": 24200859183260,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -3792,
+        -1056
+      ],
+      "id": "f69a91d0-d4d2-4102-9ef7-3ae4285e9338",
+      "name": "Set refund and cancellation vars4"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "UPh58ZwqHFeZRPBe",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/UPh58ZwqHFeZRPBe",
+          "cachedResultName": "Operations Department — LS prod - Zendesk ticket update request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3120,
+        -1056
+      ],
+      "id": "5fae7caa-3f2f-4400-9c7c-85fa69871296",
+      "name": "Update zendesk ticket7"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Set request data test4').item.json.translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Set request data test4').item.json.translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": 26043945866268,
+              "type": "number"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": 24200840157980,
+              "type": "number"
+            },
+            {
+              "id": "8da77562-74be-4f42-bce8-57687feb07dc",
+              "name": "ticketCustomFieldID",
+              "value": 24285840352924,
+              "type": "number"
+            },
+            {
+              "id": "01995528-60a5-45c1-96a7-bfa68ab0a999",
+              "name": "ticketCustomFieldValue",
+              "value": "refund__within_30_days__monthly_",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -3568,
+        -1264
+      ],
+      "id": "7ae221bf-fc09-431b-99c4-895667dd6df0",
+      "name": "Edit Fields8"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SvnSceDOCIdM6MEa",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SvnSceDOCIdM6MEa",
+          "cachedResultName": "Operations Department — LS prod - Refund and cancellation request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3792,
+        -1264
+      ],
+      "id": "99c37ea6-cd32-4a1b-acb4-3948154cb245",
+      "name": "Refund and cancellation4"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6274c4a8-5f7c-4e6d-a638-44d5313a136e",
+              "name": "transactionToRefund",
+              "value": "={{ $json.body.transactions }}",
+              "type": "array"
+            },
+            {
+              "id": "544827e8-eb8c-419e-b2e7-3fb0e6dc0f32",
+              "name": "subscriptionID",
+              "value": "={{ $('bot/search4').item.json.body.subscriptionId }}",
+              "type": "string"
+            },
+            {
+              "id": "abcae689-500d-4ab6-ba56-285a3f848fd1",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "98de2d14-7c5c-4ea5-819e-05c559d4191b",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "32ca5044-28dd-49a5-9b6e-2c4e809c096b",
+              "name": "ticketCustomStatusID",
+              "value": 24200859183260,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -4016,
+        -1264
+      ],
+      "id": "96375763-56a1-4705-bdfa-db24fba747c7",
+      "name": "Set refund and cancellation vars5"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "UPh58ZwqHFeZRPBe",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/UPh58ZwqHFeZRPBe",
+          "cachedResultName": "Operations Department — LS prod - Zendesk ticket update request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3344,
+        -1264
+      ],
+      "id": "15c9a9bc-98e7-4bf0-a86c-34a4347f3edd",
+      "name": "Update zendesk ticket8"
+    },
+    {
+      "parameters": {
+        "content": "## Upsell and trial\n## Category: “Refund within 30 days (trial)”\n## Status: Solved",
+        "height": 320,
+        "width": 624,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2896,
+        -704
+      ],
+      "id": "50f395b5-fdb6-490f-832c-09ace22e3c43",
+      "name": "Sticky Note9"
+    },
+    {
+      "parameters": {
+        "content": "## Recurrent and upsell\n## Category: refund__within_30_days__monthly\n## Status: Solved",
+        "height": 320,
+        "width": 608,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2880,
+        -1248
+      ],
+      "id": "c6810f89-915e-4bca-a188-2532007f0468",
+      "name": "Sticky Note10"
+    },
+    {
+      "parameters": {
+        "jsCode": "const TARGET_TYPE = \"recurrent\";\n\nconst inputItem = $input.first().json;\nconst transactions = inputItem.body?.transactions || [];\n\n// Filter transactions by target type\nconst matchingTransactions = transactions.filter(\n  transaction => transaction?.type === TARGET_TYPE\n);\n\n// If none found, return indicator\nif (matchingTransactions.length === 0) {\n  return [\n    {\n      json: {\n        noMatchingTransactions: true,\n        filteredType: TARGET_TYPE\n      }\n    }\n  ];\n}\n\n// Sort by transactionDate descending (newest first)\nmatchingTransactions.sort(\n  (a, b) => new Date(b.transactionDate) - new Date(a.transactionDate)\n);\n\n// Return newest matching transaction\nreturn [\n  {\n    json: {\n      transactions: [matchingTransactions[0]]\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4016,
+        -1056
+      ],
+      "id": "94aadce9-2afa-4907-9e66-b78a7d0c32da",
+      "name": "Return newest recurring transaction"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": 26043945866268,
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Set request data test4').item.json.translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Set request data test4').item.json.translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": 24200840157980,
+              "type": "number"
+            },
+            {
+              "id": "8da77562-74be-4f42-bce8-57687feb07dc",
+              "name": "ticketCustomFieldID",
+              "value": 24285840352924,
+              "type": "number"
+            },
+            {
+              "id": "01995528-60a5-45c1-96a7-bfa68ab0a999",
+              "name": "ticketCustomFieldValue",
+              "value": "refund__within_30_days__monthly_",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -3344,
+        -1600
+      ],
+      "id": "cd953bd7-4f2a-408d-91e7-07a0e1bd84ee",
+      "name": "Edit Fields9"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SvnSceDOCIdM6MEa",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SvnSceDOCIdM6MEa",
+          "cachedResultName": "Operations Department — LS prod - Refund and cancellation request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3568,
+        -1600
+      ],
+      "id": "3bfebc8c-00ac-4da2-8543-68da28100bd6",
+      "name": "Refund and cancellation5"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6274c4a8-5f7c-4e6d-a638-44d5313a136e",
+              "name": "transactionToRefund",
+              "value": "={{ $json.transactions }}",
+              "type": "array"
+            },
+            {
+              "id": "544827e8-eb8c-419e-b2e7-3fb0e6dc0f32",
+              "name": "subscriptionID",
+              "value": "={{ $('bot/search4').item.json.body.subscriptionId }}",
+              "type": "string"
+            },
+            {
+              "id": "abcae689-500d-4ab6-ba56-285a3f848fd1",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "98de2d14-7c5c-4ea5-819e-05c559d4191b",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "32ca5044-28dd-49a5-9b6e-2c4e809c096b",
+              "name": "ticketCustomStatusID",
+              "value": 24200859183260,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -3792,
+        -1600
+      ],
+      "id": "7e9c3d4f-ca42-4f0f-990e-f8fcf7801cb6",
+      "name": "Set refund and cancellation vars6"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "UPh58ZwqHFeZRPBe",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/UPh58ZwqHFeZRPBe",
+          "cachedResultName": "Operations Department — LS prod - Zendesk ticket update request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3120,
+        -1600
+      ],
+      "id": "e6260133-ce98-4635-8ef8-f9971ea1c9d9",
+      "name": "Update zendesk ticket9"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Set request data test4').item.json.translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Set request data test4').item.json.translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": 26043945866268,
+              "type": "number"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": 24200840157980,
+              "type": "number"
+            },
+            {
+              "id": "8da77562-74be-4f42-bce8-57687feb07dc",
+              "name": "ticketCustomFieldID",
+              "value": 24285840352924,
+              "type": "number"
+            },
+            {
+              "id": "01995528-60a5-45c1-96a7-bfa68ab0a999",
+              "name": "ticketCustomFieldValue",
+              "value": "refund__within_30_days__monthly_",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -3568,
+        -1808
+      ],
+      "id": "f5967711-709f-439b-94db-722c05025269",
+      "name": "Edit Fields10"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SvnSceDOCIdM6MEa",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SvnSceDOCIdM6MEa",
+          "cachedResultName": "Operations Department — LS prod - Refund and cancellation request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3792,
+        -1808
+      ],
+      "id": "ef9fdf8d-c698-4bd0-bdfa-cd404389c065",
+      "name": "Refund and cancellation6"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6274c4a8-5f7c-4e6d-a638-44d5313a136e",
+              "name": "transactionToRefund",
+              "value": "={{ $json.body.transactions }}",
+              "type": "array"
+            },
+            {
+              "id": "544827e8-eb8c-419e-b2e7-3fb0e6dc0f32",
+              "name": "subscriptionID",
+              "value": "={{ $('bot/search4').item.json.body.subscriptionId }}",
+              "type": "string"
+            },
+            {
+              "id": "abcae689-500d-4ab6-ba56-285a3f848fd1",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "98de2d14-7c5c-4ea5-819e-05c559d4191b",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "32ca5044-28dd-49a5-9b6e-2c4e809c096b",
+              "name": "ticketCustomStatusID",
+              "value": 24200859183260,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -4016,
+        -1808
+      ],
+      "id": "7095ddef-5377-4bb5-966a-fb1a50d88043",
+      "name": "Set refund and cancellation vars7"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "UPh58ZwqHFeZRPBe",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/UPh58ZwqHFeZRPBe",
+          "cachedResultName": "Operations Department — LS prod - Zendesk ticket update request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3344,
+        -1808
+      ],
+      "id": "7d50922f-d0e8-4cbd-9517-22d78d2a5f92",
+      "name": "Update zendesk ticket10"
+    },
+    {
+      "parameters": {
+        "jsCode": "const TARGET_TYPE = \"recurrent\";\n\nconst inputItem = $input.first().json;\nconst transactions = inputItem.body?.transactions || [];\n\n// Filter transactions by target type\nconst matchingTransactions = transactions.filter(\n  transaction => transaction?.type === TARGET_TYPE\n);\n\n// If none found, return indicator\nif (matchingTransactions.length === 0) {\n  return [\n    {\n      json: {\n        noMatchingTransactions: true,\n        filteredType: TARGET_TYPE\n      }\n    }\n  ];\n}\n\n// Sort by transactionDate descending (newest first)\nmatchingTransactions.sort(\n  (a, b) => new Date(b.transactionDate) - new Date(a.transactionDate)\n);\n\n// Return newest matching transaction\nreturn [\n  {\n    json: {\n      transactions: [matchingTransactions[0]]\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4016,
+        -1600
+      ],
+      "id": "1cc95914-5668-4163-87ec-86e127dc3a42",
+      "name": "Return newest recurring transaction1"
+    },
+    {
+      "parameters": {
+        "content": "## Recurrent and trial\n## Category: refund__within_30_days__monthly\n## Status: Solved",
+        "height": 320,
+        "width": 608,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2880,
+        -1808
+      ],
+      "id": "3ca7e72d-9ce5-497c-bf3f-cf5125daf61d",
+      "name": "Sticky Note12"
+    },
+    {
+      "parameters": {
+        "content": "## Recurrent only\n## Category refund__30_day_policy__two_last_charges\n## Status: Solved",
+        "height": 144,
+        "width": 640,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2896,
+        -2416
+      ],
+      "id": "15c01e35-c9a0-4a33-a21f-1f7cfc231695",
+      "name": "Sticky Note15"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": 26043963752220,
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Set request data test4').item.json.translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Set request data test4').item.json.translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": 24200840157980,
+              "type": "number"
+            },
+            {
+              "id": "8da77562-74be-4f42-bce8-57687feb07dc",
+              "name": "ticketCustomFieldID",
+              "value": 24285840352924,
+              "type": "number"
+            },
+            {
+              "id": "01995528-60a5-45c1-96a7-bfa68ab0a999",
+              "name": "ticketCustomFieldValue",
+              "value": "refund__30_day_policy__last_charge_only_",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -3344,
+        -2208
+      ],
+      "id": "303f14e5-b497-42fd-a694-a42c1bcc0400",
+      "name": "Edit Fields11"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SvnSceDOCIdM6MEa",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SvnSceDOCIdM6MEa",
+          "cachedResultName": "Operations Department — LS prod - Refund and cancellation request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3568,
+        -2208
+      ],
+      "id": "6c697821-0097-4d2a-be2b-bdaaa86fe07f",
+      "name": "Refund and cancellation7"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6274c4a8-5f7c-4e6d-a638-44d5313a136e",
+              "name": "transactionToRefund",
+              "value": "={{ $json.transactions }}",
+              "type": "array"
+            },
+            {
+              "id": "544827e8-eb8c-419e-b2e7-3fb0e6dc0f32",
+              "name": "subscriptionID",
+              "value": "={{ $('bot/search4').item.json.body.subscriptionId }}",
+              "type": "string"
+            },
+            {
+              "id": "abcae689-500d-4ab6-ba56-285a3f848fd1",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "98de2d14-7c5c-4ea5-819e-05c559d4191b",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "32ca5044-28dd-49a5-9b6e-2c4e809c096b",
+              "name": "ticketCustomStatusID",
+              "value": 24200859183260,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -3792,
+        -2208
+      ],
+      "id": "a6636333-18dd-4af0-b0ad-ec4cf6945fe8",
+      "name": "Set refund and cancellation vars8"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "UPh58ZwqHFeZRPBe",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/UPh58ZwqHFeZRPBe",
+          "cachedResultName": "Operations Department — LS prod - Zendesk ticket update request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3120,
+        -2208
+      ],
+      "id": "0f8269a9-b209-4233-9e06-f54c176107fd",
+      "name": "Update zendesk ticket11"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Set request data test4').item.json.translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Set request data test4').item.json.translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": 26043989469084,
+              "type": "number"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": 24200840157980,
+              "type": "number"
+            },
+            {
+              "id": "8da77562-74be-4f42-bce8-57687feb07dc",
+              "name": "ticketCustomFieldID",
+              "value": 24285840352924,
+              "type": "number"
+            },
+            {
+              "id": "01995528-60a5-45c1-96a7-bfa68ab0a999",
+              "name": "ticketCustomFieldValue",
+              "value": "refund__30_day_policy__two_last_charges_",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -3568,
+        -2416
+      ],
+      "id": "8975d38d-2104-411c-a2d9-f8b3bfafb10a",
+      "name": "Edit Fields12"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SvnSceDOCIdM6MEa",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SvnSceDOCIdM6MEa",
+          "cachedResultName": "Operations Department — LS prod - Refund and cancellation request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3792,
+        -2416
+      ],
+      "id": "b579695a-358f-40eb-a4df-7acbc9c3a436",
+      "name": "Refund and cancellation8"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6274c4a8-5f7c-4e6d-a638-44d5313a136e",
+              "name": "transactionToRefund",
+              "value": "={{ $json.body.transactions }}",
+              "type": "array"
+            },
+            {
+              "id": "544827e8-eb8c-419e-b2e7-3fb0e6dc0f32",
+              "name": "subscriptionID",
+              "value": "={{ $('bot/search4').item.json.body.subscriptionId }}",
+              "type": "string"
+            },
+            {
+              "id": "abcae689-500d-4ab6-ba56-285a3f848fd1",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "98de2d14-7c5c-4ea5-819e-05c559d4191b",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "32ca5044-28dd-49a5-9b6e-2c4e809c096b",
+              "name": "ticketCustomStatusID",
+              "value": 24200859183260,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -4016,
+        -2416
+      ],
+      "id": "be88456a-5bf7-487f-ba56-589ea3dd5350",
+      "name": "Set refund and cancellation vars9"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "UPh58ZwqHFeZRPBe",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/UPh58ZwqHFeZRPBe",
+          "cachedResultName": "Operations Department — LS prod - Zendesk ticket update request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3344,
+        -2416
+      ],
+      "id": "8f134ae1-c0c9-416d-9076-df0cd967941c",
+      "name": "Update zendesk ticket12"
+    },
+    {
+      "parameters": {
+        "jsCode": "const TARGET_TYPE = \"recurrent\";\n\nconst inputItem = $input.first().json;\nconst transactions = inputItem.body?.transactions || [];\n\n// Filter transactions by target type\nconst matchingTransactions = transactions.filter(\n  transaction => transaction?.type === TARGET_TYPE\n);\n\n// If none found, return indicator\nif (matchingTransactions.length === 0) {\n  return [\n    {\n      json: {\n        noMatchingTransactions: true,\n        filteredType: TARGET_TYPE\n      }\n    }\n  ];\n}\n\n// Sort by transactionDate descending (newest first)\nmatchingTransactions.sort(\n  (a, b) => new Date(b.transactionDate) - new Date(a.transactionDate)\n);\n\n// Return newest matching transaction\nreturn [\n  {\n    json: {\n      transactions: [matchingTransactions[0]]\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4016,
+        -2208
+      ],
+      "id": "99821c95-209b-4195-b900-5aefdb9bb86e",
+      "name": "Return newest recurring transaction2"
+    },
+    {
+      "parameters": {
+        "content": "## Category: refund__30_day_policy__last_charge_only\n## Status: Solved",
+        "height": 128,
+        "width": 640,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2896,
+        -2224
+      ],
+      "id": "ca09019a-4c7e-4952-8284-fc9bbb63827c",
+      "name": "Sticky Note32"
+    },
+    {
+      "parameters": {
+        "content": "## All transactions\n## Category refund__30_day_policy__two_last_charges\n## Status: Solved",
+        "height": 144,
+        "width": 640,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2896,
+        -176
+      ],
+      "id": "966762d8-9476-40c2-8f40-7fbce89033e5",
+      "name": "Sticky Note19"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": 26043963752220,
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Set request data test4').item.json.translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Set request data test4').item.json.translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": 24200840157980,
+              "type": "number"
+            },
+            {
+              "id": "8da77562-74be-4f42-bce8-57687feb07dc",
+              "name": "ticketCustomFieldID",
+              "value": 24285840352924,
+              "type": "number"
+            },
+            {
+              "id": "01995528-60a5-45c1-96a7-bfa68ab0a999",
+              "name": "ticketCustomFieldValue",
+              "value": "refund__30_day_policy__last_charge_only_",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -3344,
+        32
+      ],
+      "id": "7bc08d2c-64ec-4e46-9663-4fd8e25ce63e",
+      "name": "Edit Fields13"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SvnSceDOCIdM6MEa",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SvnSceDOCIdM6MEa",
+          "cachedResultName": "Operations Department — LS prod - Refund and cancellation request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3568,
+        32
+      ],
+      "id": "22dcbf08-ab33-4af3-8f2a-d37352fbc835",
+      "name": "Refund and cancellation9"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6274c4a8-5f7c-4e6d-a638-44d5313a136e",
+              "name": "transactionToRefund",
+              "value": "={{ $json.transactions }}",
+              "type": "array"
+            },
+            {
+              "id": "544827e8-eb8c-419e-b2e7-3fb0e6dc0f32",
+              "name": "subscriptionID",
+              "value": "={{ $('bot/search4').item.json.body.subscriptionId }}",
+              "type": "string"
+            },
+            {
+              "id": "abcae689-500d-4ab6-ba56-285a3f848fd1",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "98de2d14-7c5c-4ea5-819e-05c559d4191b",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "32ca5044-28dd-49a5-9b6e-2c4e809c096b",
+              "name": "ticketCustomStatusID",
+              "value": 24200859183260,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -3792,
+        32
+      ],
+      "id": "9399b952-fc37-4362-9bf0-d88e93af8255",
+      "name": "Set refund and cancellation vars10"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "UPh58ZwqHFeZRPBe",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/UPh58ZwqHFeZRPBe",
+          "cachedResultName": "Operations Department — LS prod - Zendesk ticket update request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3120,
+        32
+      ],
+      "id": "cb050496-eae6-42a2-83b9-92511adfefc1",
+      "name": "Update zendesk ticket13"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Set request data test4').item.json.translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Set request data test4').item.json.translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": 26043989469084,
+              "type": "number"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": 24200840157980,
+              "type": "number"
+            },
+            {
+              "id": "8da77562-74be-4f42-bce8-57687feb07dc",
+              "name": "ticketCustomFieldID",
+              "value": 24285840352924,
+              "type": "number"
+            },
+            {
+              "id": "01995528-60a5-45c1-96a7-bfa68ab0a999",
+              "name": "ticketCustomFieldValue",
+              "value": "refund__within_30_days__monthly_",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -3568,
+        -176
+      ],
+      "id": "2cfaac00-3fe4-494a-a792-fe2fcccd0180",
+      "name": "Edit Fields14"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SvnSceDOCIdM6MEa",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SvnSceDOCIdM6MEa",
+          "cachedResultName": "Operations Department — LS prod - Refund and cancellation request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3792,
+        -176
+      ],
+      "id": "40d0fb8c-1e6d-438c-8212-7abc70901a9b",
+      "name": "Refund and cancellation10"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6274c4a8-5f7c-4e6d-a638-44d5313a136e",
+              "name": "transactionToRefund",
+              "value": "={{ $json.body.transactions }}",
+              "type": "array"
+            },
+            {
+              "id": "544827e8-eb8c-419e-b2e7-3fb0e6dc0f32",
+              "name": "subscriptionID",
+              "value": "={{ $('bot/search4').item.json.body.subscriptionId }}",
+              "type": "string"
+            },
+            {
+              "id": "abcae689-500d-4ab6-ba56-285a3f848fd1",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "98de2d14-7c5c-4ea5-819e-05c559d4191b",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "32ca5044-28dd-49a5-9b6e-2c4e809c096b",
+              "name": "ticketCustomStatusID",
+              "value": 24200859183260,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -4016,
+        -176
+      ],
+      "id": "7fb071ff-b8bb-48eb-93f8-e6b539e45cd2",
+      "name": "Set refund and cancellation vars11"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "UPh58ZwqHFeZRPBe",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/UPh58ZwqHFeZRPBe",
+          "cachedResultName": "Operations Department — LS prod - Zendesk ticket update request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -3344,
+        -176
+      ],
+      "id": "94277a95-8482-408d-b757-9deb57354c48",
+      "name": "Update zendesk ticket14"
+    },
+    {
+      "parameters": {
+        "jsCode": "const TARGET_TYPE = \"recurrent\";\n\nconst inputItem = $input.first().json;\nconst transactions = inputItem.body?.transactions || [];\n\n// Filter transactions by target type\nconst matchingTransactions = transactions.filter(\n  transaction => transaction?.type === TARGET_TYPE\n);\n\n// If none found, return indicator\nif (matchingTransactions.length === 0) {\n  return [\n    {\n      json: {\n        noMatchingTransactions: true,\n        filteredType: TARGET_TYPE\n      }\n    }\n  ];\n}\n\n// Sort by transactionDate descending (newest first)\nmatchingTransactions.sort(\n  (a, b) => new Date(b.transactionDate) - new Date(a.transactionDate)\n);\n\n// Return newest matching transaction\nreturn [\n  {\n    json: {\n      transactions: [matchingTransactions[0]]\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4016,
+        32
+      ],
+      "id": "6f1e7a47-10aa-4fc6-9088-d7c6d8329043",
+      "name": "Return newest recurring transaction3"
+    },
+    {
+      "parameters": {
+        "content": "## Category: refund__30_day_policy__last_charge_only\n## Status: Solved",
+        "height": 128,
+        "width": 640,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2896,
+        16
+      ],
+      "id": "7d2db890-b83d-4dc5-91b7-ba637ba3c913",
+      "name": "Sticky Note33"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0ABPEER1MF",
+          "mode": "list",
+          "cachedResultName": "cs-n8n-automation-errors"
+        },
+        "text": "=Refund request unsuccessful - {{ $now.toFormat(\"yyyy-MM-dd HH:mm:ss\") }}\nError message: Upsell refund\n\nTicket information\n- Ticket ID: {{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}\n- URL: https://personalitytest.zendesk.com/agent/tickets/{{ $('Set request data test4').item.json.original_ticket_content.ticket_id }}\n",
+        "otherOptions": {},
+        "path": "7635e1c2-bd96-46f5-bcb1-1bb4ba6cc4d6"
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        -4016,
+        -2736
+      ],
+      "id": "fa228148-3f77-4c94-a02b-2a5809d17a17",
+      "name": "Send a message",
+      "webhookId": "7635e1c2-bd96-46f5-bcb1-1bb4ba6cc4d6",
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://lovestylehelp.zendesk.com/api/v2/tickets/{{ $node[\"Set request data test4\"].json[\"original_ticket_content\"][\"ticket_id\"] }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ticket.comment.public",
+              "value": "false"
+            },
+            {
+              "name": "ticket.comment.body",
+              "value": "=Note: This ticket has been analysed by the CS automation and it cannot be handled automatically. Please handle this request manually. "
+            },
+            {
+              "name": "ticket.custom_status_id",
+              "value": "24200859183260"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -4304,
+        -2736
+      ],
+      "id": "8462d188-0fa5-4d58-8f20-892400986f4a",
+      "name": "Reply to internally and set status to open4",
+      "retryOnFail": true,
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "content": "## Upsells only\n## Status: open\n## Category: none\n## Assign to CS\n",
+        "height": 224,
+        "width": 576,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2896,
+        -2864
+      ],
+      "id": "3f5f12dd-a825-4981-a7dd-6cae08d43b63",
+      "name": "Sticky Note53",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "content": "## Upsell and trial\n## Category: Refund rejection\n## Status: Solved\n## Macro: rejection",
+        "height": 320,
+        "width": 624,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -3584,
+        848
+      ],
+      "id": "673538db-368b-45a5-a1b3-70c2c4484da5",
+      "name": "Sticky Note20"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.original_ticket_content.payment_provider_account_ID }}",
+                    "rightValue": "XXXXX",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "d3c5507a-76b3-49d6-bc75-13c6d348cc49"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "New policy"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "7e88853c-58c7-4282-87ab-e25554c41617",
+                    "leftValue": "=",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Old policy"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "none"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -9472,
+        -2752
+      ],
+      "id": "5e653f0f-961d-4533-a42d-f9dec30722e6",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"original_ticket_content\": {\n    \"ticket_id\": {{ $json.original_ticket_content.ticket_id }},\n    \"title\": \"{{ $json.original_ticket_content.title }}\",\n    \"description\": \"{{ $json.original_ticket_content.description }}\",\n    \"ticket_url\": \"{{ $json.original_ticket_content.ticket_url }}\",\n    \"user_email\": \"{{ $json.original_ticket_content.user_email }}\",\n    \"payment_provider_account_ID\":\"{{ $json.original_ticket_content.payment_provider_account_ID }}\"\n  },\n  \"translated_data\": {\n    \"originalLanguage\": \"{{ $json.translated_data.originalLanguage }}\",\n    \"is_translated\":{{ $json.translated_data.is_translated }},\n    \"translations\": {\n      \"title\": \"{{ $json.translated_data.translations.title }}\",\n      \"description\": \"{{ $json.translated_data.translations.description }}\"\n    }\n  }\n} ",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -9664,
+        -2752
+      ],
+      "id": "c385dfe4-4a55-430e-bec9-2d6037db9a65",
+      "name": "Set request data test"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "cdf1c4f1-3b8e-4c8c-b803-c1984ab08162",
+              "leftValue": "={{ $json.output[0].content[0].text.upsell_refund_requested }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -8480,
+        -2736
+      ],
+      "id": "2ad74c71-83e7-4ce1-b825-58034d4578b4",
+      "name": "Upsell only requested?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "455a5b1b-9564-4577-83bd-936d0ec85e58",
+              "leftValue": "={{ $('Set request data test1').item.json.translated_data.is_translated }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -5488,
+        -4608
+      ],
+      "id": "c9abdd51-5798-4fc8-9ed4-dc34af7100a0",
+      "name": "Is translated"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-5.1",
+          "mode": "list",
+          "cachedResultName": "GPT-5.1"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=Customer Support Agent's comment: {{ $json[\"Customer reply \"] }}\n\nOriginal language: {{ $('Set request data test1').item.json.translated_data.originalLanguage }}"
+            },
+            {
+              "role": "system",
+              "content": "You are a translation engine. Your sole task is to translate Customer Support Agent's messages into the customer's language. \n\nInput:\nCustomer Support Agent's comment - this needs to be translated\nOriginal language - this is the language you need to translate into\n\nRules (must be followed strictly):\nTranslate exactly and literally\nDo not add, remove, infer, or reinterpret any information\nDo not explain, summarize, rephrase, or improve wording\nPreserve tone, intent, ambiguity, and emotional content exactly\nPreserve formatting, punctuation, emojis, HTML formatting, and line breaks\nDo not normalize slang, profanity, or errors\nIf a term cannot be translated precisely, transliterate it\nIf the input is partially English, translate only the non-English parts\n\nOutput needs to contain:\ntranslatedComment: string\n\nNeeds to be formatted as JSON\nNo commentary, labels, or notes\nNo markdown or HTML unless it exists in the input"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_object",
+              "verbosity": "high"
+            }
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        -5232,
+        -4624
+      ],
+      "id": "291adbd6-cdec-40de-9f28-75fbbc4740ae",
+      "name": "Translate macro to local language6",
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://lovestylehelp.zendesk.com/api/v2/tickets/{{ $node[\"Set request data test1\"].json[\"original_ticket_content\"][\"ticket_id\"] }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ticket.comment.public",
+              "value": "true"
+            },
+            {
+              "name": "ticket.comment.html_body",
+              "value": "={{ $('Edit Fields16').item.json[\"Customer reply \"] }}"
+            },
+            {
+              "name": "ticket.custom_status_id",
+              "value": "24200840157980"
+            },
+            {
+              "name": "ticket.custom_fields.id",
+              "value": "24285840352924"
+            },
+            {
+              "name": "ticket.custom_fields.value",
+              "value": "refund__upsell"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -5040,
+        -4384
+      ],
+      "id": "64da280f-d76b-40d7-bdf0-560a25da218b",
+      "name": "Reply to customer and set status to open",
+      "retryOnFail": true,
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://lovestylehelp.zendesk.com/api/v2/tickets/{{ $node[\"Set request data test1\"].json[\"original_ticket_content\"][\"ticket_id\"] }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ticket.comment.public",
+              "value": "true"
+            },
+            {
+              "name": "ticket.comment.html_body",
+              "value": "={{ $json.output[0].content[0].text.translatedComment }}"
+            },
+            {
+              "name": "ticket.custom_status_id",
+              "value": "24200840157980"
+            },
+            {
+              "name": "ticket.custom_fields.id",
+              "value": "24285840352924"
+            },
+            {
+              "name": "ticket.custom_fields.value",
+              "value": "refund__upsell"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -4720,
+        -4624
+      ],
+      "id": "8ecd652f-8cad-483f-a367-0ea0be820f39",
+      "name": "Reply to customer and set status to open4",
+      "retryOnFail": true,
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "content": "# No upsell transactions\n\n",
+        "height": 544,
+        "width": 1424,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -5728,
+        -4704
+      ],
+      "id": "9046b4b4-d8dd-4c44-9634-b80f9dca5e32",
+      "name": "Sticky Note48",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "content": "## Status: solved\n## Category: Refund>upsell\n",
+        "height": 208,
+        "width": 288,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -4768,
+        -4416
+      ],
+      "id": "6a2f3c5b-5fba-49f5-9727-23da8a16a66f",
+      "name": "Sticky Note13"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f0b948a5-7c1e-400e-8fcf-8bd25ced82da",
+              "leftValue": "={{ $('Return latest upsell transaction').item.json.noUpsellTransactions }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -6368,
+        -4592
+      ],
+      "id": "1d461709-3e7b-44c4-93ba-076a63db30c3",
+      "name": "No refund transactions"
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputItem = $input.first().json;\nconst transactions = inputItem.body?.transactions || [];\n\n// Filter upsell transactions\nconst upsellTransactions = transactions.filter(\n  transaction => transaction.type === \"upsell\"\n);\n\n// If none found, return indicator\nif (upsellTransactions.length === 0) {\n  return [\n    {\n      json: {\n        noUpsellTransactions: true\n      }\n    }\n  ];\n}\n\n// Sort by transactionDate descending (newest first)\nupsellTransactions.sort(\n  (a, b) => new Date(b.transactionDate) - new Date(a.transactionDate)\n);\n\n// Return newest upsell transaction\nreturn [\n  {\n    json: upsellTransactions[0]\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6848,
+        -4592
+      ],
+      "id": "8845e634-f49d-4838-bafa-b14c97762c0e",
+      "name": "Return latest upsell transaction"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"original_ticket_content\": {\n    \"ticket_id\": {{ $node[\"Set request data test\"].json.original_ticket_content.ticket_id }},\n    \"title\": \"{{ $node[\"Set request data test\"].json.original_ticket_content.title }}\",\n    \"description\": \"{{ $node[\"Set request data test\"].json.original_ticket_content.description }}\",\n    \"ticket_url\": \"{{ $node[\"Set request data test\"].json.original_ticket_content.ticket_url }}\",\n    \"user_email\": \"{{ $node[\"Set request data test\"].json.original_ticket_content.user_email }}\"\n  },\n  \"translated_data\": {\n    \"originalLanguage\": \"{{ $node[\"Set request data test\"].json.translated_data.originalLanguage }}\",\n    \"is_translated\":{{ $node[\"Set request data test\"].json.translated_data.is_translated }},\n    \"translations\": {\n      \"title\": \"{{ $node[\"Set request data test\"].json.translated_data.translations.title }}\",\n      \"description\": \"{{ $node[\"Set request data test\"].json.translated_data.translations.description }}\"\n    }\n  }\n} ",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -6608,
+        -4592
+      ],
+      "id": "0e56dc9a-d41c-4a28-b3f2-45b61fbe562f",
+      "name": "Set request data test1"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-5.1",
+          "mode": "list",
+          "cachedResultName": "GPT-5.1"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=Customer ticket title: {{ $json.translated_data.translations.title || $json.original_ticket_content.title}}\nCustomer ticket description: {{ $json.translated_data.translations.description || $json.original_ticket_content.description}}"
+            },
+            {
+              "role": "system",
+              "content": "You are a classifier that analyzes customer support tickets.\n\nYour task is to determine whether the customer explicitly requested a refund of their upsell purchase or upsell transaction.\n\nSTRICT REQUIREMENT (CRITICAL)\nOnly classify as TRUE if the customer explicitly uses the word “upsell” in their request.\n\nThe word “upsell” must appear in the customer’s message.\nDo NOT infer an upsell based on pricing, subscriptions, upgrades, or context.\nIf the word “upsell” is not present, the answer must be FALSE.\n\nExamples of valid upsell refund requests (TRUE)\n“I want a refund of my upsell.”\n“Please refund my upsell purchase.”\n“I was charged for the upsell, please refund it.”\n“I don’t want the upsell, I want a refund.”\n\nExamples that must be FALSE\n“I was charged monthly, please refund.”\n“Cancel my subscription and refund me.”\n“I didn’t mean to upgrade, refund please.”\n“Refund the full charge.”\n(These do NOT explicitly mention “upsell”)\n\nClassification Rules\nRespond TRUE only if:\nThe customer explicitly requests a refund AND\nThe word “upsell” appears in the message\nRespond FALSE otherwise.\nDo not infer intent beyond exact wording.\nIf the request is unclear or ambiguous, respond FALSE.\nOutput Format\n\nReturn a valid JSON object with:\n\n{\n\"upsell_refund_requested\": true or false\n}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_object",
+              "verbosity": "low"
+            }
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        -9008,
+        -2736
+      ],
+      "id": "a2b60892-adbf-4aa0-84c3-7f9ccd406313",
+      "name": "Upsell refund only",
+      "retryOnFail": true,
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "content": "## Upsell only request\n## Category:  refund upsell\n## Status: Solved",
+        "height": 192,
+        "width": 656,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -4768,
+        -4080
+      ],
+      "id": "9386a08f-bb43-49ce-ace2-56f1f88fe822",
+      "name": "Sticky Note21"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test1').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": 34213857275293,
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Set request data test1').item.json.translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Set request data test1').item.json.translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": 33825964522269,
+              "type": "number"
+            },
+            {
+              "id": "8da77562-74be-4f42-bce8-57687feb07dc",
+              "name": "ticketCustomFieldID",
+              "value": 33838126178205,
+              "type": "number"
+            },
+            {
+              "id": "01995528-60a5-45c1-96a7-bfa68ab0a999",
+              "name": "ticketCustomFieldValue",
+              "value": "refund___upsell",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -5248,
+        -4048
+      ],
+      "id": "1c609b9c-fb12-4e73-90f5-33fd82ddccd9",
+      "name": "Edit Fields15"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6274c4a8-5f7c-4e6d-a638-44d5313a136e",
+              "name": "transactionToRefund",
+              "value": "={{ $('bot/search3').item.json.body.subscriptionId }}",
+              "type": "array"
+            },
+            {
+              "id": "abcae689-500d-4ab6-ba56-285a3f848fd1",
+              "name": "zendeskDomain",
+              "value": "lovestylehelp",
+              "type": "string"
+            },
+            {
+              "id": "98de2d14-7c5c-4ea5-819e-05c559d4191b",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test1').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "32ca5044-28dd-49a5-9b6e-2c4e809c096b",
+              "name": "ticketCustomStatusID",
+              "value": 24200859183260,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -5696,
+        -4048
+      ],
+      "id": "9d285a1f-7009-44ee-9645-4a6092a700cc",
+      "name": "Set refund and cancellation vars12"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "UPh58ZwqHFeZRPBe",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/UPh58ZwqHFeZRPBe",
+          "cachedResultName": "Operations Department — LS prod - Zendesk ticket update request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -5024,
+        -4048
+      ],
+      "id": "38982a19-7333-4d34-80a8-98e297184d07",
+      "name": "Update zendesk ticket15"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "tTuARnBsk1FfLPaw",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/tTuARnBsk1FfLPaw",
+          "cachedResultName": "Operations Department — LS prod - Refund request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -5472,
+        -4048
+      ],
+      "id": "8c766654-c6b9-43ba-b290-86664154824c",
+      "name": "Refund"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1e519f29-6b35-49ee-bd7b-8490789148db",
+              "name": "Customer reply ",
+              "value": "Please note that you have not purchased any additional upsells.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -5696,
+        -4608
+      ],
+      "id": "6f86eb68-187d-42e2-8513-e2f04a2a3f44",
+      "name": "Edit Fields16"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "efuturechatbot",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": 34327821656477,
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Set request data test').item.json.translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Set request data test').item.json.translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": 33825964522269,
+              "type": "number"
+            },
+            {
+              "id": "8da77562-74be-4f42-bce8-57687feb07dc",
+              "name": "ticketCustomFieldID",
+              "value": 33838126178205,
+              "type": "number"
+            },
+            {
+              "id": "01995528-60a5-45c1-96a7-bfa68ab0a999",
+              "name": "ticketCustomFieldValue",
+              "value": "refund___rejection",
+              "type": "string"
+            },
+            {
+              "id": "65a62818-0e89-432b-b0b2-a575bcdf9352",
+              "name": "automationCustomFieldID",
+              "value": 33841769865629,
+              "type": "number"
+            },
+            {
+              "id": "57a2a1fc-0c35-49ca-944c-73a83f3d0072",
+              "name": "automationCustomFieldValue",
+              "value": "in_automation",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -8512,
+        -3056
+      ],
+      "id": "9ece54a9-645f-40b4-a27f-25d419c9e4fb",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "UPh58ZwqHFeZRPBe",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/UPh58ZwqHFeZRPBe",
+          "cachedResultName": "Operations Department — LS prod - Zendesk ticket update request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -8288,
+        -3056
+      ],
+      "id": "95bf435b-ace6-400f-8435-6b61072fb39d",
+      "name": "Update zendesk ticket1"
+    },
+    {
+      "parameters": {
+        "content": "## Status: solved\n## Category: Refund > rejection\n## Macro: TBD",
+        "height": 224,
+        "width": 336,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -8512,
+        -3328
+      ],
+      "id": "57f0a0af-6d6f-4a63-ac6b-f3a36d139ab5",
+      "name": "Sticky Note44"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "544827e8-eb8c-419e-b2e7-3fb0e6dc0f32",
+              "name": "subscriptionID",
+              "value": "={{ $('bot/search2').item.json.body.subscriptionId }}",
+              "type": "string"
+            },
+            {
+              "id": "abcae689-500d-4ab6-ba56-285a3f848fd1",
+              "name": "zendeskDomain",
+              "value": "efuturechatbot",
+              "type": "string"
+            },
+            {
+              "id": "98de2d14-7c5c-4ea5-819e-05c559d4191b",
+              "name": "ticketID",
+              "value": "={{ $('Set request data test').item.json.original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "32ca5044-28dd-49a5-9b6e-2c4e809c096b",
+              "name": "ticketCustomStatusID",
+              "value": 19265567019421,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -8928,
+        -3056
+      ],
+      "id": "ae46e273-aa92-42e1-b7a9-bc1cd49cb490",
+      "name": "Set refund and cancellation vars1"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "yFVE4StijnHE6uGM",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/yFVE4StijnHE6uGM",
+          "cachedResultName": "Operations Department — LS prod - Cancellation request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -8704,
+        -3056
+      ],
+      "id": "0d830b75-38e5-4d9d-b39f-e551b7c09e53",
+      "name": "Cancellation"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lovestyle.co/api/payments/v1/bot/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n\"email\":\"{{ $('Set request data test4').item.json.original_ticket_content.user_email }}\",\n\"includeTransactionsLast30Days\": true\n\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -6512,
+        -1152
+      ],
+      "id": "43c3cd5d-ae9e-41ef-896d-7ff8d7b3eb14",
+      "name": "bot/search4",
+      "retryOnFail": true,
+      "credentials": {},
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lovestyle.co/api/payments/v1/bot/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n\"email\":\"{{ $json.original_ticket_content.user_email }}\"\n\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -9168,
+        -3056
+      ],
+      "id": "1de6d105-ad87-4a9b-a33f-6a3ce028695e",
+      "name": "bot/search2",
+      "retryOnFail": true,
+      "credentials": {},
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lovestyle.co/api/payments/v1/bot/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n\"email\":\"{{ $('Set request data test').item.json.original_ticket_content.user_email }}\",\n\"includeTransactionsLast30Days\": true\n\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -7056,
+        -4592
+      ],
+      "id": "ac3b230b-0209-403f-bb8c-90dd9463d0d4",
+      "name": "bot/search3",
+      "retryOnFail": true,
+      "credentials": {},
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://lovestylehelp.zendesk.com/api/v2/tickets/{{ $node[\"Set request data test1\"].json[\"original_ticket_content\"][\"ticket_id\"] }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ticket.custom_fields.id",
+              "value": "24286144941340"
+            },
+            {
+              "name": "ticket.custom_fields.value",
+              "value": "={{ $('Set request data test1').item.json.translated_data.originalLanguage }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -5232,
+        -4384
+      ],
+      "id": "0bee37e8-028f-4930-9130-d6d3fc9b7523",
+      "name": "Reply to customer and set status to open1",
+      "retryOnFail": true,
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://lovestylehelp.zendesk.com/api/v2/tickets/{{ $node[\"Set request data test1\"].json[\"original_ticket_content\"][\"ticket_id\"] }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ticket.custom_fields.id",
+              "value": "24286144941340"
+            },
+            {
+              "name": "ticket.custom_fields.value",
+              "value": "={{ $('Set request data test1').item.json.translated_data.originalLanguage }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -4912,
+        -4624
+      ],
+      "id": "e3f76bdf-3257-4a91-bacb-a9f5092f5f85",
+      "name": "Reply to customer and set status to open2",
+      "retryOnFail": true,
+      "credentials": {}
+    }
+  ],
+  "connections": {
+    "Categorise request based on transaction types": {
+      "main": [
+        [
+          {
+            "node": "Redirect based on last transactions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redirect based on last transactions": {
+      "main": [
+        [
+          {
+            "node": "Return all trial transactions as single array",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply to internally and set status to open4",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is full refund",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is full refund1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is full refund2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is full refund3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is full refund8",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply to internally and set status to open3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set request data test4": {
+      "main": [
+        [
+          {
+            "node": "bot/search4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Full refund": {
+      "main": [
+        [
+          {
+            "node": "Set request data test4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is full refund1": {
+      "main": [
+        [
+          {
+            "node": "Set refund and cancellation vars7",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return newest recurring transaction1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is full refund": {
+      "main": [
+        [
+          {
+            "node": "Set refund and cancellation vars9",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return newest recurring transaction2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is full refund2": {
+      "main": [
+        [
+          {
+            "node": "Set refund and cancellation vars5",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return newest recurring transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is full refund3": {
+      "main": [
+        [
+          {
+            "node": "Set refund and cancellation vars3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return all trial transactions as single array1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is full refund8": {
+      "main": [
+        [
+          {
+            "node": "Set refund and cancellation vars11",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return newest recurring transaction3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refund and cancellation": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set refund and cancellation vars": {
+      "main": [
+        [
+          {
+            "node": "Refund and cancellation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return all trial transactions as single array": {
+      "main": [
+        [
+          {
+            "node": "Set refund and cancellation vars",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields4": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields5": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refund and cancellation1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set refund and cancellation vars2": {
+      "main": [
+        [
+          {
+            "node": "Refund and cancellation1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return all trial transactions as single array1": {
+      "main": [
+        [
+          {
+            "node": "Set refund and cancellation vars2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields6": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refund and cancellation2": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set refund and cancellation vars3": {
+      "main": [
+        [
+          {
+            "node": "Refund and cancellation2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields7": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refund and cancellation3": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set refund and cancellation vars4": {
+      "main": [
+        [
+          {
+            "node": "Refund and cancellation3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields8": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refund and cancellation4": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set refund and cancellation vars5": {
+      "main": [
+        [
+          {
+            "node": "Refund and cancellation4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return newest recurring transaction": {
+      "main": [
+        [
+          {
+            "node": "Set refund and cancellation vars4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields9": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refund and cancellation5": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set refund and cancellation vars6": {
+      "main": [
+        [
+          {
+            "node": "Refund and cancellation5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields10": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refund and cancellation6": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set refund and cancellation vars7": {
+      "main": [
+        [
+          {
+            "node": "Refund and cancellation6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return newest recurring transaction1": {
+      "main": [
+        [
+          {
+            "node": "Set refund and cancellation vars6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields11": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket11",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refund and cancellation7": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields11",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set refund and cancellation vars8": {
+      "main": [
+        [
+          {
+            "node": "Refund and cancellation7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields12": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket12",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refund and cancellation8": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields12",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set refund and cancellation vars9": {
+      "main": [
+        [
+          {
+            "node": "Refund and cancellation8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return newest recurring transaction2": {
+      "main": [
+        [
+          {
+            "node": "Set refund and cancellation vars8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields13": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket13",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refund and cancellation9": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields13",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set refund and cancellation vars10": {
+      "main": [
+        [
+          {
+            "node": "Refund and cancellation9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields14": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket14",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refund and cancellation10": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields14",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set refund and cancellation vars11": {
+      "main": [
+        [
+          {
+            "node": "Refund and cancellation10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return newest recurring transaction3": {
+      "main": [
+        [
+          {
+            "node": "Set refund and cancellation vars10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply to internally and set status to open4": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Set request data test",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Upsell refund only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set request data test": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsell only requested?": {
+      "main": [
+        [
+          {
+            "node": "bot/search3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Full refund",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is translated": {
+      "main": [
+        [
+          {
+            "node": "Translate macro to local language6",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply to customer and set status to open1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Translate macro to local language6": {
+      "main": [
+        [
+          {
+            "node": "Reply to customer and set status to open2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No refund transactions": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields16",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set refund and cancellation vars12",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return latest upsell transaction": {
+      "main": [
+        [
+          {
+            "node": "Set request data test1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set request data test1": {
+      "main": [
+        [
+          {
+            "node": "No refund transactions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsell refund only": {
+      "main": [
+        [
+          {
+            "node": "Upsell only requested?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields15": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket15",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set refund and cancellation vars12": {
+      "main": [
+        [
+          {
+            "node": "Refund",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refund": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields15",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields16": {
+      "main": [
+        [
+          {
+            "node": "Is translated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set refund and cancellation vars1": {
+      "main": [
+        [
+          {
+            "node": "Cancellation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cancellation": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "bot/search4": {
+      "main": [
+        [
+          {
+            "node": "Categorise request based on transaction types",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "bot/search2": {
+      "main": [
+        [
+          {
+            "node": "Set refund and cancellation vars1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "bot/search3": {
+      "main": [
+        [
+          {
+            "node": "Return latest upsell transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply to customer and set status to open1": {
+      "main": [
+        [
+          {
+            "node": "Reply to customer and set status to open",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply to customer and set status to open2": {
+      "main": [
+        [
+          {
+            "node": "Reply to customer and set status to open4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "BY3PNiyJJJ9EMdEi",
+    "callerPolicy": "workflowsFromSameOwner",
+    "binaryMode": "separate",
+    "timeSavedPerExecution": 1
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "original_ticket_content": {
+            "ticket_id": 457561,
+            "title": "refund",
+            "description": "----------------------------------------------\n\nConnor Juelfs Mr., Apr 1, 2026, 14:58\n\nHello,\n\nI paid $1.95 to see my results, not realizing it subscribed me to a monthly reoccurring charge for $29.95/month. Please refund me the $29.95 that I unknowingly paid.",
+            "ticket_url": "lovestylehelp.zendesk.com/agent/tickets/457561",
+            "user_email": "connorjuelfs@gmail.com",
+            "payment_provider_account_ID": "acct_1SPQ6r5Dna8VMCFv"
+          },
+          "translated_data": {
+            "originalLanguage": "en",
+            "is_translated": false,
+            "translations": {
+              "title": "",
+              "description": ""
+            }
+          }
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "versionId": "f9809037-855f-46b3-8d06-23a9da693b25",
+  "activeVersionId": null,
+  "versionCounter": 3,
+  "triggerCount": 0,
+  "shared": [
+    {
+      "updatedAt": "2026-04-29T08:21:03.893Z",
+      "createdAt": "2026-04-29T08:21:03.893Z",
+      "role": "workflow:owner",
+      "workflowId": "cTGnzAFC977R3Bn2",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "updatedAt": "2025-09-16T08:57:49.000Z",
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "creatorId": null
+      }
+    }
+  ],
+  "tags": [
+    {
+      "updatedAt": "2026-03-20T07:31:14.395Z",
+      "createdAt": "2026-03-20T07:31:14.395Z",
+      "id": "CcGEek9zkAIkYDuM",
+      "name": "CS automation"
+    },
+    {
+      "updatedAt": "2026-04-29T08:17:28.475Z",
+      "createdAt": "2026-04-29T08:17:28.475Z",
+      "id": "LPw8bOnALJSRx7sJ",
+      "name": "PE prod"
+    }
+  ],
+  "activeVersion": null
+}
