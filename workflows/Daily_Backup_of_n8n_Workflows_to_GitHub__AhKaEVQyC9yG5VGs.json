@@ -1,0 +1,415 @@
+{
+  "updatedAt": "2026-04-29T11:01:06.925Z",
+  "createdAt": "2026-04-29T10:52:05.621Z",
+  "id": "AhKaEVQyC9yG5VGs",
+  "name": "Daily Backup of n8n Workflows to GitHub",
+  "description": "Daily 2 AM backup of all non-archived n8n workflows to antonioefm/n8nbackup (one file per workflow, overwritten in place). Sends a Slack DM summary on every run.",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 2
+            }
+          ]
+        }
+      },
+      "id": "ee4d62da-cfe5-4bf5-9c6c-3fe70e8f512a",
+      "name": "Daily 2 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        240,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://efuturemedia.app.n8n.cloud/api/v1/workflows",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "250"
+            },
+            {
+              "name": "excludePinnedData",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "433854ec-5f36-40c2-b2a8-76e1e69a64e9",
+      "name": "List n8n Workflows",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        464,
+        400
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "d9womSSWKUI19oC2",
+          "name": "n8n API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst results = [];\nfor (const item of items) {\n  const list = (item.json && Array.isArray(item.json.data)) ? item.json.data : [];\n  for (const wf of list) {\n    if (wf.isArchived === true) continue;\n    const safeName = String(wf.name || wf.id)\n      .replace(/[\\\\/:*?\"<>|]+/g, \"_\")\n      .replace(/\\s+/g, \"_\")\n      .replace(/_+/g, \"_\")\n      .replace(/^_+|_+$/g, \"\")\n      .slice(0, 100);\n    results.push({\n      json: {\n        id: wf.id,\n        name: wf.name,\n        active: wf.active === true,\n        isArchived: wf.isArchived === true,\n        filename: \"workflows/\" + safeName + \"__\" + wf.id + \".json\"\n      }\n    });\n  }\n}\nreturn results;"
+      },
+      "id": "e0cecff2-3aa6-46b4-b00a-c517537f17a3",
+      "name": "Filter and Prep Workflows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        400
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepItems = $(\"Prepare Commit\").all();\nconst commitItems = $(\"Commit to GitHub\").all();\nlet success = 0;\nlet skipped = 0;\nconst failures = [];\nfor (let i = 0; i < prepItems.length; i++) {\n  const prep = prepItems[i] && prepItems[i].json ? prepItems[i].json : {};\n  const commit = commitItems[i] && commitItems[i].json ? commitItems[i].json : {};\n  const fname = prep.filename || \"unknown\";\n  if (prep.skip === true) {\n    skipped += 1;\n    failures.push({ file: fname, error: prep.skipReason || \"skipped\" });\n    continue;\n  }\n  const ok = (commit && commit.commit && typeof commit.commit.sha === \"string\");\n  if (ok) {\n    success += 1;\n  } else {\n    let msg = \"Unknown error\";\n    if (commit && commit.error) {\n      msg = (commit.error.message || JSON.stringify(commit.error)).toString().slice(0, 200);\n    } else if (commit && commit.message) {\n      msg = String(commit.message).slice(0, 200);\n    }\n    failures.push({ file: fname, error: msg });\n  }\n}\nconst total = prepItems.length;\nconst failed = failures.length;\nconst status = failed === 0 ? \"success\" : (success === 0 ? \"failure\" : \"partial\");\nconst icon = status === \"success\" ? \":white_check_mark:\" : (status === \"partial\" ? \":warning:\" : \":x:\");\nconst dateStr = new Date().toISOString().slice(0, 10);\nlet message = icon + \" *n8n Backup \" + dateStr + \"* — \" + success + \"/\" + total + \" workflows committed to `antonioefm/n8nbackup`\";\nif (failed > 0) {\n  message += \"\\n\\n*Issues (\" + failed + \"):*\\n\";\n  const shown = failures.slice(0, 10);\n  for (const f of shown) {\n    message += \"• `\" + f.file + \"`: \" + f.error + \"\\n\";\n  }\n  if (failed > 10) message += \"_…and \" + (failed - 10) + \" more_\";\n}\nreturn [{ json: { status: status, success: success, failed: failed, skipped: skipped, total: total, message: message } }];"
+      },
+      "id": "c7a23b9b-02e8-49dd-b09c-b2f082b1ca02",
+      "name": "Build Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1984,
+        544
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "user",
+        "user": {
+          "__rl": true,
+          "value": "U091LRPLQD6",
+          "mode": "list",
+          "cachedResultName": "antonio.marusic"
+        },
+        "text": "={{ $json.message }}",
+        "otherOptions": {}
+      },
+      "id": "0a26987b-eb8a-4b90-8022-c4c22aff3ebc",
+      "name": "Slack DM Summary",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        2208,
+        544
+      ],
+      "webhookId": "5311f757-f91b-456b-9e99-f4438e2b9dbe",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "tSpUlRaNhgWKbKN4",
+          "name": "Automations Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://efuturemedia.app.n8n.cloud/api/v1/workflows/{{ $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "5f1ec9c1-8318-4cf4-84e4-2c57ac13248a",
+      "name": "Fetch Workflow JSON",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1120,
+        304
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "d9womSSWKUI19oC2",
+          "name": "n8n API Key"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.github.com/repos/antonioefm/n8nbackup/contents/{{ encodeURIComponent($(\"Loop Over Workflows\").item.json.filename) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "ref",
+              "value": "main"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            },
+            {
+              "name": "User-Agent",
+              "value": "n8n-backup"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a5371648-2d5e-4b4e-82b5-8ff3f65a13d0",
+      "name": "Get Existing File SHA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1344,
+        304
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "wuT3y1kHuVyjQS0i",
+          "name": "GitHub Backup Token"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const wfMeta = $(\"Loop Over Workflows\").item.json;\nconst wfFull = $(\"Fetch Workflow JSON\").item.json;\nconst shaItem = $json;\nconst fetchOk = wfFull && typeof wfFull.id === \"string\" && Array.isArray(wfFull.nodes);\nconst existingSha = (shaItem && typeof shaItem.sha === \"string\") ? shaItem.sha : null;\nconst dateStr = new Date().toISOString().slice(0, 10);\nif (!fetchOk) {\n  return {\n    filename: wfMeta.filename,\n    workflowName: wfMeta.name,\n    workflowId: wfMeta.id,\n    skip: true,\n    skipReason: \"Workflow fetch failed\",\n    bodyJson: \"{}\"\n  };\n}\nconst content = Buffer.from(JSON.stringify(wfFull, null, 2), \"utf8\").toString(\"base64\");\nconst bodyObj = {\n  message: \"Daily backup \" + dateStr + \" - \" + wfMeta.name,\n  content: content,\n  branch: \"main\"\n};\nif (existingSha) bodyObj.sha = existingSha;\nreturn {\n  filename: wfMeta.filename,\n  workflowName: wfMeta.name,\n  workflowId: wfMeta.id,\n  skip: false,\n  bodyJson: JSON.stringify(bodyObj)\n};"
+      },
+      "id": "728957e4-1d03-4f72-b808-89a15781c895",
+      "name": "Prepare Commit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.github.com/repos/antonioefm/n8nbackup/contents/{{ encodeURIComponent($json.filename) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            },
+            {
+              "name": "User-Agent",
+              "value": "n8n-backup"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.bodyJson }}",
+        "options": {}
+      },
+      "id": "18cafef5-8a1c-4175-9c7d-4a455894861b",
+      "name": "Commit to GitHub",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1792,
+        304
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "wuT3y1kHuVyjQS0i",
+          "name": "GitHub Backup Token"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "7dd5e750-dcc3-4a96-a4c8-95456359bda6",
+      "name": "Loop Over Workflows",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        912,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Daily 2 AM": {
+      "main": [
+        [
+          {
+            "node": "List n8n Workflows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List n8n Workflows": {
+      "main": [
+        [
+          {
+            "node": "Filter and Prep Workflows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter and Prep Workflows": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Workflows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Summary": {
+      "main": [
+        [
+          {
+            "node": "Slack DM Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Workflow JSON": {
+      "main": [
+        [
+          {
+            "node": "Get Existing File SHA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Existing File SHA": {
+      "main": [
+        [
+          {
+            "node": "Prepare Commit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Commit": {
+      "main": [
+        [
+          {
+            "node": "Commit to GitHub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit to GitHub": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Workflows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Workflows": {
+      "main": [
+        [
+          {
+            "node": "Build Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch Workflow JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "0f89bc2d-9ac8-473b-8e3c-bfa317339534",
+  "activeVersionId": null,
+  "versionCounter": 12,
+  "triggerCount": 0,
+  "shared": [
+    {
+      "updatedAt": "2026-04-29T11:00:10.255Z",
+      "createdAt": "2026-04-29T11:00:10.255Z",
+      "role": "workflow:owner",
+      "workflowId": "AhKaEVQyC9yG5VGs",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "updatedAt": "2025-09-16T08:57:49.000Z",
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "creatorId": null
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
+}
