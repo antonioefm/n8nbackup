@@ -1,0 +1,885 @@
+{
+  "updatedAt": "2026-04-29T09:41:52.243Z",
+  "createdAt": "2026-03-17T09:36:53.428Z",
+  "id": "EefwjzTjpagfFtia",
+  "name": "LS prod - Chatbot refunds handling v2",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "get",
+        "id": "={{ $json[\"ticket.id\"] }}"
+      },
+      "type": "n8n-nodes-base.zendesk",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "79c51832-814d-40ba-a14d-07309591d098",
+      "name": "Get a ticket",
+      "retryOnFail": true,
+      "credentials": {
+        "zendeskApi": {
+          "id": "GAJckAtNBWv1L38R",
+          "name": "LoveStyle prod Zendesk account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        560,
+        96
+      ],
+      "id": "0b0eeade-09d9-435d-9ae2-1f015400d71a",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "af4dbe40-673c-484f-a26b-6f8c1d224bf8",
+              "leftValue": "={{ $json.custom_status_id }}",
+              "rightValue": 26136975342748,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        208,
+        0
+      ],
+      "id": "650d5fc5-6eae-4f2a-8fa3-f477de0437a3",
+      "name": "Is status automated"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "38f8b03a-a7be-4778-9553-3f567b373ffd",
+              "leftValue": "={{ $json[\"ticket.ticket_field_26136966521244\"] }}",
+              "rightValue": "refunds",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        0,
+        272
+      ],
+      "id": "fa04480f-96b8-48c5-b898-7f7e27b28f67",
+      "name": "Is chatbot classification == refunds"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-5.1",
+          "mode": "list",
+          "cachedResultName": "GPT-5.1"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=Description: {{ $json.user_only }}"
+            },
+            {
+              "role": "system",
+              "content": "You are a translation engine.\n\nYour sole task is to translate user-provided text into English.\n\nRules (must be followed strictly):\n\nTranslate exactly and literally\n\nDo not add, remove, infer, or reinterpret any information\n\nDo not explain, summarize, rephrase, or improve wording\n\nPreserve tone, intent, ambiguity, and emotional content exactly\n\nPreserve formatting, punctuation, emojis, and line breaks\n\nDo not normalize slang, profanity, or errors\n\nIf a term cannot be translated precisely, transliterate it\n\nIf the input is already in English, return it unchanged\n\nIf the input is partially English, translate only the non-English parts\n\nOutput needs to contain:\ntitle: string // translated title, \ndescription: string // translated description,\noriginalTicketLanguage: string // two letter code for the language of the original ticket\n\nNeeds to be formatted as JSON\n\nNo commentary, labels, or notes\n\nNo markdown unless it exists in the input"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_object",
+              "verbosity": "high"
+            }
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        1328,
+        240
+      ],
+      "id": "4c1434cb-eca2-4e54-a4a6-aaeb6dc58220",
+      "name": "Translate ticket to english1",
+      "retryOnFail": true,
+      "credentials": {
+        "openAiApi": {
+          "id": "CYpFhyyLIOdE4dHO",
+          "name": "LS prod n8n automation"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"original_ticket_content\": {\n    \"ticket_id\": {{ $('Zendesk Trigger').item.json[\"ticket.id\"] }},\n    \"title\": \"{{ $('Zendesk Trigger').item.json[\"ticket.title\"] }}\",\n    \"description\": \"{{ $('Extract').item.json.user_only }}\",\n    \"ticket_url\": \"{{ $('Zendesk Trigger').item.json[\"ticket.url\"] }}\",\n    \"user_email\": \"{{ $('Zendesk Trigger').item.json[\"ticket.requester.email\"] }}\"\n  },\n  \"translated_data\": {\n    \"originalLanguage\": \"{{$('Translate ticket to english1').isExecuted ? $('Translate ticket to english1').item.json.output.first().content.first().text.originalTicketLanguage : \"en\" }}\",\n    \"is_translated\":{{$('Translate ticket to english1').isExecuted ? true:false}}\n    \"translations\": {\n      \"title\": \"{{$('Translate ticket to english1').isExecuted ? $('Translate ticket to english1').item.json.output.first().content.first().text.title : \"\"}}\",\n      \"description\": \"{{$('Translate ticket to english1').isExecuted ? $('Translate ticket to english1').item.json.output.first().content.first().text.description : \"\"}}\"\n    }\n  }\n} ",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1712,
+        80
+      ],
+      "id": "61ace0a5-1d73-499e-b23c-dff1b157d02f",
+      "name": "Set translated request data test1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const INPUT_PATH = 'description';\n\nfunction getByPath(obj, path) {\n  return path.split('.').reduce((acc, key) => {\n    if (acc && Object.prototype.hasOwnProperty.call(acc, key)) {\n      return acc[key];\n    }\n    return undefined;\n  }, obj);\n}\n\nconst inputText = getByPath($json, INPUT_PATH);\n\nif (typeof inputText !== 'string') {\n  throw new Error(`Input at path \"${INPUT_PATH}\" is not a string or does not exist.`);\n}\n\n// Match all lines starting with \"User:\"\nconst userLines = inputText.match(/^User:.*$/gm) || [];\n\n// Return as single newline-separated string\nreturn [\n  {\n    json: {\n      user_only: userLines.join('\\n'),\n      user_lines: userLines, // optional array\n      count: userLines.length,\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        832,
+        96
+      ],
+      "id": "a0dcb649-3e14-44cc-a2e6-dc321edb6ca5",
+      "name": "Extract"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "5b5364df-96ee-40d2-b018-363299d58adb",
+              "leftValue": "={{ $('Zendesk Trigger').item.json[\"ticket.ticket_field_33825960843421\"] }}",
+              "rightValue": "=language__en",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1072,
+        96
+      ],
+      "id": "dfb64960-eba8-4c1c-ba19-f6958c34450e",
+      "name": "Language isn't English"
+    },
+    {
+      "parameters": {
+        "options": {
+          "fields": [
+            "ticket.title",
+            "ticket.description",
+            "ticket.url",
+            "ticket.id",
+            "ticket.status",
+            "ticket.requester.email",
+            "ticket.ticket_field_26136966521244",
+            "ticket.ticket_field_26136963437340"
+          ]
+        },
+        "conditions": {
+          "all": [
+            {}
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.zendeskTrigger",
+      "typeVersion": 1,
+      "position": [
+        -384,
+        144
+      ],
+      "id": "b02d2bc1-af9e-49c9-94e4-4551dc665260",
+      "name": "Zendesk Trigger",
+      "webhookId": "0f3956f0-bc03-4db6-a747-5b8553518a09",
+      "credentials": {
+        "zendeskApi": {
+          "id": "GAJckAtNBWv1L38R",
+          "name": "LoveStyle prod Zendesk account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "83O1SZnIMdhf999E",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/83O1SZnIMdhf999E",
+          "cachedResultName": "Operations Department — LS prod - Refund requests flow"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1952,
+        80
+      ],
+      "id": "cea42386-813e-43be-99e9-b5eb37c85a80",
+      "name": "Call 'LS prod - Refund requests flow'"
+    }
+  ],
+  "connections": {
+    "Get a ticket": {
+      "main": [
+        [
+          {
+            "node": "Is status automated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is status automated": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is chatbot classification == refunds": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Translate ticket to english1": {
+      "main": [
+        [
+          {
+            "node": "Set translated request data test1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set translated request data test1": {
+      "main": [
+        [
+          {
+            "node": "Call 'LS prod - Refund requests flow'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract": {
+      "main": [
+        [
+          {
+            "node": "Language isn't English",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Language isn't English": {
+      "main": [
+        [
+          {
+            "node": "Set translated request data test1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Translate ticket to english1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get a ticket",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Is chatbot classification == refunds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "BY3PNiyJJJ9EMdEi",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": {
+    "node:Zendesk Trigger": {
+      "webhookSecret": "pwwua4xlAL0kNiL8kHrGaI3yRrJKMu0nHFT4n_59Zkc=",
+      "webhookId": 27116681917596,
+      "targetId": "01KQC9VP78HJ4M93PNQNEKTYRG"
+    }
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {
+    "Zendesk Trigger": [
+      {
+        "json": {
+          "ticket.title": "Chatbot: cancel request from antonioefuturemedia+test2@gmail.com",
+          "ticket.description": "----------------------------------------------\n\nAntonio Marusic, Mar 19, 2026, 09:16\n\nSummary: User requested to cancel their subscription. The assistant provided a confirmation method for the cancellation. User confirmed the cancellation request.\n\nRequest: cancel\n\nChat transcript:\nUser: greetings\nAssistant: Hello! How can I assist you today? If you have any questions about our Lovestyle platform or services, feel free to ask!\nUser: I would you to cancel my subscription please\nAssistant: To confirm your Cancellation request, click the button below. [CONFIRM_CANCEL_REFUND] [INTENT:cancel] [EMAIL:antonioefuturemedia+test2@gmail.com]\nUser: __confirm_cancel_refund__\n\nCreated via support chatbot.",
+          "ticket.url": "lovestylehelp.zendesk.com/agent/tickets/457436",
+          "ticket.id": "457436",
+          "ticket.status": "Solved",
+          "ticket.requester.email": "antonioefuturemedia+test2@gmail.com",
+          "ticket.ticket_field_33744829813533": "",
+          "ticket.ticket_field_33841769865629": "",
+          "ticket.ticket_field_26136966521244": "cancellations",
+          "ticket.ticket_field_21550748797725": "",
+          "ticket.ticket_field_33825960843421": "",
+          "ticket.ticket_field_34358154126749": "",
+          "ticket.ticket_field_26136963437340": ""
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "versionId": "c25b47ad-eaa0-41f3-bf90-7f854269def9",
+  "activeVersionId": "c25b47ad-eaa0-41f3-bf90-7f854269def9",
+  "versionCounter": 92,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-03-17T09:36:53.430Z",
+      "createdAt": "2026-03-17T09:36:53.430Z",
+      "role": "workflow:owner",
+      "workflowId": "EefwjzTjpagfFtia",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "updatedAt": "2025-09-16T08:57:49.000Z",
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "creatorId": null
+      }
+    }
+  ],
+  "tags": [
+    {
+      "updatedAt": "2026-03-20T07:31:42.514Z",
+      "createdAt": "2026-03-20T07:31:42.514Z",
+      "id": "7hyr6wbGjTIinFTr",
+      "name": "LS prod"
+    },
+    {
+      "updatedAt": "2026-03-20T07:31:14.395Z",
+      "createdAt": "2026-03-20T07:31:14.395Z",
+      "id": "CcGEek9zkAIkYDuM",
+      "name": "CS automation"
+    }
+  ],
+  "activeVersion": {
+    "updatedAt": "2026-04-29T09:41:57.000Z",
+    "createdAt": "2026-04-29T09:41:52.244Z",
+    "versionId": "c25b47ad-eaa0-41f3-bf90-7f854269def9",
+    "workflowId": "EefwjzTjpagfFtia",
+    "nodes": [
+      {
+        "parameters": {
+          "operation": "get",
+          "id": "={{ $json[\"ticket.id\"] }}"
+        },
+        "type": "n8n-nodes-base.zendesk",
+        "typeVersion": 1,
+        "position": [
+          0,
+          0
+        ],
+        "id": "79c51832-814d-40ba-a14d-07309591d098",
+        "name": "Get a ticket",
+        "retryOnFail": true,
+        "credentials": {
+          "zendeskApi": {
+            "id": "GAJckAtNBWv1L38R",
+            "name": "LoveStyle prod Zendesk account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "mode": "combine",
+          "combineBy": "combineByPosition",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.merge",
+        "typeVersion": 3.2,
+        "position": [
+          560,
+          96
+        ],
+        "id": "0b0eeade-09d9-435d-9ae2-1f015400d71a",
+        "name": "Merge"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "af4dbe40-673c-484f-a26b-6f8c1d224bf8",
+                "leftValue": "={{ $json.custom_status_id }}",
+                "rightValue": 26136975342748,
+                "operator": {
+                  "type": "number",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          208,
+          0
+        ],
+        "id": "650d5fc5-6eae-4f2a-8fa3-f477de0437a3",
+        "name": "Is status automated"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "38f8b03a-a7be-4778-9553-3f567b373ffd",
+                "leftValue": "={{ $json[\"ticket.ticket_field_26136966521244\"] }}",
+                "rightValue": "refunds",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          0,
+          272
+        ],
+        "id": "fa04480f-96b8-48c5-b898-7f7e27b28f67",
+        "name": "Is chatbot classification == refunds"
+      },
+      {
+        "parameters": {
+          "modelId": {
+            "__rl": true,
+            "value": "gpt-5.1",
+            "mode": "list",
+            "cachedResultName": "GPT-5.1"
+          },
+          "responses": {
+            "values": [
+              {
+                "content": "=Description: {{ $json.user_only }}"
+              },
+              {
+                "role": "system",
+                "content": "You are a translation engine.\n\nYour sole task is to translate user-provided text into English.\n\nRules (must be followed strictly):\n\nTranslate exactly and literally\n\nDo not add, remove, infer, or reinterpret any information\n\nDo not explain, summarize, rephrase, or improve wording\n\nPreserve tone, intent, ambiguity, and emotional content exactly\n\nPreserve formatting, punctuation, emojis, and line breaks\n\nDo not normalize slang, profanity, or errors\n\nIf a term cannot be translated precisely, transliterate it\n\nIf the input is already in English, return it unchanged\n\nIf the input is partially English, translate only the non-English parts\n\nOutput needs to contain:\ntitle: string // translated title, \ndescription: string // translated description,\noriginalTicketLanguage: string // two letter code for the language of the original ticket\n\nNeeds to be formatted as JSON\n\nNo commentary, labels, or notes\n\nNo markdown unless it exists in the input"
+              }
+            ]
+          },
+          "builtInTools": {},
+          "options": {
+            "textFormat": {
+              "textOptions": {
+                "type": "json_object",
+                "verbosity": "high"
+              }
+            }
+          }
+        },
+        "type": "@n8n/n8n-nodes-langchain.openAi",
+        "typeVersion": 2.1,
+        "position": [
+          1328,
+          240
+        ],
+        "id": "4c1434cb-eca2-4e54-a4a6-aaeb6dc58220",
+        "name": "Translate ticket to english1",
+        "retryOnFail": true,
+        "credentials": {
+          "openAiApi": {
+            "id": "CYpFhyyLIOdE4dHO",
+            "name": "LS prod n8n automation"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "mode": "raw",
+          "jsonOutput": "={\n  \"original_ticket_content\": {\n    \"ticket_id\": {{ $('Zendesk Trigger').item.json[\"ticket.id\"] }},\n    \"title\": \"{{ $('Zendesk Trigger').item.json[\"ticket.title\"] }}\",\n    \"description\": \"{{ $('Extract').item.json.user_only }}\",\n    \"ticket_url\": \"{{ $('Zendesk Trigger').item.json[\"ticket.url\"] }}\",\n    \"user_email\": \"{{ $('Zendesk Trigger').item.json[\"ticket.requester.email\"] }}\"\n  },\n  \"translated_data\": {\n    \"originalLanguage\": \"{{$('Translate ticket to english1').isExecuted ? $('Translate ticket to english1').item.json.output.first().content.first().text.originalTicketLanguage : \"en\" }}\",\n    \"is_translated\":{{$('Translate ticket to english1').isExecuted ? true:false}}\n    \"translations\": {\n      \"title\": \"{{$('Translate ticket to english1').isExecuted ? $('Translate ticket to english1').item.json.output.first().content.first().text.title : \"\"}}\",\n      \"description\": \"{{$('Translate ticket to english1').isExecuted ? $('Translate ticket to english1').item.json.output.first().content.first().text.description : \"\"}}\"\n    }\n  }\n} ",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          1712,
+          80
+        ],
+        "id": "61ace0a5-1d73-499e-b23c-dff1b157d02f",
+        "name": "Set translated request data test1"
+      },
+      {
+        "parameters": {
+          "jsCode": "const INPUT_PATH = 'description';\n\nfunction getByPath(obj, path) {\n  return path.split('.').reduce((acc, key) => {\n    if (acc && Object.prototype.hasOwnProperty.call(acc, key)) {\n      return acc[key];\n    }\n    return undefined;\n  }, obj);\n}\n\nconst inputText = getByPath($json, INPUT_PATH);\n\nif (typeof inputText !== 'string') {\n  throw new Error(`Input at path \"${INPUT_PATH}\" is not a string or does not exist.`);\n}\n\n// Match all lines starting with \"User:\"\nconst userLines = inputText.match(/^User:.*$/gm) || [];\n\n// Return as single newline-separated string\nreturn [\n  {\n    json: {\n      user_only: userLines.join('\\n'),\n      user_lines: userLines, // optional array\n      count: userLines.length,\n    },\n  },\n];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          832,
+          96
+        ],
+        "id": "a0dcb649-3e14-44cc-a2e6-dc321edb6ca5",
+        "name": "Extract"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "5b5364df-96ee-40d2-b018-363299d58adb",
+                "leftValue": "={{ $('Zendesk Trigger').item.json[\"ticket.ticket_field_33825960843421\"] }}",
+                "rightValue": "=language__en",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          1072,
+          96
+        ],
+        "id": "dfb64960-eba8-4c1c-ba19-f6958c34450e",
+        "name": "Language isn't English"
+      },
+      {
+        "parameters": {
+          "options": {
+            "fields": [
+              "ticket.title",
+              "ticket.description",
+              "ticket.url",
+              "ticket.id",
+              "ticket.status",
+              "ticket.requester.email",
+              "ticket.ticket_field_26136966521244",
+              "ticket.ticket_field_26136963437340"
+            ]
+          },
+          "conditions": {
+            "all": [
+              {}
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.zendeskTrigger",
+        "typeVersion": 1,
+        "position": [
+          -384,
+          144
+        ],
+        "id": "b02d2bc1-af9e-49c9-94e4-4551dc665260",
+        "name": "Zendesk Trigger",
+        "webhookId": "0f3956f0-bc03-4db6-a747-5b8553518a09",
+        "credentials": {
+          "zendeskApi": {
+            "id": "GAJckAtNBWv1L38R",
+            "name": "LoveStyle prod Zendesk account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "workflowId": {
+            "__rl": true,
+            "value": "83O1SZnIMdhf999E",
+            "mode": "list",
+            "cachedResultUrl": "/workflow/83O1SZnIMdhf999E",
+            "cachedResultName": "Operations Department — LS prod - Refund requests flow"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {},
+            "matchingColumns": [],
+            "schema": [],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.3,
+        "position": [
+          1952,
+          80
+        ],
+        "id": "cea42386-813e-43be-99e9-b5eb37c85a80",
+        "name": "Call 'LS prod - Refund requests flow'"
+      }
+    ],
+    "connections": {
+      "Get a ticket": {
+        "main": [
+          [
+            {
+              "node": "Is status automated",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Merge": {
+        "main": [
+          [
+            {
+              "node": "Extract",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is status automated": {
+        "main": [
+          [
+            {
+              "node": "Merge",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is chatbot classification == refunds": {
+        "main": [
+          [
+            {
+              "node": "Merge",
+              "type": "main",
+              "index": 1
+            }
+          ]
+        ]
+      },
+      "Translate ticket to english1": {
+        "main": [
+          [
+            {
+              "node": "Set translated request data test1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Set translated request data test1": {
+        "main": [
+          [
+            {
+              "node": "Call 'LS prod - Refund requests flow'",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract": {
+        "main": [
+          [
+            {
+              "node": "Language isn't English",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Language isn't English": {
+        "main": [
+          [
+            {
+              "node": "Set translated request data test1",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Translate ticket to english1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Zendesk Trigger": {
+        "main": [
+          [
+            {
+              "node": "Get a ticket",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Is chatbot classification == refunds",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Antonio antonio.marusic@efuturemedia.com",
+    "name": "Version c25b47ad",
+    "description": "",
+    "autosaved": true,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-29T09:41:57.283Z",
+        "id": 538,
+        "workflowId": "EefwjzTjpagfFtia",
+        "versionId": "c25b47ad-eaa0-41f3-bf90-7f854269def9",
+        "event": "activated",
+        "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e"
+      }
+    ]
+  }
+}
