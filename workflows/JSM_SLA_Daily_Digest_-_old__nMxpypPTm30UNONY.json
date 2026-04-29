@@ -1,0 +1,395 @@
+{
+  "updatedAt": "2026-03-30T08:18:23.116Z",
+  "createdAt": "2026-03-27T12:19:23.965Z",
+  "id": "nMxpypPTm30UNONY",
+  "name": "JSM SLA Daily Digest - old",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "getAll",
+        "returnAll": true,
+        "options": {
+          "fields": "summary,assignee,priority,status",
+          "jql": "project = IT AND statusCategory != Done AND \"Time to resolution\" = breached() ORDER BY assignee ASC"
+        }
+      },
+      "id": "6b753769-a1a9-4e5e-af35-6138d63146ea",
+      "name": "Fetch breached IT issues",
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [
+        -3744,
+        1840
+      ],
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "vXyadK9bOxpEt9lU",
+          "name": "Jira API Antonio token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const issues = $input.all();\n\nconst assigned = {};\nconst unassigned = [];\n\nfor (const item of issues) {\n  const issue = item.json;\n  const key = issue.key;\n  const summary = issue.fields?.summary || '(no summary)';\n  const priority = issue.fields?.priority?.name || 'Unknown';\n  const status = issue.fields?.status?.name || 'Unknown';\n  const url = `https://futuremedia.atlassian.net/browse/${key}`;\n  const assignee = issue.fields?.assignee;\n\n  const ticket = { key, summary, priority, status, url };\n\n  if (assignee && assignee.emailAddress) {\n    const email = assignee.emailAddress;\n    const displayName = assignee.displayName;\n    if (!assigned[email]) {\n      assigned[email] = { displayName, email, tickets: [] };\n    }\n    assigned[email].tickets.push(ticket);\n  } else {\n    unassigned.push(ticket);\n  }\n}\n\nreturn [{ json: { assigned: Object.values(assigned), unassigned } }];"
+      },
+      "id": "7ccd687b-227f-4dd9-9328-34c302b73cfc",
+      "name": "Group by assignee",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3520,
+        1840
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "assigned",
+        "options": {}
+      },
+      "id": "523871ad-c87e-4291-b92e-71417c23cf26",
+      "name": "Split Out",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        -3296,
+        1744
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://slack.com/api/users.lookupByEmail",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "email",
+              "value": "={{ $json.email }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ffc7b610-d99b-4ed2-947a-8ab3ac23f3aa",
+      "name": "Slack lookup by email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3072,
+        1744
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "lOzgmJyjkThz1Dhx",
+          "name": "Slack FM bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const output = [];\n\nconst slackItems = $('Slack lookup by email').all();\nconst assigneeItems = $('Split Out').all();\n\nfor (let i = 0; i < slackItems.length; i++) {\n  const slackResponse = slackItems[i].json;\n  const assignee = assigneeItems[i].json;\n\n  if (!slackResponse.ok || !slackResponse.user?.id) {\n    console.log(`Slack lookup failed for ${assignee.email}: ${slackResponse.error || JSON.stringify(slackResponse)}`);\n    continue;\n  }\n\n  const slackUserId = slackResponse.user.id;\n  const firstName = assignee.displayName.split(' ')[0];\n\n  const lines = assignee.tickets.map(t =>\n    `• <${t.url}|${t.key}> — ${t.summary} _(${t.priority})_`\n  ).join('\\n');\n\n  const message = `:warning: *SLA Breach Digest — Time to Resolution*\\n\\nHi ${firstName}, the following tickets assigned to you have breached their resolution SLA and need attention today:\\n\\n${lines}\\n\\n_Please update or escalate these tickets as soon as possible._`;\n\n  output.push({ json: { slackUserId, message } });\n}\n\nreturn output;"
+      },
+      "id": "77bb9c6f-477c-4d89-a2aa-56e2068a7945",
+      "name": "Build DM message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2848,
+        1744
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "user",
+        "user": {
+          "__rl": true,
+          "value": "={{ $json.slackUserId }}",
+          "mode": "id"
+        },
+        "text": "={{ $json.message }}",
+        "otherOptions": {
+          "mrkdwn": true
+        }
+      },
+      "id": "ab78f174-30a7-46ae-b985-b5f7f5a43164",
+      "name": "Send DM to assignee",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        -2624,
+        1744
+      ],
+      "webhookId": "d1466653-53d7-41a0-b498-39b9a98cbf45",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "tSpUlRaNhgWKbKN4",
+          "name": "Automations Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst unassigned = data.unassigned || [];\n\nif (unassigned.length === 0) {\n  return [{ json: { skip: true, message: '' } }];\n}\n\nconst lines = unassigned.map(t =>\n  `• <${t.url}|${t.key}> — ${t.summary} _(${t.priority})_`\n).join('\\n');\n\nconst message = `:warning: *Unassigned SLA Breaches — Time to Resolution*\\n\\nThe following tickets are unassigned and have breached their resolution SLA:\\n\\n${lines}\\n\\n_Please assign and action these tickets._`;\n\nreturn [{ json: { skip: false, message } }];"
+      },
+      "id": "6e2dfe88-8e1b-4020-8233-d3dcc3ca56ab",
+      "name": "Build channel message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3296,
+        1936
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5dddc2cf-1d05-4950-a11f-1d68571426b8",
+      "name": "Any unassigned tickets?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -3072,
+        1936
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C08RKV354A0",
+          "mode": "list",
+          "cachedResultName": "cross-devops"
+        },
+        "text": "={{ $json.message }}",
+        "otherOptions": {
+          "mrkdwn": true
+        }
+      },
+      "id": "8d4c7049-bcbd-40fa-805a-e3558cc08419",
+      "name": "Send to channel",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        -2848,
+        1936
+      ],
+      "webhookId": "1f0c4571-9440-4187-b76e-d165bc2dea95",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "tSpUlRaNhgWKbKN4",
+          "name": "Automations Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 0,
+              "triggerAtDay": [
+                1,
+                2,
+                3,
+                4,
+                5
+              ],
+              "triggerAtHour": 7
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -3952,
+        1840
+      ],
+      "id": "a3ad33bb-0eb5-42d1-a724-24df6dc802e9",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -3968,
+        2128
+      ],
+      "id": "28ad1e1a-bc1a-40bd-b319-9bab5a9ffec8",
+      "name": "When clicking ‘Execute workflow’"
+    }
+  ],
+  "connections": {
+    "Fetch breached IT issues": {
+      "main": [
+        [
+          {
+            "node": "Group by assignee",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Group by assignee": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build channel message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "Slack lookup by email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack lookup by email": {
+      "main": [
+        [
+          {
+            "node": "Build DM message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build DM message": {
+      "main": [
+        [
+          {
+            "node": "Send DM to assignee",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build channel message": {
+      "main": [
+        [
+          {
+            "node": "Any unassigned tickets?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any unassigned tickets?": {
+      "main": [
+        [
+          {
+            "node": "Send to channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch breached IT issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Fetch breached IT issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "QzwinCVQAJOMqjh2",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": {
+    "node:Schedule Trigger": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "48a0f6c9-4096-4d4f-aaec-e9696ad6ca95",
+  "activeVersionId": null,
+  "versionCounter": 159,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-03-27T12:19:23.968Z",
+      "createdAt": "2026-03-27T12:19:23.968Z",
+      "role": "workflow:owner",
+      "workflowId": "nMxpypPTm30UNONY",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "updatedAt": "2025-09-16T08:57:49.000Z",
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "creatorId": null
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
+}
