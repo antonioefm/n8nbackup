@@ -1,0 +1,395 @@
+{
+  "updatedAt": "2026-05-12T19:17:25.000Z",
+  "createdAt": "2026-05-12T19:17:25.116Z",
+  "id": "6VBYrrSTrlJxBkA1",
+  "name": "CS - Zendesk ticket update request [Template]",
+  "description": "Template version of CS - Zendesk ticket update request. Applies macro, translates if needed, then updates ticket. Already project-agnostic via inputs.",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "728c3533-7073-450f-be5e-2d58ed4cd1f8",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        96
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "61ddae1b-2445-4276-982a-a048b2aaacbf",
+      "name": "Generate customer reply with macro8",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "url": "={{ \"https://\" + $json.zendeskDomain + \".zendesk.com/api/v2/tickets/\" + $json.ticketID + \"/macros/\" + $json.macroID + \"/apply\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {}
+      },
+      "retryOnFail": true
+    },
+    {
+      "id": "8d1ad7b4-fa15-4f5c-9a2a-64fbabe445f6",
+      "name": "Is translated",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        448,
+        96
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "455a5b1b-9564-4577-83bd-936d0ec85e58",
+              "leftValue": "={{ $(\"When Executed by Another Workflow\").item.json.isTranslated }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "3ed2dfd3-a835-4a5b-94fe-366e08b002fb",
+      "name": "Translate macro to local language",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-5.1",
+          "mode": "list",
+          "cachedResultName": "GPT-5.1"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=Customer Support Agent's comment: {{ $json.result.ticket.comment.html_body }}\n\nOriginal language: {{ $('When Executed by Another Workflow').item.json.originalLanguage }}"
+            },
+            {
+              "role": "system",
+              "content": "You are a translation engine. Your sole task is to translate Customer Support Agent's messages into the customer's language. \n\nInput:\nCustomer Support Agent's comment - this needs to be translated\nOriginal language - this is the language you need to translate into\n\nRules (must be followed strictly):\nTranslate exactly and literally\nDo not add, remove, infer, or reinterpret any information\nDo not explain, summarize, rephrase, or improve wording\nPreserve tone, intent, ambiguity, and emotional content exactly\nPreserve formatting, punctuation, emojis, HTML formatting, and line breaks\nDo not normalize slang, profanity, or errors\nIf a term cannot be translated precisely, transliterate it\nIf the input is partially English, translate only the non-English parts\n\nOutput needs to contain:\ntranslatedComment: string\n\nNeeds to be formatted as JSON\nNo commentary, labels, or notes\nNo markdown or HTML unless it exists in the input"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_object",
+              "verbosity": "high"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "yra2iG8pnmCKhZIc",
+          "name": "Futuremedia - n8n project"
+        }
+      }
+    },
+    {
+      "id": "1295c1c7-e687-4ab6-ba3f-a325f6bd1da7",
+      "name": "Reply to customer and set status to solved9",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ \"https://\" + $(\"When Executed by Another Workflow\").item.json.zendeskDomain + \".zendesk.com/api/v2/tickets/\" + $(\"When Executed by Another Workflow\").item.json.ticketID }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ticket.comment.public",
+              "value": "={{ $(\"When Executed by Another Workflow\").item.json.publicComment }}"
+            },
+            {
+              "name": "ticket.comment.html_body",
+              "value": "={{ $json.output[0].content[0].text.translatedComment }}"
+            },
+            {
+              "name": "ticket.custom_status_id",
+              "value": "={{ $(\"When Executed by Another Workflow\").item.json.ticketCustomStatusID }}"
+            },
+            {
+              "name": "ticket.custom_fields.id",
+              "value": "={{ $(\"When Executed by Another Workflow\").item.json.ticketCustomFieldID }}"
+            },
+            {
+              "name": "ticket.custom_fields.value",
+              "value": "={{ $(\"When Executed by Another Workflow\").item.json.ticketCustomFieldValue }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "retryOnFail": true
+    },
+    {
+      "id": "2704f8fb-aba5-4f66-92f4-e561472cf2df",
+      "name": "Reply to customer and set status to solved10",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ \"https://\" + $(\"When Executed by Another Workflow\").item.json.zendeskDomain + \".zendesk.com/api/v2/tickets/\" + $(\"When Executed by Another Workflow\").item.json.ticketID }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ticket.custom_fields.id",
+              "value": "={{ $(\"When Executed by Another Workflow\").item.json.automationCustomFieldID || \"null\" }}"
+            },
+            {
+              "name": "ticket.custom_fields.value",
+              "value": "={{ $(\"When Executed by Another Workflow\").item.json.automationCustomFieldValue || \"null\" }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "retryOnFail": true
+    },
+    {
+      "id": "49cd374f-8b9e-4d48-8841-d6a1a6a72e64",
+      "name": "Reply to customer and set status to solved7",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ \"https://\" + $(\"When Executed by Another Workflow\").item.json.zendeskDomain + \".zendesk.com/api/v2/tickets/\" + $(\"When Executed by Another Workflow\").item.json.ticketID }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ticket.comment.public",
+              "value": "={{ $(\"When Executed by Another Workflow\").item.json.publicComment }}"
+            },
+            {
+              "name": "ticket.comment.html_body",
+              "value": "={{ $json.result.ticket.comment.html_body }}"
+            },
+            {
+              "name": "ticket.custom_status_id",
+              "value": "={{ $(\"When Executed by Another Workflow\").item.json.ticketCustomStatusID }}"
+            },
+            {
+              "name": "ticket.custom_fields.id",
+              "value": "={{ $(\"When Executed by Another Workflow\").item.json.ticketCustomFieldID }}"
+            },
+            {
+              "name": "ticket.custom_fields.value",
+              "value": "={{ $(\"When Executed by Another Workflow\").item.json.ticketCustomFieldValue }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "retryOnFail": true
+    },
+    {
+      "id": "fac16c77-3ee7-43bf-9b33-635250bb70e6",
+      "name": "Reply to customer and set status to solved8",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        896,
+        192
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ \"https://\" + $(\"When Executed by Another Workflow\").item.json.zendeskDomain + \".zendesk.com/api/v2/tickets/\" + $(\"When Executed by Another Workflow\").item.json.ticketID }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ticket.custom_fields.id",
+              "value": "={{ $(\"When Executed by Another Workflow\").item.json.automationCustomFieldID || \"null\" }}"
+            },
+            {
+              "name": "ticket.custom_fields.value",
+              "value": "={{ $(\"When Executed by Another Workflow\").item.json.automationCustomFieldValue || \"null\" }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "retryOnFail": true
+    },
+    {
+      "id": "9212c6f1-0ef5-4a00-82a6-b715ad69540d",
+      "name": "Sticky Note f83dfbcf",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        560,
+        256
+      ],
+      "parameters": {
+        "content": "# Template configuration\n\nThis subworkflow is project-agnostic via inputs only. All project-specific values (zendeskDomain, ticketID, macroID, custom field IDs, etc.) come from the caller's `When Executed by Another Workflow` input.\n\nNo data table lookup needed.\n\n## To duplicate for a new project\n- Duplicate this workflow.\n- Re-bind Zendesk and OpenAI credentials.",
+        "color": 5,
+        "width": 700,
+        "height": 200
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Generate customer reply with macro8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate customer reply with macro8": {
+      "main": [
+        [
+          {
+            "node": "Is translated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is translated": {
+      "main": [
+        [
+          {
+            "node": "Translate macro to local language",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply to customer and set status to solved7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Translate macro to local language": {
+      "main": [
+        [
+          {
+            "node": "Reply to customer and set status to solved9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply to customer and set status to solved9": {
+      "main": [
+        [
+          {
+            "node": "Reply to customer and set status to solved10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply to customer and set status to solved7": {
+      "main": [
+        [
+          {
+            "node": "Reply to customer and set status to solved8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "pinData": null,
+  "versionId": "6a932993-72da-4a31-88ff-45afd853a403",
+  "activeVersionId": null,
+  "versionCounter": 2,
+  "triggerCount": 0,
+  "shared": [
+    {
+      "updatedAt": "2026-05-12T19:17:25.121Z",
+      "createdAt": "2026-05-12T19:17:25.121Z",
+      "role": "workflow:owner",
+      "workflowId": "6VBYrrSTrlJxBkA1",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "updatedAt": "2025-09-16T08:57:49.000Z",
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "creatorId": null
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
+}
