@@ -1,0 +1,653 @@
+{
+  "updatedAt": "2026-06-03T13:11:53.397Z",
+  "createdAt": "2026-06-03T13:07:38.049Z",
+  "id": "7INvinM8gnOct5Cr",
+  "name": "Data Table Backup to GitHub (CSV){   \"name\": \"Data Table Backup to GitHub (CSV)\",   \"nodes\": [     {       \"parameters\": {",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 3 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        320
+      ],
+      "name": "Daily 03:30",
+      "id": "11f5fe7d-9d32-43d0-95d6-98a33a1a2128"
+    },
+    {
+      "parameters": {
+        "resource": "table",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        224,
+        320
+      ],
+      "name": "Data Table List",
+      "id": "4dfa3edd-b435-4ccc-8b95-50091e235a5a"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        448,
+        320
+      ],
+      "name": "Loop Over Tables",
+      "id": "62476219-03e6-4b04-8602-1d5767a052d5"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "filters": {
+          "conditions": []
+        },
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        672,
+        448
+      ],
+      "name": "Get Rows",
+      "alwaysOutputData": true,
+      "id": "170f7409-7cb2-4e57-a89c-115220ce0e16"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Runs once per table (batch size 1). Input = that table's rows (or one empty\n// placeholder item when the table has no rows, via \"Always Output Data\").\nconst items = $input.all();\nconst rows = items.map(i => i.json).filter(r => r && Object.keys(r).length > 0);\n\nconst table = $('Loop Over Tables').first().json;\nconst rawName = String((table && (table.name || table.id)) || 'table');\nconst safeName = (rawName.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '')) || 'table';\n\nfunction esc(v) {\n  if (v === null || v === undefined) return '';\n  if (typeof v === 'object') v = JSON.stringify(v);\n  v = String(v);\n  if (/[\",\\n\\r]/.test(v)) v = '\"' + v.replace(/\"/g, '\"\"') + '\"';\n  return v;\n}\n\nlet csv;\nif (rows.length === 0) {\n  csv = 'note\\n\"no rows at backup time\"\\n';\n} else {\n  const cols = [];\n  for (const r of rows) for (const k of Object.keys(r)) if (!cols.includes(k)) cols.push(k);\n  const lines = [cols.map(esc).join(',')];\n  for (const r of rows) lines.push(cols.map(c => esc(r[c])).join(','));\n  csv = lines.join('\\n') + '\\n';\n}\n\nconst contentBase64 = Buffer.from(csv, 'utf8').toString('base64');\nconst path = 'datatables/' + safeName + '.csv';\nconst apiUrl = 'https://api.github.com/repos/antonioefm/n8nbackup/contents/' + path;\nconst message = 'chore(backup): data table ' + safeName + ' @ ' + new Date().toISOString();\n\nreturn [{ json: { tableName: rawName, path, apiUrl, contentBase64, message, rowCount: rows.length } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        448
+      ],
+      "name": "Build CSV",
+      "id": "86c257b2-a817-4c33-be32-490610b5a25b"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.apiUrl }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "ref",
+              "value": "main"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "User-Agent",
+              "value": "n8n-datatable-backup"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1104,
+        448
+      ],
+      "name": "Get existing SHA",
+      "id": "d5c3c345-0422-4485-a19f-9cb41e677861",
+      "credentials": {
+        "githubApi": {
+          "id": "ZXLxJpX7gGNfiRA6",
+          "name": "GitHub Backup Token"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Runs once per item. Batch size is 1, so .first() is unambiguous.\nconst payload = $('Build CSV').first().json;\n\n// On a brand-new file the GET returned a 404 (passed through via On Error), so\n// $json has no .sha -> we omit it (create). On an existing file $json.sha is set.\nlet sha;\ntry { sha = ($json && $json.sha) ? $json.sha : undefined; } catch (e) { sha = undefined; }\n\nconst requestBody = { message: payload.message, content: payload.contentBase64, branch: 'main' };\nif (sha) requestBody.sha = sha;\n\nreturn { json: { url: payload.apiUrl, requestBody } };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        448
+      ],
+      "name": "Build commit body",
+      "id": "7320e409-3a90-49ae-a7ac-07d184740ae7"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "User-Agent",
+              "value": "n8n-datatable-backup"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1552,
+        448
+      ],
+      "name": "Commit to GitHub",
+      "id": "8fe6edee-bc96-4dc4-a8be-f870f0ad8b41",
+      "credentials": {
+        "githubApi": {
+          "id": "ZXLxJpX7gGNfiRA6",
+          "name": "GitHub Backup Token"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        672,
+        208
+      ],
+      "name": "Done",
+      "id": "a5470249-d5ea-4a97-b4a8-a0206c43db40"
+    }
+  ],
+  "connections": {
+    "Daily 03:30": {
+      "main": [
+        [
+          {
+            "node": "Data Table List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Data Table List": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Tables": {
+      "main": [
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Rows": {
+      "main": [
+        [
+          {
+            "node": "Build CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build CSV": {
+      "main": [
+        [
+          {
+            "node": "Get existing SHA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get existing SHA": {
+      "main": [
+        [
+          {
+            "node": "Build commit body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build commit body": {
+      "main": [
+        [
+          {
+            "node": "Commit to GitHub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit to GitHub": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "ueE9FpTQ3OBvvHQ7",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:Daily 03:30": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": null,
+  "pinData": {},
+  "versionId": "53ef726f-109e-42e7-a4af-c34bc581eee3",
+  "activeVersionId": "53ef726f-109e-42e7-a4af-c34bc581eee3",
+  "versionCounter": 6,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-06-03T13:07:38.052Z",
+      "createdAt": "2026-06-03T13:07:38.052Z",
+      "role": "workflow:owner",
+      "workflowId": "7INvinM8gnOct5Cr",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "updatedAt": "2025-09-16T08:57:49.000Z",
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "creatorId": null
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-06-03T13:11:54.000Z",
+    "createdAt": "2026-06-03T13:11:53.404Z",
+    "versionId": "53ef726f-109e-42e7-a4af-c34bc581eee3",
+    "workflowId": "7INvinM8gnOct5Cr",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "30 3 * * *"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          320
+        ],
+        "name": "Daily 03:30",
+        "id": "11f5fe7d-9d32-43d0-95d6-98a33a1a2128"
+      },
+      {
+        "parameters": {
+          "resource": "table",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1,
+        "position": [
+          224,
+          320
+        ],
+        "name": "Data Table List",
+        "id": "4dfa3edd-b435-4ccc-8b95-50091e235a5a"
+      },
+      {
+        "parameters": {
+          "options": {}
+        },
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": 3,
+        "position": [
+          448,
+          320
+        ],
+        "name": "Loop Over Tables",
+        "id": "62476219-03e6-4b04-8602-1d5767a052d5"
+      },
+      {
+        "parameters": {
+          "operation": "get",
+          "dataTableId": {
+            "__rl": true,
+            "value": "={{ $json.id }}",
+            "mode": "id"
+          },
+          "filters": {
+            "conditions": []
+          },
+          "returnAll": true
+        },
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1,
+        "position": [
+          672,
+          448
+        ],
+        "name": "Get Rows",
+        "alwaysOutputData": true,
+        "id": "170f7409-7cb2-4e57-a89c-115220ce0e16"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Runs once per table (batch size 1). Input = that table's rows (or one empty\n// placeholder item when the table has no rows, via \"Always Output Data\").\nconst items = $input.all();\nconst rows = items.map(i => i.json).filter(r => r && Object.keys(r).length > 0);\n\nconst table = $('Loop Over Tables').first().json;\nconst rawName = String((table && (table.name || table.id)) || 'table');\nconst safeName = (rawName.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '')) || 'table';\n\nfunction esc(v) {\n  if (v === null || v === undefined) return '';\n  if (typeof v === 'object') v = JSON.stringify(v);\n  v = String(v);\n  if (/[\",\\n\\r]/.test(v)) v = '\"' + v.replace(/\"/g, '\"\"') + '\"';\n  return v;\n}\n\nlet csv;\nif (rows.length === 0) {\n  csv = 'note\\n\"no rows at backup time\"\\n';\n} else {\n  const cols = [];\n  for (const r of rows) for (const k of Object.keys(r)) if (!cols.includes(k)) cols.push(k);\n  const lines = [cols.map(esc).join(',')];\n  for (const r of rows) lines.push(cols.map(c => esc(r[c])).join(','));\n  csv = lines.join('\\n') + '\\n';\n}\n\nconst contentBase64 = Buffer.from(csv, 'utf8').toString('base64');\nconst path = 'datatables/' + safeName + '.csv';\nconst apiUrl = 'https://api.github.com/repos/antonioefm/n8nbackup/contents/' + path;\nconst message = 'chore(backup): data table ' + safeName + ' @ ' + new Date().toISOString();\n\nreturn [{ json: { tableName: rawName, path, apiUrl, contentBase64, message, rowCount: rows.length } }];\n"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          880,
+          448
+        ],
+        "name": "Build CSV",
+        "id": "86c257b2-a817-4c33-be32-490610b5a25b"
+      },
+      {
+        "parameters": {
+          "url": "={{ $json.apiUrl }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "githubApi",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "ref",
+                "value": "main"
+              }
+            ]
+          },
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/vnd.github+json"
+              },
+              {
+                "name": "User-Agent",
+                "value": "n8n-datatable-backup"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1104,
+          448
+        ],
+        "name": "Get existing SHA",
+        "id": "d5c3c345-0422-4485-a19f-9cb41e677861",
+        "credentials": {
+          "githubApi": {
+            "id": "ZXLxJpX7gGNfiRA6",
+            "name": "GitHub Backup Token"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "// Runs once per item. Batch size is 1, so .first() is unambiguous.\nconst payload = $('Build CSV').first().json;\n\n// On a brand-new file the GET returned a 404 (passed through via On Error), so\n// $json has no .sha -> we omit it (create). On an existing file $json.sha is set.\nlet sha;\ntry { sha = ($json && $json.sha) ? $json.sha : undefined; } catch (e) { sha = undefined; }\n\nconst requestBody = { message: payload.message, content: payload.contentBase64, branch: 'main' };\nif (sha) requestBody.sha = sha;\n\nreturn { json: { url: payload.apiUrl, requestBody } };\n"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1328,
+          448
+        ],
+        "name": "Build commit body",
+        "id": "7320e409-3a90-49ae-a7ac-07d184740ae7"
+      },
+      {
+        "parameters": {
+          "method": "PUT",
+          "url": "={{ $json.url }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "githubApi",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/vnd.github+json"
+              },
+              {
+                "name": "User-Agent",
+                "value": "n8n-datatable-backup"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1552,
+          448
+        ],
+        "name": "Commit to GitHub",
+        "id": "8fe6edee-bc96-4dc4-a8be-f870f0ad8b41",
+        "credentials": {
+          "githubApi": {
+            "id": "ZXLxJpX7gGNfiRA6",
+            "name": "GitHub Backup Token"
+          }
+        }
+      },
+      {
+        "parameters": {},
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          672,
+          208
+        ],
+        "name": "Done",
+        "id": "a5470249-d5ea-4a97-b4a8-a0206c43db40"
+      }
+    ],
+    "connections": {
+      "Daily 03:30": {
+        "main": [
+          [
+            {
+              "node": "Data Table List",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Data Table List": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Tables",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Loop Over Tables": {
+        "main": [
+          [
+            {
+              "node": "Done",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Get Rows",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Rows": {
+        "main": [
+          [
+            {
+              "node": "Build CSV",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build CSV": {
+        "main": [
+          [
+            {
+              "node": "Get existing SHA",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get existing SHA": {
+        "main": [
+          [
+            {
+              "node": "Build commit body",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build commit body": {
+        "main": [
+          [
+            {
+              "node": "Commit to GitHub",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Commit to GitHub": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Tables",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Antonio antonio.marusic@efuturemedia.com",
+    "name": "Version 53ef726f",
+    "description": "",
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-06-03T13:11:54.661Z",
+        "id": 880,
+        "workflowId": "7INvinM8gnOct5Cr",
+        "versionId": "53ef726f-109e-42e7-a4af-c34bc581eee3",
+        "event": "activated",
+        "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e"
+      }
+    ]
+  }
+}
