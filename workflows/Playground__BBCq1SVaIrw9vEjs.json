@@ -1,0 +1,182 @@
+{
+  "updatedAt": "2026-06-09T14:01:16.742Z",
+  "createdAt": "2026-06-09T12:33:52.800Z",
+  "id": "BBCq1SVaIrw9vEjs",
+  "name": "Playground",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// Resolve Zendesk update fields\n// Computes the scenario itself from category + full_refund + count (all knowable\n// up front via absolute refs). For branches where the scenario depends on a late\n// signal (cancellation rejection), an explicit `scenario` on the item wins.\n\nconst cfg = $('Get Project Config').first().json;\nconst req = $('Set request data test4').first().json;\n\nconst MAP = {\n  TRIAL_ONLY:             { macro: 'refund_macro_trial_id',             category: 'refund_value_trial' },\n  UPSELL_AND_TRIAL:       { macro: 'refund_macro_trial_id',             category: 'refund_value_trial' },\n  RECURRENT_UPSELL_MULTI: { macro: 'refund_macro_monthly_legacy_id',    category: 'refund_value_monthly' },\n  RECURRENT_UPSELL_SINGLE:{ macro: 'refund_macro_monthly_id',           category: 'refund_value_monthly' },\n  RECURRENT_TRIAL:        { macro: 'refund_macro_monthly_id',           category: 'refund_value_monthly_alt' },\n  RECURRENT_ONLY_LAST:    { macro: 'refund_macro_30day_last_charge_id', category: 'refund_value_30day_last_charge_alt' },\n  RECURRENT_ONLY_TWO:     { macro: 'refund_macro_30day_two_charges_id', category: 'refund_value_30day_two_charges' },\n  ALL_LAST_CHARGE:        { macro: 'refund_macro_30day_last_charge_id', category: 'refund_value_30day_last_charge' },\n  ALL_TWO_CHARGES:        { macro: 'refund_macro_30day_two_charges_id', category: 'refund_value_monthly' },\n  ONE_TXN_MONTHLY:        { macro: 'refund_macro_monthly_id',           category: 'refund_value_30day_last_charge_alt' },\n  REJECTION:              { macro: 'refund_macro_rejection_id',         category: 'refund_value_rejection' },\n  REJECTION_PAST_REFUNDS: { macro: 'macro_rejection_with_past_refunds', category: 'refund_value_rejection' },\n};\n\nfunction inferScenario() {\n  const category   = $('Categorise request based on transaction types').first().json.transactionCategory;\n  const fullRefund = req.original_ticket_content.full_refund_request === true;\n  const txns       = $('Redirect based on last transactions').first().json.body.transactions || [];\n  const multi      = txns.length > 1;\n\n  switch (category) {\n    case 'CAT__TRIAL_ONLY':          return 'TRIAL_ONLY';\n    case 'CAT__UPSELL_AND_TRIAL':    return 'UPSELL_AND_TRIAL';\n    case 'CAT__RECURRENT_AND_TRIAL': return 'RECURRENT_TRIAL';\n    case 'CAT__RECURRENT_AND_UPSELL':\n      return (fullRefund && multi) ? 'RECURRENT_UPSELL_SINGLE' : 'RECURRENT_UPSELL_MULTI';\n    case 'CAT__RECURRENT_ONLY':\n      // full refund: >1 -> two charges, exactly 1 -> last charge\n      if (fullRefund) return multi ? 'RECURRENT_ONLY_TWO' : 'RECURRENT_ONLY_LAST';\n      // partial refund (corrected): >1 -> last charge, exactly 1 -> monthly\n      return multi ? 'RECURRENT_ONLY_LAST' : 'ONE_TXN_MONTHLY';\n    case 'CAT__ALL_THREE_PRESENT':\n      return (fullRefund && multi) ? 'ALL_TWO_CHARGES' : 'ALL_LAST_CHARGE';\n    default:\n      throw new Error(`Resolve: cannot infer scenario for category '${category}' (pass an explicit scenario)`);\n  }\n}\n\nreturn $input.all().map(item => {\n  const scenario = item.json.scenario ?? inferScenario();\n  const m = MAP[scenario];\n  if (!m) throw new Error(`Resolve: unknown scenario '${scenario}'`);\n\n  return {\n    json: {\n      zendeskDomain:          cfg.zendesk_domain,\n      ticketID:               req.original_ticket_content.ticket_id,\n      isTranslated:           req.translated_data.is_translated,\n      originalLanguage:       req.translated_data.originalLanguage,\n      ticketCustomFieldID:    cfg.ticket_custom_field_category,\n      publicComment:          item.json.publicComment ?? true,\n      ticketCustomStatusID:   cfg[item.json.statusKey ?? 'ticket_custom_status_solved_id'],\n      macroID:                cfg[m.macro],\n      ticketCustomFieldValue: cfg[m.category],\n      scenario,\n    },\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1152,
+        -1744
+      ],
+      "id": "b3fddcbb-ea4a-485b-b211-85d3e0d80bd4",
+      "name": "Resolve Zendesk update fields"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "6VBYrrSTrlJxBkA1",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/6VBYrrSTrlJxBkA1",
+          "cachedResultName": "Operations Department — CS - Zendesk ticket update request [Template]"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1376,
+        -1744
+      ],
+      "id": "148e85c0-b5b4-44eb-98c9-0dbad3beaaf2",
+      "name": "Update zendesk ticket (shared)"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b000000b-0000-4000-8000-00000000000b",
+              "name": "scenario",
+              "value": "REJECTION",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        928,
+        -1840
+      ],
+      "id": "d101de05-d7aa-4391-8473-1b3495eb836b",
+      "name": "Set scenario - Rejection"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b000000c-0000-4000-8000-00000000000c",
+              "name": "scenario",
+              "value": "REJECTION_PAST_REFUNDS",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        928,
+        -1648
+      ],
+      "id": "29ca094b-7e44-41b5-a5f7-ab4923ef9e90",
+      "name": "Set scenario - Rejection (past refunds)"
+    },
+    {
+      "parameters": {
+        "content": "## replace set node and update zendesk ticket nodes"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1168,
+        -1456
+      ],
+      "id": "2220c974-3b9a-4cbb-87f2-ccb7ae89221f",
+      "name": "Sticky Note"
+    }
+  ],
+  "connections": {
+    "Resolve Zendesk update fields": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket (shared)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set scenario - Rejection": {
+      "main": [
+        [
+          {
+            "node": "Resolve Zendesk update fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set scenario - Rejection (past refunds)": {
+      "main": [
+        [
+          {
+            "node": "Resolve Zendesk update fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "meta": null,
+  "nodeGroups": [],
+  "pinData": {},
+  "versionId": "049fd68f-388e-4c0d-b2b3-a901eaa02247",
+  "activeVersionId": null,
+  "versionCounter": 17,
+  "triggerCount": 0,
+  "shared": [
+    {
+      "updatedAt": "2026-06-09T12:33:52.806Z",
+      "createdAt": "2026-06-09T12:33:52.806Z",
+      "role": "workflow:owner",
+      "workflowId": "BBCq1SVaIrw9vEjs",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "updatedAt": "2025-09-16T08:57:49.000Z",
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "creatorId": null
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
+}
