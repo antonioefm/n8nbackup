@@ -1,0 +1,1768 @@
+{
+  "updatedAt": "2026-06-10T10:40:12.138Z",
+  "createdAt": "2026-06-10T08:34:35.548Z",
+  "id": "6lYSxMlA2bQYIaaq",
+  "name": "PS prod - User eligibility check",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        1840,
+        672
+      ],
+      "id": "8fac228a-d6cb-43f4-9f91-257659dd7a1d",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5d3b1e8a-1111-4a01-9a01-000000000001",
+              "name": "project_key",
+              "value": "personality_prod",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "90da7488-9c55-4fdb-9f93-f10dea445916",
+      "name": "Set project_key",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2064,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "IRxwFN8iBhHLFQxQ",
+          "cachedResultName": "cs_project_config"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "project_key",
+              "keyValue": "={{ $('Set project_key').first().json.project_key }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "id": "036e9eed-bef1-4dbe-81a1-2b08d07bae42",
+      "name": "Get Project Config",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2288,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Re-emit the original passthrough payload from the execute-workflow trigger.\n// Get Project Config replaces the incoming item with the config row, so we\n// restore the ticket data here for every downstream check to reference via\n// $('Restore trigger data').\nreturn $('When Executed by Another Workflow').all();\n"
+      },
+      "id": "2b87175d-11cc-4715-a12f-a81e4fff3e69",
+      "name": "Restore trigger data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2512,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "VKJxPTkYWhZaXFqW",
+          "mode": "list",
+          "cachedResultName": "cs_email_blocklist",
+          "cachedResultUrl": "/projects/CH8lyrRTH2IOvQOj/datatables/VKJxPTkYWhZaXFqW"
+        },
+        "returnAll": true
+      },
+      "id": "5a24e168-4fa3-4f3a-9b7c-64ae264fda21",
+      "name": "Get Email Blocklist",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        2736,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// === Email blocklist filter ===\n// Mode: \"Run Once for All Items\".\n// Input to this node = rows from the \"Get Email Blocklist\" Data Table node.\n\n// 1) Requester email, from the restored trigger payload.\nconst email = String(\n  $('Restore trigger data').first()?.json?.body?.['ticket.requester.email'] ?? ''\n).trim().toLowerCase();\n\n// 2) Blocklist rows (each input item = one row from the data table).\nconst rows = $input.all();\n\n// 3) First active rule whose match_value is contained in the email wins.\nlet matched = null;\nif (email) {\n  for (const r of rows) {\n    const row = r.json || {};\n    const isActive = !(row.active === false || row.active === 0\n      || row.active === 'false' || row.active === '0' || row.active === 'no');\n    if (!isActive) continue;\n    const needle = String(row.match_value ?? '').trim().toLowerCase();\n    if (!needle) continue;\n    if (email.includes(needle)) { matched = row; break; }\n  }\n}\n\n// 4) One decision item out.\nreturn [{\n  json: {\n    email,\n    blocked: matched !== null,\n    matched_value: matched ? matched.match_value : null,\n    matched_reason: (matched && matched.reason != null) ? matched.reason : null,\n  },\n}];\n"
+      },
+      "id": "483c142d-7402-4cc6-bae3-947d18ce6abd",
+      "name": "Filter Blocked Emails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2960,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f4c0cc20-8c15-4297-bdf9-b51546e1508d",
+              "leftValue": "={{ $json.blocked }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "733511ea-6344-4792-91c1-fab24157dda5",
+      "name": "Is Blocked?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3184,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "74965532-52ce-4b5e-8e39-5787b53d7770",
+              "name": "fail_reason",
+              "value": "blocked_email",
+              "type": "string"
+            },
+            {
+              "id": "f3cc563d-c6e1-4a1c-be65-9684ceed39ff",
+              "name": "note_body",
+              "value": "=Note: The requester {{ $('Restore trigger data').first().json.body['ticket.requester.email'] }} is on the automation blocklist because: {{ $json.matched_reason ? $json.matched_reason : \"no reason provided\" }}. If this requester shouldn't be blocked, please report it to the Operations Department.\n\nAutomation was skipped — please handle this ticket manually.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f247657f-9d70-4316-829a-4be427876b53",
+      "name": "Note: Blocked email",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4976,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/users/search.json\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "=email:{{ $('Restore trigger data').first().json.body['ticket.requester.email'] }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "dabb7663-2316-432d-932d-43992b524172",
+      "name": "Zendesk: Find Requester by Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3728,
+        1168
+      ],
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/users/\" + $json.users[0].id + \"/tickets/requested.json\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "sort_by",
+              "value": "updated_at"
+            },
+            {
+              "name": "sort_order",
+              "value": "desc"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cf44d049-0d84-4fdb-97ff-a1100e01e274",
+      "name": "Zendesk: Get Requester Tickets (live)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3936,
+        1168
+      ],
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Statuses that mean \"not yet handled by support\".\n// A freshly created end-user ticket lands as NEW until support engages it.\nconst UNHANDLED_STATUSES = ['new'];\n\n// Current ticket id, from the restored trigger payload.\nconst currentTicketId = $('Restore trigger data').first().json.body['ticket.id'];\n\nconst tickets = $input.first().json.tickets || [];\n\nconst otherUnhandledTickets = tickets.filter(\n  t => UNHANDLED_STATUSES.includes(t.status) && String(t.id) !== String(currentTicketId)\n);\n\n// proceed = this is effectively the only unhandled ticket for the requester\nconst proceed = otherUnhandledTickets.length === 0;\n\nreturn [{\n  json: {\n    proceed,\n    unhandled_ticket_count: otherUnhandledTickets.length,\n    other_unhandled_ticket_ids: otherUnhandledTickets.map(t => t.id)\n  }\n}];\n"
+      },
+      "id": "c0940867-edca-4db3-81b5-0b81d2f4085f",
+      "name": "Evaluate Open Ticket Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4160,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "5ad6f9fa-ea65-4ef9-99c2-f905c15d16a8",
+              "leftValue": "={{ $json.proceed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6748a503-3d04-4b24-a743-b11d5b212835",
+      "name": "Only Unhandled Ticket?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4384,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "83dc4787-f011-43f7-ba5f-41199ed3280e",
+              "name": "fail_reason",
+              "value": "multiple_new_tickets",
+              "type": "string"
+            },
+            {
+              "id": "bc263b58-ad19-407e-a09f-9f34ddc11cfc",
+              "name": "note_body",
+              "value": "=Note: This requester ({{ $('Restore trigger data').first().json.body['ticket.requester.email'] }}) has {{ $json.unhandled_ticket_count }} other unhandled (new) ticket(s) open: {{ $json.other_unhandled_ticket_ids.join(', ') }}. Automation was skipped to avoid duplicate handling.\n\nPlease handle this ticket manually.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "db57857b-0bda-400b-a8a6-5afd0775fe47",
+      "name": "Note: Multiple new tickets",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4976,
+        1216
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "044aee42-6466-4dca-b7c8-ef99f10b8148",
+              "leftValue": "={{ $('Restore trigger data').first().json.body[\"ticket.ticket_field_\" + $('Get Project Config').first().json.ticket_field_contact_form_classification_id] }}",
+              "rightValue": "cancellation",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "bb25e7db-16a8-407c-adeb-1d40a109f36e",
+      "name": "Is contact form cancellation",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4672,
+        1056
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "2abe7692-4f7c-4aaf-88e4-0703cd5f3dc5",
+              "name": "fail_reason",
+              "value": "contact_form_cancellation",
+              "type": "string"
+            },
+            {
+              "id": "14b886c2-7beb-4655-a701-932b72e5da21",
+              "name": "note_body",
+              "value": "=Note: This ticket (#{{ $('Restore trigger data').first().json.body['ticket.id'] }}) was submitted through the contact form as a cancellation request. Automation was skipped.\n\nPlease handle this ticket manually.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "418cf924-7ecc-4adc-904e-1e466ee7ab26",
+      "name": "Note: Contact form cancellation",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4976,
+        848
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "f177baca-42d4-4dcc-9149-c9b81f497ec5",
+      "name": "Do not proceed",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        5296,
+        800
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "d9e9fc48-d345-49ca-94d6-8b2292283652",
+      "name": "Proceed (eligible)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        5296,
+        1056
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $('When Executed by Another Workflow').item.json.body['ticket.id'] }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ticket.comment.public",
+              "value": "false"
+            },
+            {
+              "name": "ticket.comment.body",
+              "value": "=User eligibility failed:\nFail reason: {{ $json.fail_reason }}\nNote: {{ $json.note_body }}\n\nPlease handle this request manually. "
+            },
+            {
+              "name": "ticket.custom_status_id",
+              "value": "={{ $(\"Get Project Config\").first().json.ticket_custom_status_open_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "79e53fa9-4090-45b2-9b98-4c27a629ab58",
+      "name": "Reply to internally and set status to open3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        5568,
+        800
+      ],
+      "retryOnFail": true,
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## 1) Check for blocked emails",
+        "height": 120,
+        "width": 420,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2720,
+        528
+      ],
+      "id": "9341be7f-9609-4288-8cd9-dc7c760d0a42",
+      "name": "Sticky Blocked"
+    },
+    {
+      "parameters": {
+        "content": "## 2) Check for multiple \"new\" tickets",
+        "height": 152,
+        "width": 248,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3712,
+        992
+      ],
+      "id": "05ac36aa-1329-403c-bd1a-58b9097ee2be",
+      "name": "Sticky Multi"
+    },
+    {
+      "parameters": {
+        "content": "## 3) Check for contact form cancellations",
+        "height": 120,
+        "width": 230,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        4528,
+        912
+      ],
+      "id": "d2a72493-615d-46d9-84cb-5011ed41bd2e",
+      "name": "Sticky Cancel"
+    },
+    {
+      "parameters": {
+        "content": "# Do not proceed\nAll three fail notes merge here (note_body + fail_reason). Wire your single fail action after this node.",
+        "height": 200,
+        "width": 300,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        5296,
+        576
+      ],
+      "id": "4ae9ea50-115e-4a6e-8149-1f4ff00d4965",
+      "name": "Sticky Fail"
+    },
+    {
+      "parameters": {
+        "content": "# Proceed\nAll three checks passed. Wire the main automation after this node.",
+        "height": 208,
+        "width": 300,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        5296,
+        1200
+      ],
+      "id": "3fd568cb-1c11-45ab-86e8-889610b33ed2",
+      "name": "Sticky Proceed"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "03853d94-c29e-4385-a2b9-eedb5596cb7c",
+              "name": "proceedWithAutomation",
+              "value": false,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        5776,
+        800
+      ],
+      "id": "e252a099-17cf-4fde-9462-575d0d862110",
+      "name": "Do not proceed1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "03853d94-c29e-4385-a2b9-eedb5596cb7c",
+              "name": "proceedWithAutomation",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        5776,
+        1056
+      ],
+      "id": "c39919ae-7dcc-43c8-9e93-1d75eb0683a6",
+      "name": "Proceed"
+    },
+    {
+      "parameters": {
+        "amount": 10
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3536,
+        1168
+      ],
+      "id": "7c231cc1-c333-4e9e-a805-b6e7e6fdb68d",
+      "name": "Wait",
+      "webhookId": "10de9be3-ddd4-4641-98c1-1ea0152e6756"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Set project_key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set project_key": {
+      "main": [
+        [
+          {
+            "node": "Get Project Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Project Config": {
+      "main": [
+        [
+          {
+            "node": "Restore trigger data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore trigger data": {
+      "main": [
+        [
+          {
+            "node": "Get Email Blocklist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Email Blocklist": {
+      "main": [
+        [
+          {
+            "node": "Filter Blocked Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Blocked Emails": {
+      "main": [
+        [
+          {
+            "node": "Is Blocked?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Blocked?": {
+      "main": [
+        [
+          {
+            "node": "Note: Blocked email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk: Find Requester by Email": {
+      "main": [
+        [
+          {
+            "node": "Zendesk: Get Requester Tickets (live)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk: Get Requester Tickets (live)": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Open Ticket Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Open Ticket Guard": {
+      "main": [
+        [
+          {
+            "node": "Only Unhandled Ticket?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Only Unhandled Ticket?": {
+      "main": [
+        [
+          {
+            "node": "Is contact form cancellation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Note: Multiple new tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is contact form cancellation": {
+      "main": [
+        [
+          {
+            "node": "Note: Contact form cancellation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Proceed (eligible)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Note: Blocked email": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Note: Multiple new tickets": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Note: Contact form cancellation": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Do not proceed": {
+      "main": [
+        [
+          {
+            "node": "Reply to internally and set status to open3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply to internally and set status to open3": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Proceed (eligible)": {
+      "main": [
+        [
+          {
+            "node": "Proceed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Zendesk: Find Requester by Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "BY3PNiyJJJ9EMdEi",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "nodeGroups": [],
+  "pinData": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "headers": {
+            "host": "efuturemedia.app.n8n.cloud",
+            "user-agent": "Zendesk Webhook",
+            "content-length": "1087",
+            "accept-encoding": "gzip, br",
+            "cdn-loop": "cloudflare; loops=1; subreqs=1",
+            "cf-connecting-ip": "216.198.17.118",
+            "cf-ew-via": "15",
+            "cf-ipcountry": "IE",
+            "cf-ray": "a097bc225c66b1a4-DUB",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "cf-worker": "n8n.cloud",
+            "content-type": "application/json; charset=utf-8",
+            "traceparent": "00-6a293e290000000021aaa8e47c878880-21aaa8e47c878880-00",
+            "tracestate": "dd=s:-1;p:21aaa8e47c878880",
+            "x-forwarded-for": "216.198.17.118, 162.158.6.209",
+            "x-forwarded-host": "efuturemedia.app.n8n.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik-prod-users-gwc-34-68577659cb-t2q4f",
+            "x-is-trusted": "yes",
+            "x-real-ip": "216.198.17.118",
+            "x-request-id": "1b14498d-bc58-4d97-8edf-deade46fa6af",
+            "x-zendesk-account-id": "21082445",
+            "x-zendesk-webhook-id": "01KSM3XQ70MRYH94RP3MK3P03M",
+            "x-zendesk-webhook-invocation-id": "01KTRHNM7AC7SE326ZE0S6EQQR",
+            "x-zendesk-webhook-signature": "Yt1Ag2sVuikHE06XKwOBJfC0BwZd0OcTdvpWh8GYbDI=",
+            "x-zendesk-webhook-signature-timestamp": "2026-06-10T10:36:25Z"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "ticket.title": "Request for cancellation and refund",
+            "ticket.description": "----------------------------------------------\n\n北垣洋基, Jun 10, 2026, 13:36\n\nDear MyPersonality Support Team,\n\nI recently noticed recurring charges on my credit card from MyPersonality.I took the 16-type personality test, but I did not intend to subscribe to a monthly/recurring plan.\n\nPlease cancel my subscription immediately and stop any future charges.I would also like to request a refund for the recent charges, as I was not aware that I had subscribed to a recurring service.\n\n【Account information】\n– Name: Hiroki Kitagaki\n– Email address I used to register: knanoeins1122@gmail.com\n– Last 4 digits of the card: 9758\n– Approximate date of the first charge: 2026-05-12\n– Recent charge: 2026-05-12, USD 51.78\n– Country: Japan\n\nI look forward to your confirmation of the cancellation and refund.\n\nBest regards,\nHiroki Kitagaki",
+            "ticket.url": "personalitytest.zendesk.com/agent/tickets/634275",
+            "ticket.id": "634275",
+            "ticket.requester.email": "knanoeins1122@gmail.com"
+          },
+          "webhookUrl": "https://efuturemedia.app.n8n.cloud/webhook/9f0d3276-a0cb-41e1-ad42-a9bf26572498",
+          "executionMode": "production"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "versionId": "68fafa37-80f1-43a8-9483-04ea657f4186",
+  "activeVersionId": "68fafa37-80f1-43a8-9483-04ea657f4186",
+  "versionCounter": 10,
+  "triggerCount": 0,
+  "sourceWorkflowId": null,
+  "shared": [
+    {
+      "updatedAt": "2026-06-10T08:34:35.551Z",
+      "createdAt": "2026-06-10T08:34:35.551Z",
+      "role": "workflow:owner",
+      "workflowId": "6lYSxMlA2bQYIaaq",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "updatedAt": "2025-09-16T08:57:49.000Z",
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null
+      }
+    }
+  ],
+  "tags": [
+    {
+      "updatedAt": "2026-03-20T07:31:14.395Z",
+      "createdAt": "2026-03-20T07:31:14.395Z",
+      "id": "CcGEek9zkAIkYDuM",
+      "name": "CS automation"
+    },
+    {
+      "updatedAt": "2026-04-29T08:17:28.475Z",
+      "createdAt": "2026-04-29T08:17:28.475Z",
+      "id": "LPw8bOnALJSRx7sJ",
+      "name": "PE prod"
+    }
+  ],
+  "activeVersion": {
+    "updatedAt": "2026-06-10T10:40:21.000Z",
+    "createdAt": "2026-06-10T10:40:12.139Z",
+    "versionId": "68fafa37-80f1-43a8-9483-04ea657f4186",
+    "workflowId": "6lYSxMlA2bQYIaaq",
+    "nodes": [
+      {
+        "parameters": {
+          "inputSource": "passthrough"
+        },
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          1840,
+          672
+        ],
+        "id": "8fac228a-d6cb-43f4-9f91-257659dd7a1d",
+        "name": "When Executed by Another Workflow"
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "5d3b1e8a-1111-4a01-9a01-000000000001",
+                "name": "project_key",
+                "value": "personality_prod",
+                "type": "string"
+              }
+            ]
+          },
+          "includeOtherFields": true,
+          "options": {}
+        },
+        "id": "90da7488-9c55-4fdb-9f93-f10dea445916",
+        "name": "Set project_key",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          2064,
+          672
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "get",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "IRxwFN8iBhHLFQxQ",
+            "cachedResultName": "cs_project_config"
+          },
+          "matchType": "allConditions",
+          "filters": {
+            "conditions": [
+              {
+                "keyName": "project_key",
+                "keyValue": "={{ $('Set project_key').first().json.project_key }}"
+              }
+            ]
+          },
+          "limit": 1
+        },
+        "id": "036e9eed-bef1-4dbe-81a1-2b08d07bae42",
+        "name": "Get Project Config",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          2288,
+          672
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Re-emit the original passthrough payload from the execute-workflow trigger.\n// Get Project Config replaces the incoming item with the config row, so we\n// restore the ticket data here for every downstream check to reference via\n// $('Restore trigger data').\nreturn $('When Executed by Another Workflow').all();\n"
+        },
+        "id": "2b87175d-11cc-4715-a12f-a81e4fff3e69",
+        "name": "Restore trigger data",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2512,
+          672
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "get",
+          "dataTableId": {
+            "__rl": true,
+            "value": "VKJxPTkYWhZaXFqW",
+            "mode": "list",
+            "cachedResultName": "cs_email_blocklist",
+            "cachedResultUrl": "/projects/CH8lyrRTH2IOvQOj/datatables/VKJxPTkYWhZaXFqW"
+          },
+          "returnAll": true
+        },
+        "id": "5a24e168-4fa3-4f3a-9b7c-64ae264fda21",
+        "name": "Get Email Blocklist",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1,
+        "position": [
+          2736,
+          672
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// === Email blocklist filter ===\n// Mode: \"Run Once for All Items\".\n// Input to this node = rows from the \"Get Email Blocklist\" Data Table node.\n\n// 1) Requester email, from the restored trigger payload.\nconst email = String(\n  $('Restore trigger data').first()?.json?.body?.['ticket.requester.email'] ?? ''\n).trim().toLowerCase();\n\n// 2) Blocklist rows (each input item = one row from the data table).\nconst rows = $input.all();\n\n// 3) First active rule whose match_value is contained in the email wins.\nlet matched = null;\nif (email) {\n  for (const r of rows) {\n    const row = r.json || {};\n    const isActive = !(row.active === false || row.active === 0\n      || row.active === 'false' || row.active === '0' || row.active === 'no');\n    if (!isActive) continue;\n    const needle = String(row.match_value ?? '').trim().toLowerCase();\n    if (!needle) continue;\n    if (email.includes(needle)) { matched = row; break; }\n  }\n}\n\n// 4) One decision item out.\nreturn [{\n  json: {\n    email,\n    blocked: matched !== null,\n    matched_value: matched ? matched.match_value : null,\n    matched_reason: (matched && matched.reason != null) ? matched.reason : null,\n  },\n}];\n"
+        },
+        "id": "483c142d-7402-4cc6-bae3-947d18ce6abd",
+        "name": "Filter Blocked Emails",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2960,
+          672
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "f4c0cc20-8c15-4297-bdf9-b51546e1508d",
+                "leftValue": "={{ $json.blocked }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "733511ea-6344-4792-91c1-fab24157dda5",
+        "name": "Is Blocked?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          3184,
+          672
+        ]
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "74965532-52ce-4b5e-8e39-5787b53d7770",
+                "name": "fail_reason",
+                "value": "blocked_email",
+                "type": "string"
+              },
+              {
+                "id": "f3cc563d-c6e1-4a1c-be65-9684ceed39ff",
+                "name": "note_body",
+                "value": "=Note: The requester {{ $('Restore trigger data').first().json.body['ticket.requester.email'] }} is on the automation blocklist because: {{ $json.matched_reason ? $json.matched_reason : \"no reason provided\" }}. If this requester shouldn't be blocked, please report it to the Operations Department.\n\nAutomation was skipped — please handle this ticket manually.",
+                "type": "string"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "f247657f-9d70-4316-829a-4be427876b53",
+        "name": "Note: Blocked email",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          4976,
+          656
+        ]
+      },
+      {
+        "parameters": {
+          "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/users/search.json\" }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "zendeskApi",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "query",
+                "value": "=email:{{ $('Restore trigger data').first().json.body['ticket.requester.email'] }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "dabb7663-2316-432d-932d-43992b524172",
+        "name": "Zendesk: Find Requester by Email",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3728,
+          1168
+        ],
+        "credentials": {
+          "zendeskApi": {
+            "id": "z41y1j8bbsyi2W61",
+            "name": "Personality Zendesk prod account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/users/\" + $json.users[0].id + \"/tickets/requested.json\" }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "zendeskApi",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "sort_by",
+                "value": "updated_at"
+              },
+              {
+                "name": "sort_order",
+                "value": "desc"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "cf44d049-0d84-4fdb-97ff-a1100e01e274",
+        "name": "Zendesk: Get Requester Tickets (live)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3936,
+          1168
+        ],
+        "credentials": {
+          "zendeskApi": {
+            "id": "z41y1j8bbsyi2W61",
+            "name": "Personality Zendesk prod account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// Statuses that mean \"not yet handled by support\".\n// A freshly created end-user ticket lands as NEW until support engages it.\nconst UNHANDLED_STATUSES = ['new'];\n\n// Current ticket id, from the restored trigger payload.\nconst currentTicketId = $('Restore trigger data').first().json.body['ticket.id'];\n\nconst tickets = $input.first().json.tickets || [];\n\nconst otherUnhandledTickets = tickets.filter(\n  t => UNHANDLED_STATUSES.includes(t.status) && String(t.id) !== String(currentTicketId)\n);\n\n// proceed = this is effectively the only unhandled ticket for the requester\nconst proceed = otherUnhandledTickets.length === 0;\n\nreturn [{\n  json: {\n    proceed,\n    unhandled_ticket_count: otherUnhandledTickets.length,\n    other_unhandled_ticket_ids: otherUnhandledTickets.map(t => t.id)\n  }\n}];\n"
+        },
+        "id": "c0940867-edca-4db3-81b5-0b81d2f4085f",
+        "name": "Evaluate Open Ticket Guard",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          4160,
+          1168
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "5ad6f9fa-ea65-4ef9-99c2-f905c15d16a8",
+                "leftValue": "={{ $json.proceed }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "6748a503-3d04-4b24-a743-b11d5b212835",
+        "name": "Only Unhandled Ticket?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          4384,
+          1168
+        ]
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "83dc4787-f011-43f7-ba5f-41199ed3280e",
+                "name": "fail_reason",
+                "value": "multiple_new_tickets",
+                "type": "string"
+              },
+              {
+                "id": "bc263b58-ad19-407e-a09f-9f34ddc11cfc",
+                "name": "note_body",
+                "value": "=Note: This requester ({{ $('Restore trigger data').first().json.body['ticket.requester.email'] }}) has {{ $json.unhandled_ticket_count }} other unhandled (new) ticket(s) open: {{ $json.other_unhandled_ticket_ids.join(', ') }}. Automation was skipped to avoid duplicate handling.\n\nPlease handle this ticket manually.",
+                "type": "string"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "db57857b-0bda-400b-a8a6-5afd0775fe47",
+        "name": "Note: Multiple new tickets",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          4976,
+          1216
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "044aee42-6466-4dca-b7c8-ef99f10b8148",
+                "leftValue": "={{ $('Restore trigger data').first().json.body[\"ticket.ticket_field_\" + $('Get Project Config').first().json.ticket_field_contact_form_classification_id] }}",
+                "rightValue": "cancellation",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "bb25e7db-16a8-407c-adeb-1d40a109f36e",
+        "name": "Is contact form cancellation",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          4672,
+          1056
+        ]
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "2abe7692-4f7c-4aaf-88e4-0703cd5f3dc5",
+                "name": "fail_reason",
+                "value": "contact_form_cancellation",
+                "type": "string"
+              },
+              {
+                "id": "14b886c2-7beb-4655-a701-932b72e5da21",
+                "name": "note_body",
+                "value": "=Note: This ticket (#{{ $('Restore trigger data').first().json.body['ticket.id'] }}) was submitted through the contact form as a cancellation request. Automation was skipped.\n\nPlease handle this ticket manually.",
+                "type": "string"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "418cf924-7ecc-4adc-904e-1e466ee7ab26",
+        "name": "Note: Contact form cancellation",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          4976,
+          848
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "f177baca-42d4-4dcc-9149-c9b81f497ec5",
+        "name": "Do not proceed",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          5296,
+          800
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "d9e9fc48-d345-49ca-94d6-8b2292283652",
+        "name": "Proceed (eligible)",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          5296,
+          1056
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PUT",
+          "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $('When Executed by Another Workflow').item.json.body['ticket.id'] }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "zendeskApi",
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "ticket.comment.public",
+                "value": "false"
+              },
+              {
+                "name": "ticket.comment.body",
+                "value": "=User eligibility failed:\nFail reason: {{ $json.fail_reason }}\nNote: {{ $json.note_body }}\n\nPlease handle this request manually. "
+              },
+              {
+                "name": "ticket.custom_status_id",
+                "value": "={{ $(\"Get Project Config\").first().json.ticket_custom_status_open_id }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "79e53fa9-4090-45b2-9b98-4c27a629ab58",
+        "name": "Reply to internally and set status to open3",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          5568,
+          800
+        ],
+        "retryOnFail": true,
+        "credentials": {
+          "zendeskApi": {
+            "id": "z41y1j8bbsyi2W61",
+            "name": "Personality Zendesk prod account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "content": "## 1) Check for blocked emails",
+          "height": 120,
+          "width": 420,
+          "color": 7
+        },
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          2720,
+          528
+        ],
+        "id": "9341be7f-9609-4288-8cd9-dc7c760d0a42",
+        "name": "Sticky Blocked"
+      },
+      {
+        "parameters": {
+          "content": "## 2) Check for multiple \"new\" tickets",
+          "height": 152,
+          "width": 248,
+          "color": 7
+        },
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          3712,
+          992
+        ],
+        "id": "05ac36aa-1329-403c-bd1a-58b9097ee2be",
+        "name": "Sticky Multi"
+      },
+      {
+        "parameters": {
+          "content": "## 3) Check for contact form cancellations",
+          "height": 120,
+          "width": 230,
+          "color": 7
+        },
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          4528,
+          912
+        ],
+        "id": "d2a72493-615d-46d9-84cb-5011ed41bd2e",
+        "name": "Sticky Cancel"
+      },
+      {
+        "parameters": {
+          "content": "# Do not proceed\nAll three fail notes merge here (note_body + fail_reason). Wire your single fail action after this node.",
+          "height": 200,
+          "width": 300,
+          "color": 3
+        },
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          5296,
+          576
+        ],
+        "id": "4ae9ea50-115e-4a6e-8149-1f4ff00d4965",
+        "name": "Sticky Fail"
+      },
+      {
+        "parameters": {
+          "content": "# Proceed\nAll three checks passed. Wire the main automation after this node.",
+          "height": 208,
+          "width": 300,
+          "color": 4
+        },
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          5296,
+          1200
+        ],
+        "id": "3fd568cb-1c11-45ab-86e8-889610b33ed2",
+        "name": "Sticky Proceed"
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "03853d94-c29e-4385-a2b9-eedb5596cb7c",
+                "name": "proceedWithAutomation",
+                "value": false,
+                "type": "boolean"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          5776,
+          800
+        ],
+        "id": "e252a099-17cf-4fde-9462-575d0d862110",
+        "name": "Do not proceed1"
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "03853d94-c29e-4385-a2b9-eedb5596cb7c",
+                "name": "proceedWithAutomation",
+                "value": true,
+                "type": "boolean"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          5776,
+          1056
+        ],
+        "id": "c39919ae-7dcc-43c8-9e93-1d75eb0683a6",
+        "name": "Proceed"
+      },
+      {
+        "parameters": {
+          "amount": 10
+        },
+        "type": "n8n-nodes-base.wait",
+        "typeVersion": 1.1,
+        "position": [
+          3536,
+          1168
+        ],
+        "id": "7c231cc1-c333-4e9e-a805-b6e7e6fdb68d",
+        "name": "Wait",
+        "webhookId": "10de9be3-ddd4-4641-98c1-1ea0152e6756"
+      }
+    ],
+    "connections": {
+      "When Executed by Another Workflow": {
+        "main": [
+          [
+            {
+              "node": "Set project_key",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Set project_key": {
+        "main": [
+          [
+            {
+              "node": "Get Project Config",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Project Config": {
+        "main": [
+          [
+            {
+              "node": "Restore trigger data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Restore trigger data": {
+        "main": [
+          [
+            {
+              "node": "Get Email Blocklist",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Email Blocklist": {
+        "main": [
+          [
+            {
+              "node": "Filter Blocked Emails",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Filter Blocked Emails": {
+        "main": [
+          [
+            {
+              "node": "Is Blocked?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is Blocked?": {
+        "main": [
+          [
+            {
+              "node": "Note: Blocked email",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Wait",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Zendesk: Find Requester by Email": {
+        "main": [
+          [
+            {
+              "node": "Zendesk: Get Requester Tickets (live)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Zendesk: Get Requester Tickets (live)": {
+        "main": [
+          [
+            {
+              "node": "Evaluate Open Ticket Guard",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Evaluate Open Ticket Guard": {
+        "main": [
+          [
+            {
+              "node": "Only Unhandled Ticket?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Only Unhandled Ticket?": {
+        "main": [
+          [
+            {
+              "node": "Is contact form cancellation",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Note: Multiple new tickets",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is contact form cancellation": {
+        "main": [
+          [
+            {
+              "node": "Note: Contact form cancellation",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Proceed (eligible)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Note: Blocked email": {
+        "main": [
+          [
+            {
+              "node": "Do not proceed",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Note: Multiple new tickets": {
+        "main": [
+          [
+            {
+              "node": "Do not proceed",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Note: Contact form cancellation": {
+        "main": [
+          [
+            {
+              "node": "Do not proceed",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Do not proceed": {
+        "main": [
+          [
+            {
+              "node": "Reply to internally and set status to open3",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Reply to internally and set status to open3": {
+        "main": [
+          [
+            {
+              "node": "Do not proceed1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Proceed (eligible)": {
+        "main": [
+          [
+            {
+              "node": "Proceed",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Wait": {
+        "main": [
+          [
+            {
+              "node": "Zendesk: Find Requester by Email",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Antonio antonio.marusic@efuturemedia.com",
+    "name": "Version 68fafa37",
+    "description": "",
+    "autosaved": true,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-06-10T10:40:21.631Z",
+        "id": 973,
+        "workflowId": "6lYSxMlA2bQYIaaq",
+        "versionId": "68fafa37-80f1-43a8-9483-04ea657f4186",
+        "event": "activated",
+        "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e"
+      }
+    ]
+  }
+}
