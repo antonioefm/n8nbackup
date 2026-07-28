@@ -1,0 +1,838 @@
+{
+  "updatedAt": "2026-07-27T14:34:20.285Z",
+  "createdAt": "2026-07-27T13:44:19.945Z",
+  "id": "QV3deINABAz91KXS",
+  "name": "CS Daily Report → Slack (multi-project)",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 4 * * *"
+            }
+          ]
+        }
+      },
+      "id": "d9b0c2e3-a1b5-4f65-b7b8-cb9fd9370a08",
+      "name": "Daily 04:00 UTC",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        1616,
+        3024
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Defines the UTC reporting window. Single source of truth for every project.\n// For a backfill, temporarily raise LOOKBACK_DAYS (e.g. 7) and run manually.\nconst LOOKBACK_DAYS = 1;\n\nconst now = new Date();\nconst end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));\nconst start = new Date(end.getTime() - LOOKBACK_DAYS * 86400000);\nconst iso = (d) => d.toISOString().slice(0, 19) + 'Z';\n\nreturn [{\n  json: {\n    window_start: iso(start),\n    window_end: iso(end),\n    report_date: iso(start).slice(0, 10),\n    lookback_days: LOOKBACK_DAYS,\n    run_at: iso(now)\n  }\n}];"
+      },
+      "id": "d61e63a0-1d78-44d0-9f09-d69be1b44f8a",
+      "name": "Compute Window",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        3024
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "k1",
+              "name": "project_key",
+              "value": "personality",
+              "type": "string"
+            },
+            {
+              "id": "k2",
+              "name": "project_display_name",
+              "value": "Personality",
+              "type": "string"
+            },
+            {
+              "id": "k3",
+              "name": "zendesk_base",
+              "value": "https://personalitytest.zendesk.com",
+              "type": "string"
+            },
+            {
+              "id": "k4",
+              "name": "category_field_id",
+              "value": 21549590739229,
+              "type": "number"
+            },
+            {
+              "id": "k5",
+              "name": "automation_agent_id",
+              "value": 35830706218397,
+              "type": "number"
+            },
+            {
+              "id": "k6",
+              "name": "automation_agent_name",
+              "value": "John (automation)",
+              "type": "string"
+            },
+            {
+              "id": "k7",
+              "name": "automation_tag",
+              "value": "automation_replied",
+              "type": "string"
+            },
+            {
+              "id": "k8",
+              "name": "gemini_model",
+              "value": "gemini-3.6-flash",
+              "type": "string"
+            },
+            {
+              "id": "k9",
+              "name": "category_override_map",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "7570f539-f48c-4a21-8b5d-7caa8642b2fd",
+      "name": "P1 · Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2064,
+        3024
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('P1 · Config').first().json.zendesk_base }}/api/v2/search/export.json?filter%5Btype%5D=ticket&page%5Bsize%5D=1000&query={{ encodeURIComponent('created>=' + $json.window_start + ' created<' + $json.window_end) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 400
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "responseContainsNextURL",
+              "nextURL": "={{ $response.body.links.next }}",
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ $response.body.meta.has_more === false }}",
+              "limitPagesFetched": true
+            }
+          }
+        }
+      },
+      "id": "825818e5-cf54-4417-8b95-3f35473417ad",
+      "name": "P1 · Fetch Tickets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2288,
+        3024
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "alwaysOutputData": true,
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Flattens every page of the Zendesk search export into one item per ticket,\n// de-duplicates, and re-filters on exact UTC bounds (Zendesk search date\n// handling can be timezone-sensitive, so we never trust it alone).\nconst cfg = $('P1 · Config').first().json;\nconst start = new Date(cfg.window_start).getTime();\nconst end = new Date(cfg.window_end).getTime();\n\nconst out = [];\nconst seen = new Set();\nlet sawResults = false;\nlet sawError = false;\n\nfor (const item of $input.all()) {\n  const body = item.json || {};\n  if (body.error || body.__error) sawError = true;\n  if (Object.prototype.hasOwnProperty.call(body, 'results')) sawResults = true;\n  const results = body.results || [];\n  for (const t of results) {\n    if (!t || !t.id) continue;\n    const created = new Date(t.created_at).getTime();\n    if (!(created >= start && created < end)) continue;\n    if (seen.has(t.id)) continue;\n    seen.add(t.id);\n    out.push({ json: t });\n  }\n}\n\n// Never return zero items: an empty branch would be skipped by n8n and the\n// project would silently vanish from the report.\n// Distinguish \"quiet day\" from \"Zendesk call failed\" - reporting fake zeros\n// for a failed fetch would be worse than saying nothing.\nif (!out.length) return [{ json: { __no_tickets: true, fetch_failed: (sawError || !sawResults) } }];\nreturn out;"
+      },
+      "id": "597e1160-3e45-4f32-90f0-32915b3ae635",
+      "name": "P1 · Flatten Tickets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2496,
+        3024
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Chunks ticket IDs into batches of 100 for /tickets/show_many.\n// ids=0 is a deliberate no-op: Zendesk returns 200 with an empty array,\n// which keeps the branch alive on a zero-ticket day.\nconst tickets = $('P1 · Flatten Tickets').all().map(i => i.json).filter(t => t && t.id);\nconst ids = tickets.map(t => t.id);\nconst SIZE = 100;\n\nif (!ids.length) return [{ json: { chunk: 0, ids: '0', empty: true } }];\n\nconst out = [];\nfor (let i = 0; i < ids.length; i += SIZE) {\n  out.push({ json: { chunk: i / SIZE, ids: ids.slice(i, i + SIZE).join(','), empty: false } });\n}\nreturn out;"
+      },
+      "id": "9f3d9e0b-841d-4256-a82e-a1e69673c69f",
+      "name": "P1 · Batch Metric IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2720,
+        3024
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('P1 · Config').first().json.zendesk_base }}/api/v2/tickets/show_many.json?ids={{ $json.ids }}&include=metric_sets,users",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 3,
+              "batchInterval": 500
+            }
+          }
+        }
+      },
+      "id": "bfd47801-9622-4ea7-918b-699f0a72a8e1",
+      "name": "P1 · Fetch Metrics + Users",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2944,
+        3024
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "alwaysOutputData": true,
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===========================================================================\n//  Joins tickets + metric sets + users, then computes every number in the\n//  report. All counting happens here, in code. The LLM never counts anything.\n// ===========================================================================\nconst cfg  = $('P1 · Config').first().json;\nconst TEXT_LIMIT       = 240;   // chars of opening message sent to Gemini\nconst MAX_PER_BUCKET   = 2000;  // hard payload guard\n\n// ---- 1. Merge sources ------------------------------------------------------\nconst base = {};\nfor (const it of $('P1 · Flatten Tickets').all()) {\n  const t = it.json;\n  if (t && t.id) base[t.id] = t;\n}\n\nconst metricById = {};\nconst userById   = {};\nfor (const it of $('P1 · Fetch Metrics + Users').all()) {\n  const b = (it && it.json) || {};\n  for (const t of (b.tickets || []))     if (t && t.id && base[t.id]) base[t.id] = Object.assign({}, base[t.id], t);\n  for (const m of (b.metric_sets || [])) if (m && m.ticket_id) metricById[m.ticket_id] = m;\n  for (const u of (b.users || []))       if (u && u.id) userById[u.id] = u;\n}\n\nconst tickets = Object.values(base).filter(t => t && t.id);\nconst fetchFailed = $('P1 · Flatten Tickets').all().some(i => i && i.json && i.json.fetch_failed === true);\n\n// ---- 2. Category taxonomy --------------------------------------------------\n// Slug normalisation absorbs per-instance quirks (double vs triple\n// underscores, slashes, trailing punctuation) so one map serves all projects.\nconst norm = (s) => String(s == null ? '' : s)\n  .toLowerCase().trim()\n  .replace(/[^a-z0-9]+/g, '_')\n  .replace(/_+/g, '_')\n  .replace(/^_|_$/g, '');\n\nconst BUCKETS = [\n  { key: 'refunds',       emoji: '\\ud83d\\udcb0', label: 'Refunds' },\n  { key: 'cancellations', emoji: '\\ud83d\\udeab', label: 'Cancellations' },\n  { key: 'billing',       emoji: '\\ud83d\\udcb3', label: 'Billing & Payments' },\n  { key: 'chargeback',    emoji: '\\u2696\\ufe0f', label: 'Chargebacks & Fraud' },\n  { key: 'unidentified',  emoji: '\\ud83d\\udce7', label: 'Unidentified Contact' },\n  { key: 'technical',     emoji: '\\ud83d\\udee0', label: 'Technical Issues' },\n  { key: 'product',       emoji: '\\ud83e\\udded', label: 'Product & Pricing' },\n  { key: 'feedback',      emoji: '\\u2b50', label: 'Feedback & Reviews' },\n  { key: 'other',         emoji: '\\u2753', label: 'Other' }\n];\n\nconst CATEGORY_MAP = {\n  refund_within_30_days_monthly:            'refunds',\n  refund_30_day_policy_last_charge_only:     'refunds',\n  refund_30_day_policy_two_last_charges:     'refunds',\n  refund_within_30_days_trial:               'refunds',\n  refund_upsell:                             'refunds',\n  refund_paypal2025:                         'refunds',\n  refund_rejection:                          'refunds',\n  refund_rejection_complaint:                'refunds',\n  cancellation_subscription:                 'cancellations',\n  cancellation_account_removal:              'cancellations',\n  billing:                                   'billing',\n  bug_billing:                               'billing',\n  disputed_user:                             'chargeback',\n  fraudulent_user:                           'chargeback',\n  password_and_account_info:                 'unidentified',\n  bug_technical_issue:                       'technical',\n  service_down:                              'technical',\n  results_not_received:                      'technical',\n  product_info:                              'product',\n  pricing:                                   'product',\n  subscription:                              'product',\n  feature_request:                            'feedback',\n  trustpilot_review:                         'feedback',\n  other:                                     'other',\n  different_platform_website:                'other',\n  special_offers_discounts:                  'other',\n  spam:                                      '__noise',\n  duplicate_contact:                         '__noise'\n};\n\n// Per-project overrides, e.g. {\"weird_slug\":\"refunds\"}\nlet overrides = {};\ntry { overrides = cfg.category_override_map ? JSON.parse(cfg.category_override_map) : {}; } catch (e) { overrides = {}; }\n\nconst bucketFor = (slug) => {\n  const n = norm(slug);\n  if (!n) return '__uncategorised';\n  if (overrides[n]) return overrides[n];\n  if (CATEGORY_MAP[n]) return CATEGORY_MAP[n];\n  // Prefix fallbacks so brand-new options land somewhere sane.\n  if (n.startsWith('refund')) return 'refunds';\n  if (n.startsWith('cancellation')) return 'cancellations';\n  if (n.startsWith('bug')) return 'technical';\n  return '__unmapped';\n};\n\nconst categoryOf = (t) => {\n  const fid = Number(cfg.category_field_id);\n  const f = (t.custom_fields || []).find(x => Number(x.id) === fid);\n  return f && f.value != null && f.value !== '' ? String(f.value) : '';\n};\n\n// ---- 3. Automation classification -----------------------------------------\nconst johnId  = Number(cfg.automation_agent_id) || 0;\nconst autoTag = String(cfg.automation_tag || '').trim();\nconst automationEnabled = johnId > 0;\n\nconst isSolved   = (t) => t.status === 'solved' || t.status === 'closed';\nconst johnSolved = (t) => automationEnabled && Number(t.assignee_id) === johnId;\nconst johnTouched = (t) => (autoTag && Array.isArray(t.tags) && t.tags.includes(autoTag)) || johnSolved(t);\n\nconst classOf = (t) => {\n  if (!automationEnabled) return 'manual';\n  if (johnSolved(t)) return 'auto';\n  if (autoTag && Array.isArray(t.tags) && t.tags.includes(autoTag)) return 'assisted';\n  return 'manual';\n};\n\n// ---- 4. Stats helpers ------------------------------------------------------\nconst cal = (v) => (v && typeof v === 'object' && v.calendar != null) ? Number(v.calendar) : null;\nconst avg = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;\nconst med = (a) => {\n  if (!a.length) return null;\n  const s = a.slice().sort((x, y) => x - y);\n  const m = Math.floor(s.length / 2);\n  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;\n};\n\n// ---- 5. Volume -------------------------------------------------------------\nconst received = tickets.length;\nconst solved   = tickets.filter(isSolved);\nconst wasReopened = (t) => {\n  const m = metricById[t.id];\n  return !!(m && Number(m.reopens) > 0);\n};\nconst reopenedTickets = tickets.filter(wasReopened);\nconst reopened = reopenedTickets.length;\nconst refunds = tickets.filter(t => norm(categoryOf(t)).startsWith('refund')).length;\n\n// ---- 6. Automation split ---------------------------------------------------\nconst solvedByClass = { auto: [], assisted: [], manual: [] };\nfor (const t of solved) solvedByClass[classOf(t)].push(t);\nconst touched = tickets.filter(johnTouched).length;\n\n// A ticket that was solved and then reopened is currently 'open', so it is NOT\n// in `solved`. Reopen rate therefore needs its own denominator: everything that\n// reached solved at least once.\nconst everSolvedByClass = { auto: [], assisted: [], manual: [] };\nfor (const t of tickets) {\n  if (isSolved(t) || wasReopened(t)) everSolvedByClass[classOf(t)].push(t);\n}\nconst reopenSplit = { auto: 0, assisted: 0, manual: 0 };\nfor (const t of reopenedTickets) reopenSplit[classOf(t)]++;\n\n// ---- 7. Performance (solved tickets only, three columns) -------------------\nconst perf = {};\nfor (const k of ['auto', 'assisted', 'manual']) {\n  const set = solvedByClass[k];\n  const frt = [], res = [], rep = [];\n  let oneTouch = 0, repCount = 0;\n  for (const t of set) {\n    const m = metricById[t.id] || {};\n    const a = cal(m.reply_time_in_minutes);\n    const b = cal(m.full_resolution_time_in_minutes);\n    if (a != null) frt.push(a);\n    if (b != null) res.push(b);\n    if (m.replies != null) { rep.push(Number(m.replies)); repCount++; if (Number(m.replies) === 1) oneTouch++; }\n  }\n  const ever = everSolvedByClass[k];\n  const reo = ever.filter(wasReopened).length;\n  perf[k] = {\n    n: set.length,\n    ever_solved: ever.length,\n    reopened: reo,\n    reopen_pct: ever.length ? (reo / ever.length) * 100 : null,\n    frt_avg: avg(frt), frt_med: med(frt),\n    res_avg: avg(res), res_med: med(res),\n    rep_avg: avg(rep),\n    one_touch_pct: repCount ? (oneTouch / repCount) * 100 : null\n  };\n}\n\n// ---- 8. Solved by agent ----------------------------------------------------\nconst agentCounts = {};\nfor (const t of solved) {\n  let name;\n  if (t.assignee_id == null) name = 'Unassigned';\n  else if (automationEnabled && Number(t.assignee_id) === johnId) name = cfg.automation_agent_name || 'Automation';\n  else name = (userById[t.assignee_id] && userById[t.assignee_id].name) || ('User ' + t.assignee_id);\n  agentCounts[name] = (agentCounts[name] || 0) + 1;\n}\nconst autoName = cfg.automation_agent_name || 'Automation';\nconst agents = Object.keys(agentCounts)\n  .map(name => ({ name, count: agentCounts[name] }))\n  .sort((a, b) => {\n    if (a.name === autoName) return -1;\n    if (b.name === autoName) return 1;\n    if (a.name === 'Unassigned') return 1;\n    if (b.name === 'Unassigned') return -1;\n    return b.count - a.count;\n  });\n\n// ---- 9. Request breakdown --------------------------------------------------\nconst grouped = {};\nBUCKETS.forEach(b => { grouped[b.key] = []; });\nconst noiseDetail = {};\nconst unmappedDetail = {};\nlet noiseTotal = 0, uncategorised = 0, unmappedTotal = 0;\n\nfor (const t of tickets) {\n  const raw = categoryOf(t);\n  const b = bucketFor(raw);\n  if (b === '__noise') {\n    noiseTotal++;\n    const n = norm(raw);\n    noiseDetail[n] = (noiseDetail[n] || 0) + 1;\n  } else if (b === '__uncategorised') {\n    uncategorised++;\n  } else if (b === '__unmapped') {\n    unmappedTotal++;\n    unmappedDetail[raw] = (unmappedDetail[raw] || 0) + 1;\n  } else {\n    grouped[b].push(t);\n  }\n}\n\nconst denom = BUCKETS.reduce((s, b) => s + grouped[b.key].length, 0);\nconst uniqueCustomers = new Set(\n  BUCKETS.flatMap(b => grouped[b.key]).map(t => t.requester_id).filter(x => x != null)\n).size;\n\n// Per-type refund breakdown. Labels are derived from the slug rather than\n// hardcoded, so a new refund option appears automatically on every project.\nconst refundSet = grouped.refunds;\nconst refundCounts = {};\nfor (const t of refundSet) {\n  const n = norm(categoryOf(t)) || 'unspecified';\n  refundCounts[n] = (refundCounts[n] || 0) + 1;\n}\nconst refundTypes = Object.keys(refundCounts).map(slug => ({\n  slug,\n  label: slug.replace(/^refund_/, '').replace(/_/g, ' ').trim() || 'unspecified',\n  count: refundCounts[slug]\n})).sort((a, b) => b.count - a.count);\n\nconst breakdown = BUCKETS.map(b => ({\n  key: b.key,\n  emoji: b.emoji,\n  label: b.label,\n  count: grouped[b.key].length,\n  pct: denom ? (grouped[b.key].length / denom) * 100 : 0\n}));\n\n// ---- 10. Text payloads for Gemini -----------------------------------------\n// Ticket id + subject + truncated opening message only.\n// No customer names, no email addresses, no full threads leave the stack.\nconst clean = (s) => String(s == null ? '' : s).replace(/\\s+/g, ' ').trim().slice(0, TEXT_LIMIT);\nconst brief = (t) => ({ id: String(t.id), subject: clean(t.subject), text: clean(t.description) });\n\nconst themeInputs = {};\nfor (const b of BUCKETS) {\n  if (!grouped[b.key].length) continue;\n  themeInputs[b.key] = grouped[b.key].slice(0, MAX_PER_BUCKET).map(brief);\n}\n\nreturn [{\n  json: {\n    project_key: cfg.project_key,\n    project_display_name: cfg.project_display_name,\n    gemini_model: cfg.gemini_model,\n    report_date: cfg.report_date,\n    window_start: cfg.window_start,\n    window_end: cfg.window_end,\n    fetch_failed: fetchFailed,\n    automation_enabled: automationEnabled,\n    automation_agent_name: autoName,\n    automation_tag: autoTag,\n    volume: {\n      received,\n      solved: solved.length,\n      still_open: received - solved.length,\n      reopened,\n      reopen_split: reopenSplit,\n      refunds,\n      resolution_rate: received ? (solved.length / received) * 100 : 0\n    },\n    automation: {\n      auto: solvedByClass.auto.length,\n      assisted: solvedByClass.assisted.length,\n      manual: solvedByClass.manual.length,\n      touch_rate: received ? (touched / received) * 100 : 0\n    },\n    performance: perf,\n    agents,\n    breakdown: {\n      denom,\n      unique_customers: uniqueCustomers,\n      noise_total: noiseTotal,\n      noise_detail: noiseDetail,\n      uncategorised,\n      unmapped_total: unmappedTotal,\n      unmapped_detail: unmappedDetail,\n      buckets: breakdown,\n      refund_types: refundTypes\n    },\n    theme_inputs: themeInputs,\n    tech_tickets: (grouped.technical || []).slice(0, MAX_PER_BUCKET).map(brief)\n  }\n}];"
+      },
+      "id": "7684612a-1b59-448d-baf1-73821d0de77f",
+      "name": "P1 · Assemble",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3168,
+        3024
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "dd97ac7b-2a73-4daa-a583-19b7695b1fbb",
+      "name": "All Projects",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        3376,
+        3024
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// One Gemini call per (project, bucket). Every ticket in the bucket is sent -\n// no sampling - so the theme reflects the full day.\nconst projects = $('All Projects').all().map(i => i.json);\n\nconst NOOP_BODY = {\n  contents: [{ role: 'user', parts: [{ text: 'Return the JSON object {\"ok\":true}.' }] }],\n  generationConfig: {\n    temperature: 0,\n    maxOutputTokens: 64,\n    responseMimeType: 'application/json',\n    responseSchema: { type: 'OBJECT', properties: { ok: { type: 'BOOLEAN' } }, required: ['ok'] }\n  }\n};\n\nconst SYSTEM = [\n  'You analyse customer support tickets.',\n  'You receive the subject and the opening message of every ticket filed in one category group on a single day.',\n  'Write exactly one sentence of at most 25 words describing what these customers were actually contacting support about.',\n  'Name the dominant concrete driver rather than restating the category name.',\n  'If there are two clear drivers, mention both and roughly how they split.',\n  'Do not invent anything that is not present in the tickets. Do not mention counts or percentages.',\n  'Return JSON only, in the form {\"theme\":\"...\"}.'\n].join(' ');\n\nconst SCHEMA = {\n  type: 'OBJECT',\n  properties: { theme: { type: 'STRING' } },\n  required: ['theme']\n};\n\nconst out = [];\n\nfor (const p of projects) {\n  const model = p.gemini_model;\n  for (const b of (p.breakdown.buckets || [])) {\n    const tix = (p.theme_inputs || {})[b.key] || [];\n    if (!tix.length) continue;\n    const lines = tix.map(t => '- ' + (t.subject || '(no subject)') + ' :: ' + (t.text || '')).join('\\n');\n    out.push({\n      json: {\n        project_key: p.project_key,\n        bucket_key: b.key,\n        job: 'theme',\n        model,\n        request_body: {\n          systemInstruction: { parts: [{ text: SYSTEM }] },\n          contents: [{ role: 'user', parts: [{ text: 'Category group: ' + b.label + '\\nTickets (' + tix.length + '):\\n' + lines }] }],\n          generationConfig: {\n            temperature: 0.2,\n            // Gemini 3.x spends reasoning tokens out of maxOutputTokens, so the\n            // budget is generous and thinking is kept low for a one-line answer.\n            thinkingConfig: { thinkingLevel: 'low' },\n            maxOutputTokens: 2048,\n            responseMimeType: 'application/json',\n            responseSchema: SCHEMA\n          }\n        }\n      }\n    });\n  }\n}\n\n// Keep the chain alive when nothing at all came in today.\nif (!out.length) {\n  out.push({\n    json: {\n      project_key: (projects[0] && projects[0].project_key) || 'none',\n      bucket_key: null,\n      job: 'noop',\n      model: (projects[0] && projects[0].gemini_model) || 'gemini-3.6-flash',\n      request_body: NOOP_BODY\n    }\n  });\n}\n\nreturn out;"
+      },
+      "id": "5822f933-d5c0-45c8-90f2-2284067db15d",
+      "name": "Explode Theme Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3584,
+        3024
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 4,
+              "batchInterval": 500
+            }
+          },
+          "timeout": 180000
+        }
+      },
+      "id": "f9a862ee-0272-4a70-94cb-38eb81f0635c",
+      "name": "Gemini · Bucket Themes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3776,
+        3024
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 4000,
+      "alwaysOutputData": true,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "0KwPkyGy1o9691Br",
+          "name": "Google Gemini(PaLM) Api account OD key"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Re-attaches theme text to each project. Response items align 1:1 with the\n// job items because the HTTP node always emits one output per input.\nconst projects = $('All Projects').all().map(i => i.json);\nconst jobs = $('Explode Theme Jobs').all().map(i => i.json);\nconst resp = $input.all();\n\nconst readJson = (item) => {\n  try {\n    const parts = item.json.candidates[0].content.parts || [];\n    const txt = parts.map(p => p.text || '').join('').replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();\n    return JSON.parse(txt);\n  } catch (e) { return null; }\n};\n\nconst themes = {};\nfor (let i = 0; i < jobs.length; i++) {\n  const job = jobs[i];\n  if (!job || job.job !== 'theme') continue;\n  const parsed = resp[i] ? readJson(resp[i]) : null;\n  const theme = parsed && parsed.theme ? String(parsed.theme).trim() : '';\n  themes[job.project_key] = themes[job.project_key] || {};\n  themes[job.project_key][job.bucket_key] = theme;\n}\n\nreturn projects.map(p => ({ json: Object.assign({}, p, { themes: themes[p.project_key] || {} }) }));"
+      },
+      "id": "4bb21443-5ede-45d1-915f-ffd8e54bbfd6",
+      "name": "Collect Themes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3984,
+        3024
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pass 1 of 2: discover the day's recurring technical issue types.\n// Labels only - no counting, no per-ticket assignment yet.\nconst NOOP_BODY = {\n  contents: [{ role: 'user', parts: [{ text: 'Return the JSON object {\"ok\":true}.' }] }],\n  generationConfig: {\n    temperature: 0,\n    maxOutputTokens: 64,\n    responseMimeType: 'application/json',\n    responseSchema: { type: 'OBJECT', properties: { ok: { type: 'BOOLEAN' } }, required: ['ok'] }\n  }\n};\n\nconst SYSTEM = [\n  'You cluster technical customer support tickets into recurring issue types.',\n  'You receive the subject and opening message of every technical ticket from a single day.',\n  'Return between 3 and 8 short labels, each 2 to 5 words, naming a distinct concrete technical problem.',\n  'Labels must be mutually exclusive and together cover the majority of the tickets.',\n  'Do not include a catch-all label such as Other or Miscellaneous; a separate Other bucket is added automatically.',\n  'Return JSON only, in the form {\"labels\":[\"...\",\"...\"]}.'\n].join(' ');\n\nconst SCHEMA = {\n  type: 'OBJECT',\n  properties: { labels: { type: 'ARRAY', items: { type: 'STRING' } } },\n  required: ['labels']\n};\n\nreturn $input.all().map(item => {\n  const p = item.json;\n  const tix = p.tech_tickets || [];\n  if (!tix.length) {\n    return { json: Object.assign({}, p, { job: 'noop', model: p.gemini_model, request_body: NOOP_BODY }) };\n  }\n  const lines = tix.map(t => '- ' + (t.subject || '(no subject)') + ' :: ' + (t.text || '')).join('\\n');\n  return {\n    json: Object.assign({}, p, {\n      job: 'discover',\n      model: p.gemini_model,\n      request_body: {\n        systemInstruction: { parts: [{ text: SYSTEM }] },\n        contents: [{ role: 'user', parts: [{ text: 'Technical tickets (' + tix.length + '):\\n' + lines }] }],\n        generationConfig: {\n          temperature: 0.2,\n          thinkingConfig: { thinkingLevel: 'low' },\n          maxOutputTokens: 2048,\n          responseMimeType: 'application/json',\n          responseSchema: SCHEMA\n        }\n      }\n    })\n  };\n});"
+      },
+      "id": "5c2bc1ac-6b56-42ff-bd64-8f0f4730a72c",
+      "name": "Prepare Tech Discovery",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4176,
+        3024
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 4,
+              "batchInterval": 500
+            }
+          },
+          "timeout": 180000
+        }
+      },
+      "id": "f656eb4a-9d65-4235-a8be-c135c3b49cb4",
+      "name": "Gemini · Tech Taxonomy",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4384,
+        3024
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 4000,
+      "alwaysOutputData": true,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "0KwPkyGy1o9691Br",
+          "name": "Google Gemini(PaLM) Api account OD key"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pass 2 of 2: assign each technical ticket to one of the discovered labels.\n// Chunked at 80 tickets per call to keep every response short and complete.\nconst projects = $('Prepare Tech Discovery').all().map(i => i.json);\nconst resp = $input.all();\nconst CHUNK = 80;\n\nconst NOOP_BODY = {\n  contents: [{ role: 'user', parts: [{ text: 'Return the JSON object {\"ok\":true}.' }] }],\n  generationConfig: {\n    temperature: 0,\n    maxOutputTokens: 64,\n    responseMimeType: 'application/json',\n    responseSchema: { type: 'OBJECT', properties: { ok: { type: 'BOOLEAN' } }, required: ['ok'] }\n  }\n};\n\nconst readJson = (item) => {\n  try {\n    const parts = item.json.candidates[0].content.parts || [];\n    const txt = parts.map(p => p.text || '').join('').replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();\n    return JSON.parse(txt);\n  } catch (e) { return null; }\n};\n\nconst SYSTEM = [\n  'You assign technical support tickets to issue types.',\n  'You receive a fixed list of labels and a list of tickets, each with an id.',\n  'Assign every ticket to exactly one label from the list.',\n  'If a ticket genuinely fits none of the labels, use the exact string Other.',\n  'Return one entry per input ticket, reusing the ids exactly as given.',\n  'Return JSON only, in the form {\"assignments\":[{\"id\":\"123\",\"label\":\"...\"}]}.'\n].join(' ');\n\nconst SCHEMA = {\n  type: 'OBJECT',\n  properties: {\n    assignments: {\n      type: 'ARRAY',\n      items: {\n        type: 'OBJECT',\n        properties: { id: { type: 'STRING' }, label: { type: 'STRING' } },\n        required: ['id', 'label']\n      }\n    }\n  },\n  required: ['assignments']\n};\n\nconst out = [];\n\nfor (let i = 0; i < projects.length; i++) {\n  const p = projects[i];\n  const parsed = resp[i] ? readJson(resp[i]) : null;\n  let labels = (parsed && Array.isArray(parsed.labels) ? parsed.labels : [])\n    .map(x => String(x || '').trim()).filter(Boolean).slice(0, 8);\n  const tix = p.tech_tickets || [];\n\n  if (!tix.length || !labels.length) {\n    out.push({ json: { project_key: p.project_key, job: 'noop', labels, model: p.gemini_model, request_body: NOOP_BODY } });\n    continue;\n  }\n\n  for (let j = 0; j < tix.length; j += CHUNK) {\n    const slice = tix.slice(j, j + CHUNK);\n    const lines = slice.map(t => t.id + ' | ' + (t.subject || '(no subject)') + ' :: ' + (t.text || '')).join('\\n');\n    out.push({\n      json: {\n        project_key: p.project_key,\n        job: 'classify',\n        labels,\n        model: p.gemini_model,\n        request_body: {\n          systemInstruction: { parts: [{ text: SYSTEM }] },\n          contents: [{ role: 'user', parts: [{ text: 'Labels:\\n' + labels.map(l => '- ' + l).join('\\n') + '\\n\\nTickets:\\n' + lines }] }],\n          generationConfig: {\n            temperature: 0,\n            thinkingConfig: { thinkingLevel: 'low' },\n            maxOutputTokens: 16384,\n            responseMimeType: 'application/json',\n            responseSchema: SCHEMA\n          }\n        }\n      }\n    });\n  }\n}\n\nreturn out;"
+      },
+      "id": "c48612ed-64f3-49fb-92bc-98ca9dd9ad3b",
+      "name": "Prepare Tech Classify",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4576,
+        3024
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 4,
+              "batchInterval": 500
+            }
+          },
+          "timeout": 180000
+        }
+      },
+      "id": "d03fcf40-b991-4a27-a87a-d8c1c2555103",
+      "name": "Gemini · Tech Classify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4784,
+        3024
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 4000,
+      "alwaysOutputData": true,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "0KwPkyGy1o9691Br",
+          "name": "Google Gemini(PaLM) Api account OD key"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Counting happens here, never in the model. Any ticket the model failed to\n// classify falls into Other, so the total always reconciles.\nconst projects = $('Prepare Tech Discovery').all().map(i => i.json);\nconst jobs = $('Prepare Tech Classify').all().map(i => i.json);\nconst resp = $input.all();\n\nconst readJson = (item) => {\n  try {\n    const parts = item.json.candidates[0].content.parts || [];\n    const txt = parts.map(p => p.text || '').join('').replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();\n    return JSON.parse(txt);\n  } catch (e) { return null; }\n};\n\nconst assignedByProject = {};\nconst labelsByProject = {};\n\nfor (let i = 0; i < jobs.length; i++) {\n  const job = jobs[i];\n  if (!job) continue;\n  labelsByProject[job.project_key] = job.labels || [];\n  if (job.job !== 'classify') continue;\n\n  const valid = new Set(job.labels || []);\n  const parsed = resp[i] ? readJson(resp[i]) : null;\n  const arr = (parsed && Array.isArray(parsed.assignments)) ? parsed.assignments : [];\n\n  assignedByProject[job.project_key] = assignedByProject[job.project_key] || {};\n  const store = assignedByProject[job.project_key];\n  for (const a of arr) {\n    const id = String((a && a.id) != null ? a.id : '').trim();\n    if (!id || store[id]) continue;\n    store[id] = valid.has(a.label) ? a.label : 'Other';\n  }\n}\n\nreturn projects.map(p => {\n  const tix = p.tech_tickets || [];\n  const store = assignedByProject[p.project_key] || {};\n  const counts = {};\n  for (const t of tix) {\n    const lab = store[String(t.id)] || 'Other';\n    counts[lab] = (counts[lab] || 0) + 1;\n  }\n  const items = Object.keys(counts)\n    .map(label => ({ label, count: counts[label] }))\n    .sort((a, b) => (a.label === 'Other' ? 1 : b.label === 'Other' ? -1 : b.count - a.count));\n\n  return { json: Object.assign({}, p, { tech: { total: tix.length, items, labels: labelsByProject[p.project_key] || [] } }) };\n});"
+      },
+      "id": "9907f2fb-f833-41a2-841d-0e3e6da480b4",
+      "name": "Count Tech Issues",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4976,
+        3024
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Renders the Slack message. Wrapped in a code block so the monospace font\n// preserves column alignment; emoji are kept out of aligned number columns.\nconst pad  = (s, n) => String(s).padEnd(n);\nconst padL = (s, n) => String(s).padStart(n);\n\nconst dur = (m) => {\n  if (m == null || isNaN(m)) return '-';\n  const t = Math.round(Number(m));\n  if (t < 60) return t + 'm';\n  const h = Math.floor(t / 60);\n  const mm = t % 60;\n  return h + 'h ' + (mm < 10 ? '0' : '') + mm + 'm';\n};\nconst pct = (v) => (v == null || isNaN(v)) ? '-' : (Math.round(Number(v) * 10) / 10).toFixed(1) + '%';\nconst one = (v) => (v == null || isNaN(v)) ? '-' : (Math.round(Number(v) * 10) / 10).toFixed(1);\nconst rule = (t) => '\\u2501\\u2501\\u2501 ' + t + ' ' + '\\u2501'.repeat(Math.max(3, 46 - t.length));\n\n// Word-wrap for the code block: Slack will not break a long line for us.\nconst wrap = (text, width, indent) => {\n  const words = String(text || '').split(/\\s+/).filter(Boolean);\n  const lines = [];\n  let cur = '';\n  for (const w of words) {\n    if (!cur.length) cur = w;\n    else if ((cur + ' ' + w).length <= width) cur += ' ' + w;\n    else { lines.push(indent + cur); cur = w; }\n  }\n  if (cur.length) lines.push(indent + cur);\n  return lines;\n};\n\nreturn $input.all().map(item => {\n  const p = item.json;\n  const v = p.volume, a = p.automation, f = p.performance, bd = p.breakdown;\n  const L = [];\n\n  if (p.fetch_failed) {\n    L.push('\\u26a0\\ufe0f *CS Report \\u00b7 ' + p.project_display_name + ' \\u00b7 ' + p.report_date + '*');\n    L.push('Could not retrieve tickets from Zendesk for this window, so no report was produced.');\n    L.push('The other projects are unaffected. Check the failed execution in n8n.');\n    return { json: Object.assign({}, p, { slack_text: L.join('\\n') }) };\n  }\n\n  L.push('\\ud83d\\udcca *CS Report \\u00b7 ' + p.project_display_name + ' \\u00b7 ' + p.report_date + '*');\n  L.push('```');\n  L.push('Cohort: tickets received ' + p.report_date + ' 00:00-23:59 UTC');\n  L.push('');\n\n  L.push(rule('VOLUME'));\n  L.push(pad('Received', 26) + padL(v.received, 6));\n  L.push(pad('Solved', 26) + padL(v.solved, 6) + '   (' + pct(v.resolution_rate) + ' of received)');\n  L.push(pad('Still open', 26) + padL(v.still_open, 6));\n  if (p.automation_enabled && v.reopened) {\n    const rs = v.reopen_split || {};\n    L.push(pad('Reopened', 26) + padL(v.reopened, 6) +\n      '   (auto ' + (rs.auto || 0) + ' \\u00b7 assisted ' + (rs.assisted || 0) + ' \\u00b7 manual ' + (rs.manual || 0) + ')');\n  } else {\n    L.push(pad('Reopened', 26) + padL(v.reopened, 6));\n  }\n  L.push(pad('Refund requests', 26) + padL(v.refunds, 6));\n  L.push('');\n\n  if (p.automation_enabled) {\n    L.push(rule('AUTOMATION'));\n    const share = (n) => v.solved ? '   (' + pct((n / v.solved) * 100) + ' of solved)' : '';\n    L.push(pad('Fully automated', 26) + padL(a.auto, 6) + share(a.auto));\n    L.push(pad('Assisted (bot then human)', 26) + padL(a.assisted, 6) + share(a.assisted));\n    L.push(pad('Fully manual', 26) + padL(a.manual, 6) + share(a.manual));\n    L.push(pad('Automation touch rate', 26) + padL(pct(a.touch_rate), 6) + '   (of received)');\n    if (!p.automation_tag) {\n      L.push('! No automation tag configured - assisted tickets count as manual.');\n    }\n    L.push('');\n\n    L.push(rule('PERFORMANCE (solved)'));\n    L.push(pad('', 26) + pad('Auto', 12) + pad('Assisted', 12) + pad('Manual', 12));\n    L.push(pad('Solved tickets', 26) + pad(f.auto.n, 12) + pad(f.assisted.n, 12) + pad(f.manual.n, 12));\n    L.push(pad('First response   avg', 26) + pad(dur(f.auto.frt_avg), 12) + pad(dur(f.assisted.frt_avg), 12) + pad(dur(f.manual.frt_avg), 12));\n    L.push(pad('                 med', 26) + pad(dur(f.auto.frt_med), 12) + pad(dur(f.assisted.frt_med), 12) + pad(dur(f.manual.frt_med), 12));\n    L.push(pad('Resolution       avg', 26) + pad(dur(f.auto.res_avg), 12) + pad(dur(f.assisted.res_avg), 12) + pad(dur(f.manual.res_avg), 12));\n    L.push(pad('                 med', 26) + pad(dur(f.auto.res_med), 12) + pad(dur(f.assisted.res_med), 12) + pad(dur(f.manual.res_med), 12));\n    L.push(pad('Agent replies    avg', 26) + pad(one(f.auto.rep_avg), 12) + pad(one(f.assisted.rep_avg), 12) + pad(one(f.manual.rep_avg), 12));\n    L.push(pad('One-touch rate', 26) + pad(pct(f.auto.one_touch_pct), 12) + pad(pct(f.assisted.one_touch_pct), 12) + pad(pct(f.manual.one_touch_pct), 12));\n    L.push(pad('Reopen rate', 26) + pad(pct(f.auto.reopen_pct), 12) + pad(pct(f.assisted.reopen_pct), 12) + pad(pct(f.manual.reopen_pct), 12));\n  } else {\n    L.push(rule('PERFORMANCE (solved)'));\n    L.push(pad('First response   avg/med', 26) + dur(f.manual.frt_avg) + ' / ' + dur(f.manual.frt_med));\n    L.push(pad('Resolution       avg/med', 26) + dur(f.manual.res_avg) + ' / ' + dur(f.manual.res_med));\n    L.push(pad('Agent replies    avg', 26) + one(f.manual.rep_avg));\n    L.push(pad('One-touch rate', 26) + pct(f.manual.one_touch_pct));\n    L.push(pad('Reopen rate', 26) + pct(f.manual.reopen_pct));\n  }\n  L.push('');\n\n  L.push(rule('SOLVED BY AGENT'));\n  if (!p.agents.length) L.push('  (none)');\n  for (const ag of p.agents) L.push(pad('  ' + ag.name, 26) + padL(ag.count, 6));\n  L.push('');\n\n  L.push(rule('REQUEST BREAKDOWN'));\n  L.push('Categorised: ' + bd.denom + '  \\u00b7  Unique customers: ' + bd.unique_customers);\n  const nd = Object.keys(bd.noise_detail).map(k => k.replace(/_/g, ' ') + ' ' + bd.noise_detail[k]).join(' \\u00b7 ');\n  L.push('Noise excluded: ' + bd.noise_total + (nd ? '  (' + nd + ')' : ''));\n  L.push('');\n\n  for (const b of bd.buckets) {\n    if (!b.count) continue;\n    L.push(b.emoji + ' ' + b.label + ' \\u2014 ' + b.count + ' (' + pct(b.pct) + ')');\n    const th = (p.themes || {})[b.key];\n    for (const ln of wrap(th || 'theme unavailable', 68, '     ')) L.push(ln);\n    if (b.key === 'refunds') {\n      for (const r of (bd.refund_types || [])) {\n        L.push(pad('     \\u21b3 ' + r.label, 44) + padL(r.count, 5));\n      }\n    }\n    L.push('');\n  }\n\n  if (bd.unmapped_total) {\n    const u = Object.keys(bd.unmapped_detail).map(k => k + ' (' + bd.unmapped_detail[k] + ')').join(', ');\n    L.push('\\u26a0\\ufe0f Unmapped categories \\u2014 ' + bd.unmapped_total);\n    for (const ln of wrap(u, 68, '     ')) L.push(ln);\n    L.push('');\n  }\n  if (bd.uncategorised) {\n    L.push('\\u2754 No category set \\u2014 ' + bd.uncategorised);\n    L.push('');\n  }\n\n  L.push(rule('TECHNICAL ISSUES'));\n  L.push('Technical tickets: ' + p.tech.total);\n  if (!p.tech.total) {\n    L.push('  (none today)');\n  } else if (!p.tech.items.length) {\n    L.push('  (clustering unavailable)');\n  } else {\n    for (const t of p.tech.items) L.push(pad('  \\u2022 ' + t.label, 44) + padL(t.count, 5));\n  }\n  L.push('```');\n\n  return { json: Object.assign({}, p, { slack_text: L.join('\\n') }) };\n});"
+      },
+      "id": "2cbe1fc0-7571-48ea-bf83-3a80d8d36b39",
+      "name": "Format Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5184,
+        3024
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r1",
+                    "leftValue": "={{ $json.project_key }}",
+                    "rightValue": "personality",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "personality"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "none"
+        }
+      },
+      "id": "dbcdfebe-aadc-4349-8d6b-aaaffcdfd44c",
+      "name": "Route by Project",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        5376,
+        3024
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "user",
+        "user": {
+          "__rl": true,
+          "value": "U091LRPLQD6",
+          "mode": "list",
+          "cachedResultName": "antonio.marusic"
+        },
+        "text": "={{ $json.slack_text }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false,
+          "mrkdwn": true
+        }
+      },
+      "id": "33fdd596-3605-47d6-9935-50de55dac141",
+      "name": "Slack · Personality",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        5600,
+        3024
+      ],
+      "webhookId": "a3ae3052-49ac-48bc-9ffd-39d3a5f9cf66",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "tSpUlRaNhgWKbKN4",
+          "name": "Automations Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Before the first run\n\n**1. Credentials**\n* `P1 · Fetch Tickets` and `P1 · Fetch Metrics + Users` -> select the **Zendesk** credential for this project.\n* The three `Gemini ...` nodes -> select the **Google Gemini (PaLM) API** credential. If the list is empty, switch *Authentication* to **Generic -> Header Auth** and use header `x-goog-api-key`.\n* `Slack · Personality` -> select the Slack credential and the target channel.\n\n**2. Workflow settings**\n* Timezone must be **UTC**.\n* Set your existing **Error Workflow** so failures raise the usual Slack alert.\n\n**3. Zendesk tag (required for the Assisted metric)**\nAdd a tag - default name `automation_replied` - to the ticket whenever John posts a **public** comment, from inside your existing CS automation.\nUntil that tag exists, `Assisted` reads 0 and those tickets are counted as `Fully manual`. The report prints a warning line while the tag is unconfigured.\n\n**4. Backfill / testing**\n`Compute Window` -> raise `LOOKBACK_DAYS` and execute manually. Set it back to 1 afterwards.",
+        "height": 620,
+        "width": 520,
+        "color": 4
+      },
+      "id": "4775576d-812e-4a95-aa2d-ac64e0c47f3e",
+      "name": "Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1616,
+        2272
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Adding a project\n\n1. Select the six `P1 · ...` nodes -> copy -> paste. Rename the prefix to `P2 · ...`.\n2. In `P2 · Config` set `project_key`, `project_display_name`, `zendesk_base`, `category_field_id`, `automation_agent_id`.\n   * No automation on that project -> set `automation_agent_id` to **0**. The report drops the automation block and collapses performance to one column.\n   * Odd category slugs -> put them in `category_override_map` as JSON, e.g. `{\"weird_slug\":\"refunds\"}`. Leave `\"\"` when there are none.\n3. Point `P2 · Fetch Tickets` / `P2 · Fetch Metrics + Users` at that project's Zendesk credential.\n4. Fix the two internal references inside the pasted Code nodes so they name the **P2** nodes, not P1.\n5. Connect `Compute Window` -> `P2 · Config`, and `P2 · Assemble` -> `All Projects`.\n6. **Replace `All Projects` with a Merge node** (mode *Append*, one input per project) and keep the name **exactly** `All Projects` - every downstream Code node looks it up by that name.\n7. Add a rule to `Route by Project` and a Slack node for the new channel.\n\nPausing a project: disable its `Config` node. The whole branch is skipped.",
+        "height": 620,
+        "width": 560,
+        "color": 5
+      },
+      "id": "72636e29-0a98-4b37-b09a-5abc82a17d9a",
+      "name": "Add a project",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2176,
+        2272
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## How the numbers are produced\n\n**Cohort** - every ticket whose `created_at` falls in the previous UTC day. Every figure describes that cohort, so `Solved` is really *same-day* solved: a ticket received yesterday and solved tomorrow is never counted. Consistent, but always lower than the lifetime resolution rate.\n\n**Solved** = status `solved` or `closed`. **Performance** is computed over solved tickets only, split three ways: `Auto` (John solved), `Assisted` (John commented, human solved), `Manual` (John never touched it).\n\n**Times** are Zendesk calendar minutes, never business hours. Averages are shown next to medians because one stalled ticket wrecks a mean.\n\n**Agent replies** = `metric_sets.replies`, i.e. public agent replies. One-touch = exactly one reply.\n\n**Reopen rate** has its own denominator. A ticket solved and then reopened is currently `open`, so it is not in `Solved` - the rate is measured against everything that reached solved at least once. The `Reopened` line in VOLUME splits by who solved it, which is the fastest way to see whether the automation is closing tickets prematurely.\n\n**Refund sub-lines** are generated per refund category, with labels derived from the slug rather than hardcoded, so a new refund option in Zendesk appears on its own line automatically.\n\n**Category buckets** are mapped in `P1 · Assemble` (`CATEGORY_MAP`). Slugs are normalised first - lowercased, runs of non-alphanumerics collapsed to one `_` - so `cancellation___subscription` and `special_offers/discounts` both match. `spam` and `duplicate_contact` are counted but excluded from the percentage denominator. A new Zendesk option that nothing matches shows up as a loud `Unmapped categories` line instead of disappearing.\n\n**Gemini never counts.** It writes one theme sentence per bucket, and for technical tickets it discovers labels (pass 1) then assigns tickets to them (pass 2). All tallies are done in `Count Tech Issues`. Anything it fails to classify falls into `Other`, so totals always reconcile. Taxonomy is rediscovered daily, so labels are not comparable day to day - freeze the label list in config once it stabilises if you want trends.\n\n**Only ticket id, subject and the first 240 characters of the opening message** are sent to Gemini. No names, no email addresses, no full threads.\n\n**Zero-ticket day** still sends a report, with zeros. A *failed* Zendesk call sends a short failure notice instead of fake zeros, and leaves the other projects alone.",
+        "height": 620,
+        "width": 720,
+        "color": 3
+      },
+      "id": "0012ea80-0939-498f-9752-15a1df91a4bf",
+      "name": "Logic notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2784,
+        2272
+      ]
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        1616,
+        3216
+      ],
+      "id": "b592444c-ebc7-4684-9f54-91ee1c48244c",
+      "name": "When clicking ‘Execute workflow’"
+    }
+  ],
+  "connections": {
+    "Daily 04:00 UTC": {
+      "main": [
+        [
+          {
+            "node": "Compute Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Window": {
+      "main": [
+        [
+          {
+            "node": "P1 · Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P1 · Config": {
+      "main": [
+        [
+          {
+            "node": "P1 · Fetch Tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P1 · Fetch Tickets": {
+      "main": [
+        [
+          {
+            "node": "P1 · Flatten Tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P1 · Flatten Tickets": {
+      "main": [
+        [
+          {
+            "node": "P1 · Batch Metric IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P1 · Batch Metric IDs": {
+      "main": [
+        [
+          {
+            "node": "P1 · Fetch Metrics + Users",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P1 · Fetch Metrics + Users": {
+      "main": [
+        [
+          {
+            "node": "P1 · Assemble",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P1 · Assemble": {
+      "main": [
+        [
+          {
+            "node": "All Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "All Projects": {
+      "main": [
+        [
+          {
+            "node": "Explode Theme Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Explode Theme Jobs": {
+      "main": [
+        [
+          {
+            "node": "Gemini · Bucket Themes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini · Bucket Themes": {
+      "main": [
+        [
+          {
+            "node": "Collect Themes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Themes": {
+      "main": [
+        [
+          {
+            "node": "Prepare Tech Discovery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Tech Discovery": {
+      "main": [
+        [
+          {
+            "node": "Gemini · Tech Taxonomy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini · Tech Taxonomy": {
+      "main": [
+        [
+          {
+            "node": "Prepare Tech Classify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Tech Classify": {
+      "main": [
+        [
+          {
+            "node": "Gemini · Tech Classify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini · Tech Classify": {
+      "main": [
+        [
+          {
+            "node": "Count Tech Issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Tech Issues": {
+      "main": [
+        [
+          {
+            "node": "Format Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Report": {
+      "main": [
+        [
+          {
+            "node": "Route by Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Project": {
+      "main": [
+        [
+          {
+            "node": "Slack · Personality",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Compute Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "ueE9FpTQ3OBvvHQ7",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "nodeGroups": [],
+  "pinData": {},
+  "versionId": "c42d0eaf-5501-49ec-b379-5ee2ffd53d73",
+  "activeVersionId": null,
+  "versionCounter": 45,
+  "triggerCount": 0,
+  "sourceWorkflowId": null,
+  "shared": [
+    {
+      "updatedAt": "2026-07-27T13:44:19.946Z",
+      "createdAt": "2026-07-27T13:44:19.946Z",
+      "role": "workflow:owner",
+      "workflowId": "QV3deINABAz91KXS",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "updatedAt": "2025-09-16T08:57:49.000Z",
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
+}
