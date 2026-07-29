@@ -1,0 +1,4324 @@
+{
+  "updatedAt": "2026-07-28T16:18:54.029Z",
+  "createdAt": "2026-07-28T16:04:02.567Z",
+  "id": "bLHsvruO1JOf5XJX",
+  "name": "Unicopy prod - 2nd message trigger",
+  "description": "Template version of the CS 2nd-message trigger workflow. Reads project-specific config from the cs_project_config data table via project_key. Handles follow-up customer messages on Zendesk tickets, gated by a configurable message count threshold.",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5d3b1e8a-1111-4a01-9a01-000000000001",
+              "name": "project_key",
+              "value": "lovestyle_dev",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "952bf4e7-f648-4c11-836f-98adeaa6e8fa",
+      "name": "Set project_key",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -992,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "IRxwFN8iBhHLFQxQ",
+          "cachedResultName": "cs_project_config"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "project_key",
+              "keyValue": "={{ $(\"Set project_key\").first().json.project_key }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "id": "3890678d-283c-4690-b440-eaf7655fe7a7",
+      "name": "Get Project Config",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -768,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $(\"Webhook\").item.json.body[\"ticket.id\"] + \"/comments\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "5f5d2b20-63ff-45be-bf1a-c7daada78e04",
+      "name": "Get ticket comments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -544,
+        784
+      ],
+      "retryOnFail": true,
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "4fdd72c3-b416-4c57-9f61-2f9cc85da331",
+              "leftValue": "={{ $json.comments.length }}",
+              "rightValue": "={{ $(\"Get Project Config\").first().json.message_limit_threshold }}",
+              "operator": {
+                "type": "number",
+                "operation": "lte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "bca0050a-18bc-4624-8a2f-2c1903a6cb4c",
+      "name": "Is under message limit",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -320,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "id": "6ca708ba-2993-4899-bdf3-442ee4d68db2",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -96,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst comments = data.comments;\n\nif (!comments || comments.length === 0) {\n  return [{ json: { error: \"No comments found\" } }];\n}\n\n// Sort by created_at descending and take the first (most recent)\nconst lastComment = [...comments].sort(\n  (a, b) => new Date(b.created_at) - new Date(a.created_at)\n)[0];\n\nreturn [\n  {\n    json: {\n      id: lastComment.id,\n      author_id: lastComment.author_id,\n      body: lastComment.plain_body,\n      public: lastComment.public,\n      created_at: lastComment.created_at,\n      channel: lastComment.via?.channel ?? null\n    },\n  },\n];"
+      },
+      "id": "be76e337-282e-47c5-89e9-9e68902b359d",
+      "name": "Return last comment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -320,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "afc92008-33cc-46b5-bd1c-83aeae43863f",
+              "leftValue": "={{ $(\"Return last comment\").item.json.channel }}",
+              "rightValue": "email",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "75020fee-6f5b-4f4e-84ff-4f506ac7f8ee",
+      "name": "Discard CS updates",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        128,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "926279a0-598a-48c6-9073-efde28b9d573",
+              "leftValue": "={{ $(\"Webhook\").item.json.body[\"ticket.ticket_field_\" + $(\"Get Project Config\").first().json.ticket_custom_field_automation_label_id] }}",
+              "rightValue": "other_auto",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a2fa5004-86dd-4e21-bc48-64ab046f87b2",
+      "name": "Discard \"other\" requests",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        352,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "inputText": "={{ $json.body }}",
+        "categories": {
+          "categories": [
+            {
+              "category": "Text is not in English"
+            },
+            {
+              "category": "Text is in English"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a6082abf-807c-4f1e-a0fa-1831c569b677",
+      "name": "Check ticket language1",
+      "type": "@n8n/n8n-nodes-langchain.textClassifier",
+      "typeVersion": 1.1,
+      "position": [
+        1680,
+        768
+      ],
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-5.1",
+          "mode": "id"
+        },
+        "responsesApiEnabled": false,
+        "options": {}
+      },
+      "id": "9fbf2d89-7830-4b82-92ec-7e2976c4b822",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1760,
+        992
+      ],
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"original_ticket_content\": {\n    \"ticket_id\": {{ $(\"Webhook\").item.json.body[\"ticket.id\"] }},\n    \"title\" : \"{{ $(\"Webhook\").item.json.body[\"ticket.title\"] }}\",\n    \"user_email\" : \"{{ $(\"Webhook\").item.json.body[\"ticket.requester.email\"] }}\",\n    \"description\": {{ JSON.stringify($(\"Check ticket language1\").item.json[\"body\"]) }},\n    \"ticket_url\": \"{{ $(\"Webhook\").item.json.body[\"ticket.url\"] }}\",\n    \"ticket_category\":\"{{ $(\"Webhook\").item.json.body['ticket.ticket_field_' + $('Get Project Config').first().json.ticket_custom_field_category] }}\",\n    \"automation_classification\":\"{{ $(\"Webhook\").item.json.body['ticket.ticket_field_' + $('Get Project Config').first().json.ticket_custom_field_automation_label_id] }}\"\n  },\n  \"translated_data\": {\n    \"originalLanguage\": \"en\",\n    \"is_translated\":false,\n    \"translations\": {\n      \"title\": \"\",\n      \"description\": \"\"\n    }\n  }\n} ",
+        "options": {}
+      },
+      "id": "a3fe8aeb-2082-400f-9336-e354fe28345b",
+      "name": "Set request data test2",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2368,
+        864
+      ]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "id": "266fd52a-520f-4402-9d1d-ade5ea4adadc",
+      "name": "Aggregate",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        2592,
+        768
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-5.1",
+          "mode": "id"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=Description: {{ $(\"Check ticket language1\").item.json[\"body\"] }}"
+            },
+            {
+              "role": "system",
+              "content": "You are a translation engine.\nYour task is to translate user-provided text into English and identify the language of the original text.\n\nRules (must be followed strictly):\nTranslate exactly and literally\nDo not add, remove, infer, or reinterpret any information\nDo not explain, summarize, rephrase, or improve wording\nPreserve tone, intent, ambiguity, and emotional content exactly\nPreserve formatting, punctuation, emojis, and line breaks\nDo not normalize slang, profanity, or errors\nIf a term cannot be translated precisely, transliterate it\nIf the input is already in English, return it unchanged\nIf the input is partially English, translate only the non-English parts\n\nFor originalTicketLanguage, output exactly one value from this list and nothing else:\nen, es, de, it, fr, pt, pl, da, no, ro, et, id, lt, ms, th, ko, language_other\n\nRules for originalTicketLanguage:\nUse the code for the primary (dominant) language of the original text, ignoring incidental English words, names, or product terms\nIf the original text is already in English, output en\nIf the language is not one of the listed codes, output language_other\nIf the language cannot be determined, output language_other\nOutput the value exactly as written in the list, with no extra characters\n\nOutput a JSON object containing:\ntitle: string // translated title\ndescription: string // translated description\noriginalTicketLanguage: string // one value from the allowed list\n\nFormatting:\nMust be valid JSON\nNo commentary, labels, or notes\nNo markdown unless it exists in the input"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_schema",
+              "verbosity": "high",
+              "schema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"title\": { \"type\": \"string\" },\n    \"description\": { \"type\": \"string\" },\n    \"originalTicketLanguage\": {\n      \"type\": \"string\",\n      \"enum\": [\"en\",\"es\",\"de\",\"it\",\"fr\",\"pt\",\"pl\",\"da\",\"no\",\"ro\",\"et\",\"id\",\"lt\",\"ms\",\"th\",\"ko\",\"language_other\"]\n    }\n  },\n  \"required\": [\"title\", \"description\", \"originalTicketLanguage\"],\n  \"additionalProperties\": false\n}"
+            }
+          }
+        }
+      },
+      "id": "61a5d506-addc-4beb-8110-a9144396ae29",
+      "name": "Translate ticket to english1",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        1984,
+        672
+      ],
+      "retryOnFail": true,
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"original_ticket_content\": {\n    \"ticket_id\": {{ $(\"Webhook\").item.json.body[\"ticket.id\"] }},\n    \"title\" : \"{{ $(\"Webhook\").item.json.body[\"ticket.title\"] }}\",\n    \"user_email\" : \"{{ $(\"Webhook\").item.json.body[\"ticket.requester.email\"] }}\",\n    \"description\": {{ JSON.stringify($(\"Check ticket language1\").item.json[\"body\"]) }},\n    \"ticket_url\": \"{{ $(\"Webhook\").item.json.body[\"ticket.url\"] }}\",\n    \"ticket_category\":\"{{ $(\"Webhook\").item.json.body['ticket.ticket_field_' + $('Get Project Config').first().json.ticket_custom_field_category] }}\",\n    \"automation_classification\":\"{{ $(\"Webhook\").item.json.body['ticket.ticket_field_' + $('Get Project Config').first().json.ticket_custom_field_automation_label_id] }}\"\n  },\n  \"translated_data\": {\n    \"originalLanguage\": \"{{$('Translate ticket to english1').item.json.output.first().content.first().text.originalTicketLanguage || \"en\"}}\",\n    \"is_translated\":{{(()=>{\n  let originalLanguage = $('Translate ticket to english1').item.json.output.first().content.first().text.originalTicketLanguage;\n  return originalLanguage?true:false;\n})()}},\n    \"translations\": {\n\"title\" : \"{{$('Translate ticket to english1').item.json.output.first().content.first().text.title || \"\"}}\",\n      \"description\": {{JSON.stringify($('Translate ticket to english1').item.json.output.first().content.first().text.description || \"\")}}\n    }\n  }\n} ",
+        "options": {}
+      },
+      "id": "16296c3c-84ad-41e3-87fc-62956f4eb620",
+      "name": "Set translated request data test1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2368,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-5.1",
+          "mode": "id"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a customer support ticket classifier.\n\nClassify the customer message into exactly one category:\n\n1. \"thanks\"\nUse this only when the customer is simply expressing gratitude and is not asking for anything else.\nExamples:\n- “Thanks for your help.”\n- “Many thanks for your prompt response.”\n- “Thank you for processing the refund. I appreciate it.”\n\n2. \"confirmation\"\nUse this when the customer is asking support to verify, confirm, or check the status of something already expected or completed, such as a cancellation, refund, transaction reversal, account closure, subscription status, or payment status.\nExamples:\n- “I’m reaching out to confirm my subscription has been canceled.”\n- “Can you confirm my refund was processed?”\n- “Just checking that my transaction has been refunded.”\n- “Please confirm my account is closed.”\n\n3. \"complaint\"\nUse this when the customer expresses dissatisfaction, frustration, anger, disappointment, distrust, or negative sentiment about the service, support, billing, refund, cancellation, charges, delays, product, company, or experience.\nExamples:\n- “This is unacceptable.”\n- “I was charged again after canceling.”\n- “Your support has been terrible.”\n- “I’m frustrated that my refund still hasn’t arrived.”\n\n4. \"other\"\nUse this as the fallback when the ticket does not clearly fit thanks, confirmation, or complaint.\nExamples:\n- New cancellation request\n- New refund request\n- Account update request\n- Product question\n- Feature question\n- Technical question\n- General inquiry\n- Unclear or incomplete message\n\nDecision rules:\n- Use only the customer’s message to evaluate, do not include include any forwarded text or previous messages\n- Choose \"thanks\" only if the message contains gratitude and no request, complaint, question, escalation, or unresolved issue.\n- If the message contains both gratitude and a confirmation/check request, choose \"confirmation\".\n- If the message contains any meaningful negative sentiment or complaint, choose \"complaint\", even if it also includes thanks or asks for confirmation.\n- If the customer asks support to verify whether something happened, choose \"confirmation\".\n- If the customer is making a new request rather than confirming an existing action, choose \"other\".\n- If the message is unclear, incomplete, or does not fit the first three categories, choose \"other\".\n\nOutput requirements:\nReturn only a valid JSON object with exactly one key:\n{\n  \"category\": \"thanks\" | \"confirmation\" | \"complaint\" | \"other\"\n}\n\nDo not include explanations, evidence, markdown, or extra keys."
+            },
+            {
+              "content": "=Customer message: {{ $json.data.first().translated_data.is_translated?$('Aggregate').item.json.data.first().translated_data.translations.description:$('Aggregate').item.json.data.first().original_ticket_content.description }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_schema",
+              "schema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"category\": {\n      \"type\": \"string\",\n      \"enum\": [\"thanks\", \"confirmation\", \"complaint\", \"other\"]\n    }\n  },\n  \"required\": [\"category\"],\n  \"additionalProperties\": false\n}"
+            }
+          }
+        }
+      },
+      "id": "7f6b9b36-3998-4365-9461-39c04f25122a",
+      "name": "Ticket classification2",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        2768,
+        768
+      ],
+      "retryOnFail": true,
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e285dcc2-00bc-4fe3-9a10-844d74b4192e",
+              "leftValue": "={{ $(\"Aggregate\").item.json.data[0].original_ticket_content.ticket_category }}",
+              "rightValue": "={{ $(\"Get Project Config\").first().json.category_value_password_account_info }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "08f4387f-823a-4c4b-ba6f-4e09234618f4",
+      "name": "Is account and password",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3040,
+        768
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-5.1",
+          "mode": "id"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are an information extraction system for customer support messages.\n\nAnalyze the customer support message and extract the customer's email address if one is explicitly provided.\n\nReturn only a JSON object that matches the provided schema.\n\nRules:\n- The output must contain exactly one key: customer_email.\n- If the customer message contains a valid email address, set customer_email to that email address as a string.\n- If the customer message does not contain a valid email address, set customer_email to false.\n- Do not include markdown, explanations, comments, or extra text.\n- Do not guess, infer, reconstruct, or fabricate an email address.\n- If multiple valid email addresses are present return false\n"
+            },
+            {
+              "content": "=Customer message: {{ $('Return last comment').item.json.body }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_schema",
+              "schema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"customer_email\": {\n      \"anyOf\": [\n        {\n          \"type\": \"string\",\n          \"format\": \"email\"\n        },\n        {\n          \"type\": \"string\",\n          \"const\": \"none\"\n        }\n      ]\n    }\n  },\n  \"required\": [\"customer_email\"],\n  \"additionalProperties\": false\n}"
+            }
+          }
+        }
+      },
+      "id": "787bedae-573a-4741-9dc9-82345bb4b009",
+      "name": "Email extraction",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        4096,
+        -144
+      ],
+      "retryOnFail": true,
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ad764505-ca67-496d-a35c-6e072f88f530",
+              "leftValue": "={{ $json.output[0].content[0].text.customer_email }}",
+              "rightValue": "none",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ae8d41ba-3c58-48a6-a91f-ab281d88613e",
+      "name": "is email provided",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4464,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a54f8417-e017-4270-9953-85fcb3b1568a",
+              "name": "requestType",
+              "value": "search",
+              "type": "string"
+            },
+            {
+              "id": "a259490f-b011-4a72-a1b0-7615c01e1e29",
+              "name": "email",
+              "value": "={{ $json.output[0].content[0].text.customer_email }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "00179fef-c090-43b3-bd68-669b6faf613c",
+      "name": "Edit Fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4880,
+        -432
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "9dHFAZqAbAj42xR3",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/9dHFAZqAbAj42xR3",
+          "cachedResultName": "Operations Department — CS - HMAC [Template]"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "94905112-6e07-481e-a003-f4c29ff326c8",
+      "name": "Call 'CS - HMAC'1",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        5104,
+        -432
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $(\"Get Project Config\").first().json.payments_api_base_url }}/api/payments/v1/bot/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "X-Nonce",
+              "value": "={{ $json.nonce }}"
+            },
+            {
+              "name": "X-Key-Id",
+              "value": "={{ $json.keyID }}"
+            },
+            {
+              "name": "X-Signature",
+              "value": "={{ $json.signedString }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.sortedBody }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "c7130815-1bec-4f8d-be67-f4a40026fa65",
+      "name": "DEV bot/search2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        5360,
+        -432
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ad764505-ca67-496d-a35c-6e072f88f530",
+              "leftValue": "={{ $json.body.subscriptionId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0ceb38b4-770b-4a0a-9d77-820982e25151",
+      "name": "is email provided1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        5584,
+        -432
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Aggregate').item.json.data[0].original_ticket_content.automation_classification }}",
+                    "rightValue": "=cancellation_auto",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "cea6b447-61a9-4810-94a4-e9dcbce653b8"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Cancellation"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "0d2d8328-1eef-47d1-85bb-11d66f080b1a",
+                    "leftValue": "={{ $('Aggregate').item.json.data[0].original_ticket_content.automation_classification }}",
+                    "rightValue": "refund_auto",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Refund"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0e6f3803-fa3a-479c-af64-afa6192b39bb",
+      "name": "Switch1",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        6080,
+        -912
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "fb3e4c46-8ee7-4b99-83d5-808f0e480a40",
+              "name": "subscriptionId",
+              "value": "={{ $json.body.subscriptionId }}",
+              "type": "string"
+            },
+            {
+              "id": "591cabd9-da9e-4d85-a243-37eb7c5378cd",
+              "name": "ticketID",
+              "value": "={{ $('Aggregate').item.json.data[0].original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "836a4afe-23b6-4364-bd29-183d04f7d648",
+              "name": "isTranslated",
+              "value": "={{ $('Aggregate').item.json.data[0].translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "e363fbe3-9172-4a42-b7a1-f5e21e0e5014",
+              "name": "originalLanguage",
+              "value": "={{ $('Aggregate').item.json.data[0].translated_data.originalLanguage }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "457f5d31-afa8-43d1-8307-b693724be3bf",
+      "name": "Set request data test1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        6496,
+        -1024
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"original_ticket_content\": {\n    \"ticket_id\": {{ $('Aggregate').item.json.data[0].original_ticket_content.ticket_id }},\n    \"title\": \"{{ $('Aggregate').item.json.data[0].original_ticket_content.title }}\",\n    \"description\": {{ JSON.stringify($('Aggregate').item.json.data[0].original_ticket_content.description) }},\n    \"ticket_url\": \"{{ $('Aggregate').item.json.data[0].original_ticket_content.ticket_url }}\",\n    \"user_email\": \"{{ $('Edit Fields').item.json.email }}\",\n     \"payment_provider_account_ID\": \"123456789\"\n  },\n  \"translated_data\": {\n    \"originalLanguage\": \"{{ $('Aggregate').item.json.data[0].translated_data.originalLanguage }}\",\n    \"is_translated\":{{ $('Aggregate').item.json.data[0].translated_data.is_translated }},\n    \"translations\": {\n      \"title\": \"{{ $('Aggregate').item.json.data[0].translated_data.translations.title }}\",\n      \"description\": {{ JSON.stringify($('Aggregate').item.json.data[0].translated_data.translations.description) }}\n    }\n  }\n} ",
+        "options": {}
+      },
+      "id": "41128fb1-de14-4f20-a039-06b0211b5592",
+      "name": "Set request data test",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        6496,
+        -768
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $(\"Aggregate\").item.json.data[0].original_ticket_content.ticket_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ticket.comment.public",
+              "value": "false"
+            },
+            {
+              "name": "ticket.comment.body",
+              "value": "=Note: The email customer provided does not exist as a user in the app. Please handle this ticket manually. "
+            },
+            {
+              "name": "ticket.custom_status_id",
+              "value": "={{ $(\"Get Project Config\").first().json.ticket_custom_status_open_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d7edc856-9d5c-4703-a983-78013e7908e1",
+      "name": "Reply to internally and set status to open3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        6496,
+        -416
+      ],
+      "retryOnFail": true,
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $(\"Aggregate\").item.json.data[0].original_ticket_content.ticket_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ticket.comment.public",
+              "value": "false"
+            },
+            {
+              "name": "ticket.comment.body",
+              "value": "=Note: The customer did not provide a new email address in their follow up. Please handle this ticket manually. "
+            },
+            {
+              "name": "ticket.custom_status_id",
+              "value": "={{ $(\"Get Project Config\").first().json.ticket_custom_status_open_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "34ee43e1-e214-4732-ad88-cf3724baa47d",
+      "name": "Reply to internally and set status to open4",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        4864,
+        -48
+      ],
+      "retryOnFail": true,
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.output[0].content[0].text.category }}",
+                    "rightValue": "thanks",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "129877a8-c787-445c-ba26-d1fd81664588"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Thanks"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "064435ec-baa6-4a68-a8af-abca8d3f25f2",
+                    "leftValue": "={{ $json.output[0].content[0].text.category }}",
+                    "rightValue": "confirmation",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Confirmation"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "913cdf83-e0f6-4211-9719-a2a9faf22a98",
+                    "leftValue": "={{ $json.output[0].content[0].text.category }}",
+                    "rightValue": "complaint",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Complaint"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "d679f1fd-c440-42e6-8651-56bcfd071132",
+                    "leftValue": "={{ $json.output[0].content[0].text.category }}",
+                    "rightValue": "other",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Other"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "755c2494-0f03-4f1b-b959-4b18f7dbfeff",
+      "name": "Switch",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        3856,
+        1760
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "={{ $(\"Get Project Config\").first().json.zendesk_domain }}",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Aggregate').item.json.data[0].original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Aggregate').item.json.data[0].translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Aggregate').item.json.data[0].translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": "={{ $(\"Get Project Config\").first().json.macro_thanks_reply_id }}",
+              "type": "number"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": "={{ $(\"Get Project Config\").first().json.ticket_custom_status_solved_id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "57c12d8f-d8a1-4da1-a0cd-27a5d42d30cd",
+      "name": "Edit Fields1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        6480,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "6VBYrrSTrlJxBkA1",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/6VBYrrSTrlJxBkA1",
+          "cachedResultName": "Operations Department — CS - Zendesk ticket update request [Template]"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "8f2c13b2-e392-42d8-a192-2813a1b49606",
+      "name": "Update zendesk ticket1",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        6704,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a54f8417-e017-4270-9953-85fcb3b1568a",
+              "name": "requestType",
+              "value": "search",
+              "type": "string"
+            },
+            {
+              "id": "a259490f-b011-4a72-a1b0-7615c01e1e29",
+              "name": "email",
+              "value": "={{ $('Aggregate').item.json.data[0].original_ticket_content.user_email }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "448baefd-3cbd-44b3-8869-e044ac2fcdae",
+      "name": "Edit Fields4",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        6464,
+        992
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $(\"Get Project Config\").first().json.payments_api_base_url }}/api/payments/v1/bot/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "X-Nonce",
+              "value": "={{ $json.nonce }}"
+            },
+            {
+              "name": "X-Key-Id",
+              "value": "={{ $json.keyID }}"
+            },
+            {
+              "name": "X-Signature",
+              "value": "={{ $json.signedString }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.sortedBody }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "58aae6ef-df8f-4ae7-9031-91f010d82120",
+      "name": "DEV bot/search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        6912,
+        992
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c5eb4945-ffd8-4b87-b4ce-847bc205f892",
+              "leftValue": "={{ $json.body.refundedTransactions }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "array",
+                "operation": "lengthGt",
+                "rightType": "number"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b713738e-54e4-48f8-8d9b-5a684655418a",
+      "name": "Has refunded transations",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        7136,
+        992
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "={{ $(\"Get Project Config\").first().json.zendesk_domain }}",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Aggregate').item.json.data[0].original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Aggregate').item.json.data[0].translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Aggregate').item.json.data[0].translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": "={{ $(\"Get Project Config\").first().json.macro_refund_confirmation }}",
+              "type": "number"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": "={{ $(\"Get Project Config\").first().json.ticket_custom_status_solved_id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "6665374a-e7b0-4cec-881a-0af8d4f6dcab",
+      "name": "Edit Fields5",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        8448,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "6VBYrrSTrlJxBkA1",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/6VBYrrSTrlJxBkA1",
+          "cachedResultName": "Operations Department — CS - Zendesk ticket update request [Template]"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "9447a98b-6e34-4742-aada-1b2cbb857a11",
+      "name": "Update zendesk ticket3",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        8672,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "7fadc4eb-12fd-40fa-9659-732b4b169e80",
+              "leftValue": "={{ $('DEV bot/search').item.body.subscriptionStatus }}",
+              "rightValue": "cancelling",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "c0c93dc2-824d-4771-a1ce-8ea3a664848d",
+              "leftValue": "={{ $('DEV bot/search').item.body.subscriptionStatus }}",
+              "rightValue": "cancelled",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "3fca2f7f-1700-44f2-bbdc-e3dc55af72f8",
+      "name": "Subscription is cancelled",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        7920,
+        1584
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "={{ $(\"Get Project Config\").first().json.zendesk_domain }}",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Aggregate').item.json.data[0].original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Aggregate').item.json.data[0].translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Aggregate').item.json.data[0].translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": "={{ $(\"Get Project Config\").first().json.macro_cancellation_confirmation }}",
+              "type": "number"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": "={{ $(\"Get Project Config\").first().json.ticket_custom_status_solved_id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fc5a2949-82cf-41e6-b066-7c920a9cdd6f",
+      "name": "Edit Fields6",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        8464,
+        1152
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "6VBYrrSTrlJxBkA1",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/6VBYrrSTrlJxBkA1",
+          "cachedResultName": "Operations Department — CS - Zendesk ticket update request [Template]"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "174d1fc7-bfa8-42e7-9a11-5ec756344583",
+      "name": "Update zendesk ticket4",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        8688,
+        1152
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $(\"Aggregate\").item.json.data[0].original_ticket_content.ticket_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ticket.comment.public",
+              "value": "false"
+            },
+            {
+              "name": "ticket.comment.body",
+              "value": "=Note: This customer has reached our to confirm a refund or cancellation but the automation wasn't able to detect either of those. Please handle this ticket manually. "
+            },
+            {
+              "name": "ticket.custom_status_id",
+              "value": "={{ $(\"Get Project Config\").first().json.ticket_custom_status_open_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4ece6dca-ab1c-477f-a341-94746d36e59a",
+      "name": "Reply to internally and set status to open",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        8576,
+        1936
+      ],
+      "retryOnFail": true,
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c5eb4945-ffd8-4b87-b4ce-847bc205f892",
+              "leftValue": "={{ $json.body.refundedTransactions }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "array",
+                "operation": "lengthGt",
+                "rightType": "number"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8d6af7f3-eaac-41c9-8b71-2401209d6c80",
+      "name": "Has refunded transactions",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        5936,
+        2672
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c5eb4945-ffd8-4b87-b4ce-847bc205f892",
+              "leftValue": "={{ $json.body.refundedTransactions }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "array",
+                "operation": "lengthEquals",
+                "rightType": "number"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "bf9e402a-a17b-4141-9451-7a90ffe0ed7f",
+      "name": "Has 1 refunded transaction",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        6416,
+        2176
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "={{ $(\"Get Project Config\").first().json.zendesk_domain }}",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Aggregate').item.json.data[0].original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Aggregate').item.json.data[0].translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Aggregate').item.json.data[0].translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": "={{ $(\"Get Project Config\").first().json.macro_single_refund_complaint }}",
+              "type": "number"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": "={{ $(\"Get Project Config\").first().json.ticket_custom_status_solved_id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "16302195-395e-4000-b854-5b8eaac43a83",
+      "name": "Edit Fields7",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        6880,
+        1872
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "6VBYrrSTrlJxBkA1",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/6VBYrrSTrlJxBkA1",
+          "cachedResultName": "Operations Department — CS - Zendesk ticket update request [Template]"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "6fc7244a-1535-47fc-8277-bb2dde647082",
+      "name": "Update zendesk ticket",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        7104,
+        1872
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "={{ $(\"Get Project Config\").first().json.zendesk_domain }}",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Aggregate').item.json.data[0].original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Aggregate').item.json.data[0].translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Aggregate').item.json.data[0].translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": "={{ $(\"Get Project Config\").first().json.macro_double_refund_complaint }}",
+              "type": "number"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": "={{ $(\"Get Project Config\").first().json.ticket_custom_status_solved_id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "6a4e6720-627c-4d98-87b5-d43bdb1c2a28",
+      "name": "Edit Fields8",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        6880,
+        2448
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "6VBYrrSTrlJxBkA1",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/6VBYrrSTrlJxBkA1",
+          "cachedResultName": "Operations Department — CS - Zendesk ticket update request [Template]"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "18603480-62d2-4d1b-8bbc-c80aae533354",
+      "name": "Update zendesk ticket5",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        7104,
+        2448
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $(\"Aggregate\").item.json.data[0].original_ticket_content.ticket_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ticket.comment.public",
+              "value": "false"
+            },
+            {
+              "name": "ticket.comment.body",
+              "value": "=Note: This ticket has been analysed by the CS automation and did not fit into any of the predefined categories \n- Thanks\n- Cancel/refund confirmation\n- Complaint\n- Acc/pass info\n\nIf the ticket DOES fit into any of the category above please reach out to the Operations Dept. \n\nPlease handle this ticket manually. "
+            },
+            {
+              "name": "ticket.custom_status_id",
+              "value": "={{ $(\"Get Project Config\").first().json.ticket_custom_status_open_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "036f8773-37ee-4ced-91b2-a596f1a7f0cb",
+      "name": "Reply to internally and set status to open5",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        6512,
+        3408
+      ],
+      "retryOnFail": true,
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst comments = data.comments;\n\nif (!comments || comments.length === 0) {\n  return [{ json: { error: \"No comments found\" } }];\n}\n\n// A comment is from the customer if via.source.to has no address\nconst isFromCustomer = (comment) => {\n  const to = comment?.via?.source?.to;\n  return !to?.address;\n};\n\n// Filter to customer comments only, then sort by created_at descending\nconst customerComments = comments\n  .filter(isFromCustomer)\n  .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));\n\nif (customerComments.length === 0) {\n  return [{ json: { error: \"No customer comments found\" } }];\n}\n\nconst lastCustomerComment = customerComments[0];\n\nreturn [\n  {\n    json: {\n      id: lastCustomerComment.id,\n      author_id: lastCustomerComment.author_id,\n      body: lastCustomerComment.plain_body,\n      public: lastCustomerComment.public,\n      created_at: lastCustomerComment.created_at,\n      channel: lastCustomerComment.via?.channel ?? null,\n    },\n  },\n];"
+      },
+      "id": "d0275c8f-7f67-42cd-a09d-644ee98e69df",
+      "name": "Return last customer message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        1552
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# Template configuration\n\n## How this template works\n1. **Set project_key** holds the hardcoded key for this deployment.\n2. **Get Project Config** fetches the row from the `cs_project_config` data table.\n3. All downstream nodes reference values via `$('Get Project Config').first().json.column_name`.\n\n## To duplicate for a new project\n- Duplicate this workflow.\n- Change the value in **Set project_key**.\n- Add/update a row in `cs_project_config` for that key.\n- Update the Zendesk Trigger credentials and webhook ID.\n- Note: `ticket.ticket_field_*` IDs in the Zendesk Trigger fields list are hardcoded (trigger params do not allow expressions). Update them for the new project.\n\n## Convention values kept hardcoded\n- `refund_auto`, `cancellation_auto`, `other_auto` automation_classification values are produced by the main automation flow and consumed here as cross-workflow constants.",
+        "height": 280,
+        "width": 880,
+        "color": 5
+      },
+      "id": "fb798e13-a617-4ab7-8b97-29e4e0a1c04a",
+      "name": "Sticky Note ac75aa74",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1328,
+        1504
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# Simple thanks",
+        "height": 544,
+        "width": 864,
+        "color": 7
+      },
+      "id": "ca4d2fb6-7c3c-4016-add2-b0f0f68d5aa6",
+      "name": "Sticky Note 9a8b354b",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        6432,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Status: solved\n## Macro: Thanks reply",
+        "height": 224,
+        "width": 336,
+        "color": 7
+      },
+      "id": "3976ff2f-d39f-4930-81b7-fd31d40f063a",
+      "name": "Sticky Note cccde6ff",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        6944,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# Refund confirmation",
+        "height": 544,
+        "width": 864,
+        "color": 7
+      },
+      "id": "17cb8b71-86c5-4e4f-af59-286da7220ebd",
+      "name": "Sticky Note b960b824",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        8400,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Status: solved\n## Macro: single refund complaint",
+        "height": 224,
+        "width": 336,
+        "color": 7
+      },
+      "id": "60fe79af-12f6-4d50-8553-725e81a31f05",
+      "name": "Sticky Note d8e9eef2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        7312,
+        2032
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# Cancellation confirmation",
+        "height": 544,
+        "width": 864,
+        "color": 7
+      },
+      "id": "fa5b4737-16a5-46bd-9673-9b12f1715aa0",
+      "name": "Sticky Note 38ebad85",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        8416,
+        992
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Status: solved\n## Macro: Refund confirmation",
+        "height": 224,
+        "width": 336,
+        "color": 7
+      },
+      "id": "606934f2-3276-45ad-a92e-954c6758987c",
+      "name": "Sticky Note 194fb0d6",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        8912,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# Requested confirmation but subs is active\n",
+        "height": 544,
+        "width": 640,
+        "color": 7
+      },
+      "id": "585fead7-3bb3-41f7-ac75-3c0fe788550d",
+      "name": "Sticky Note b043fbde",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        8512,
+        1776
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Status: open\n## Category: none\n## Assign to CS\n",
+        "height": 208,
+        "width": 288,
+        "color": 7
+      },
+      "id": "d599e98a-9f17-48c2-9c67-15bb698dde9f",
+      "name": "Sticky Note 0f3b6e45",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        6800,
+        3584
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Status: open\n## Category: none\n## Assign to CS\n",
+        "height": 144,
+        "width": 256,
+        "color": 7
+      },
+      "id": "c0e327fc-ecc4-4e2e-9ee6-a2f862fc428e",
+      "name": "Sticky Note b9e07463",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        8864,
+        2160
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# Wrong email\n",
+        "height": 544,
+        "width": 640,
+        "color": 7
+      },
+      "id": "8ed0532a-c821-4fca-aaf0-5bb8b68f392a",
+      "name": "Sticky Note 9a6d20da",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        6432,
+        -528
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# Email not provided \n",
+        "height": 544,
+        "width": 640,
+        "color": 7
+      },
+      "id": "655fa0d6-3e00-4739-90c8-94cdfdfc717f",
+      "name": "Sticky Note ef15cecc",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        4816,
+        -192
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Status: open\n## Category: none\n## Assign to CS\n",
+        "height": 208,
+        "width": 288,
+        "color": 7
+      },
+      "id": "b2dd6bbc-cd21-4b6c-be3c-b92115610953",
+      "name": "Sticky Note f5a6768b",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        6752,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Upon 2nd message completion  add a tag/category/something to indicate automation flow is done? check for it after trigger?",
+        "height": 496,
+        "width": 592,
+        "color": 3
+      },
+      "id": "688aac73-cb4c-4e31-b3c2-76d3fc1a52b0",
+      "name": "Sticky Note e09aae4b",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1328,
+        1888
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# No refunded transactions\n",
+        "height": 544,
+        "width": 640,
+        "color": 7
+      },
+      "id": "e3e8db42-7d43-44ed-87f6-0df06a50af7a",
+      "name": "Sticky Note f76dffd9",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        6464,
+        3264
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Status: open\n## Category: none\n## Assign to CS\n",
+        "height": 208,
+        "width": 288,
+        "color": 7
+      },
+      "id": "94cdf6b9-14a4-43e8-b4a2-f6eda78e451c",
+      "name": "Sticky Note 810327c8",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        5152,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# Single refund complaint",
+        "height": 544,
+        "width": 864,
+        "color": 7
+      },
+      "id": "4aff6dbf-294c-4519-9553-f6b35dc9dfdc",
+      "name": "Sticky Note 50df3df9",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        6816,
+        1744
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Status: solved\n## Macro: Cancellation confirmation",
+        "height": 224,
+        "width": 336,
+        "color": 7
+      },
+      "id": "be879d41-6254-401f-8cf5-f6d856c9044e",
+      "name": "Sticky Note d731ffc6",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        8928,
+        1296
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# Double refund complaint",
+        "height": 544,
+        "width": 864,
+        "color": 7
+      },
+      "id": "b42dd1e1-38b1-4fe5-ba54-03e07fa5bee6",
+      "name": "Sticky Note 29a9536f",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        6816,
+        2336
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Status: solved\n## Macro: double refund complaint",
+        "height": 224,
+        "width": 336,
+        "color": 7
+      },
+      "id": "57719354-97b4-4891-a067-f3eba0287263",
+      "name": "Sticky Note 17e7cff6",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        7312,
+        2624
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "dJfhIiG72BwXX2Is",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/dJfhIiG72BwXX2Is",
+          "cachedResultName": "Operations Department — CS - Refund requests flow [Template]"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "8a96be39-d3a8-4461-9c6f-2cae63df08e1",
+      "name": "Call 'CS - Refund requests flow [Template]'",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        6720,
+        -768
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "LSK2uSi3QypQa9ls",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/LSK2uSi3QypQa9ls",
+          "cachedResultName": "Operations Department — CS - Cancellation flow [Template]"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "676207d7-1c22-41e6-9043-2fcd19b714d2",
+      "name": "Call 'CS - Cancellation request [Template]'",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        6720,
+        -1024
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "9dHFAZqAbAj42xR3",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/9dHFAZqAbAj42xR3",
+          "cachedResultName": "Operations Department — CS - HMAC [Template]"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "3d643bd0-394e-4e4a-b4e9-90cd066d3251",
+      "name": "Call 'CS - HMAC [Template]'",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        6688,
+        992
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "9c801ae4-58ce-4047-82a3-3b0a3bf8b25a",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1216,
+        784
+      ],
+      "id": "3425cd49-77bc-4d07-b3a4-a482da2ac052",
+      "name": "Webhook",
+      "webhookId": "9c801ae4-58ce-4047-82a3-3b0a3bf8b25a"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c5eb4945-ffd8-4b87-b4ce-847bc205f892",
+              "leftValue": "={{ $json.body.refundedTransactions }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "array",
+                "operation": "lengthGt",
+                "rightType": "number"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0f6f53bc-0d7f-4af0-abaf-a5609c4bcf0d",
+      "name": "Has refunded transactions1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        8048,
+        4304
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a54f8417-e017-4270-9953-85fcb3b1568a",
+              "name": "requestType",
+              "value": "search",
+              "type": "string"
+            },
+            {
+              "id": "a259490f-b011-4a72-a1b0-7615c01e1e29",
+              "name": "email",
+              "value": "={{ $('Aggregate').item.json.data[0].original_ticket_content.user_email }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a94ece01-cdd5-44f1-9b9f-085eebc14864",
+      "name": "Edit Fields9",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        7376,
+        4304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $(\"Get Project Config\").first().json.payments_api_base_url }}/api/payments/v1/bot/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "X-Nonce",
+              "value": "={{ $json.nonce }}"
+            },
+            {
+              "name": "X-Key-Id",
+              "value": "={{ $json.keyID }}"
+            },
+            {
+              "name": "X-Signature",
+              "value": "={{ $json.signedString }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.sortedBody }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "1b58906f-5257-453a-8c7e-1c142a38a25d",
+      "name": "DEV bot/search1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        7824,
+        4304
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "9dHFAZqAbAj42xR3",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/9dHFAZqAbAj42xR3",
+          "cachedResultName": "Operations Department — CS - HMAC [Template]"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "a4652753-1e2d-460b-98b4-1c5a500398e2",
+      "name": "Call 'PS prod - HMAC'1",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        7600,
+        4304
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "={{ $(\"Get Project Config\").first().json.zendesk_domain }}",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Aggregate').item.json.data[0].original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Aggregate').item.json.data[0].translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Aggregate').item.json.data[0].translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": "={{ $(\"Get Project Config\").first().json.macro_refund_confirmation }}",
+              "type": "number"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": "={{ $(\"Get Project Config\").first().json.ticket_custom_status_solved_id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0561ca25-3383-4a76-b67a-2be2cd78fd65",
+      "name": "Edit Fields10",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        8448,
+        4064
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "6VBYrrSTrlJxBkA1",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/6VBYrrSTrlJxBkA1",
+          "cachedResultName": "Operations Department — CS - Zendesk ticket update request [Template]"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "efaf2af9-c491-4873-bc01-200f07065cc7",
+      "name": "Update zendesk ticket6",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        8672,
+        4064
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# Refund confirmation",
+        "height": 544,
+        "width": 864,
+        "color": 7
+      },
+      "id": "dd15aed3-e687-4f06-9211-12b60dae2aac",
+      "name": "Sticky Note b960b",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        8400,
+        3920
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Status: solved\n## Macro: Refund confirmation",
+        "height": 224,
+        "width": 336,
+        "color": 7
+      },
+      "id": "f7f4497d-1d49-4b03-9607-a5d534c22bbc",
+      "name": "Sticky Note 194fb0d",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        8912,
+        4224
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-5.4",
+          "mode": "list",
+          "cachedResultName": "GPT-5.4"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a customer support ticket classifier. You analyze customer support messages and identify if they are cancellation requests or not based only on the user’s written message\n\nCancellations (c)\nUse this category if the customer is asking for subscription cancellation, account cancellation, if they want to cancel, mentions being charged for something they didn't want or mentions stopping payments\n\nOther  (o)\nUse this category for all other messages like:\naccount deletion requests\nproduct questions\nfeature requests\naccount access issues\ncomplaints \nunclear or ambiguous messages\nharassment or threatening\n\nIMPORTANT RULES:\nIf a cancellation is requested or clearly implied, choose Cancellation category\nDo NOT assume a cancellation request from frustration or complaints alone.\nIf the intent is unclear or ambiguous, choose Other \nUse only the customer’s message to evaluate, do not include include any forwarded text or previous messages. If the message contains forwarded content (often labelled with \"Forwarded message\") disregard everything that comes after that and only consider the content before it in the classification\n\nOUTPUT FORMAT:\nOutput only one letter based on the category of the ticket, the output must be a single token\nc = cancellation\no = Other\n\nReturn only a valid JSON object with exactly one key:\n{\n  \"request_category\": \"o\" | \"c\" \n}\n\nDo not include explanations, evidence, markdown, or extra keys. Output only the letter."
+            },
+            {
+              "content": "=Customer message: {{$('Aggregate').item.json.data[0].translated_data.is_translated?$('Aggregate').item.json.data.first().translated_data.translations.description:$('Aggregate').item.json.data.first().original_ticket_content.description  }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_schema",
+              "schema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"request_category\": {\n      \"type\": \"string\",\n      \"enum\": [\"o\", \"c\"]\n    }\n  },\n  \"required\": [\"request_category\"],\n  \"additionalProperties\": false\n}"
+            }
+          }
+        }
+      },
+      "id": "23aa1b93-bf00-4485-89dc-488752be4598",
+      "name": "Identify cancellation requests",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        7312,
+        5360
+      ],
+      "retryOnFail": true,
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "={{ $(\"Get Project Config\").first().json.zendesk_domain }}",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Aggregate').item.json.data[0].original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Aggregate').item.json.data[0].translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Aggregate').item.json.data[0].translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": "={{ $(\"Get Project Config\").first().json.macro_cancellation_confirmation }}",
+              "type": "number"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": "={{ $(\"Get Project Config\").first().json.ticket_custom_status_solved_id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2392ba5a-ae27-418b-935a-c3d947664780",
+      "name": "Edit Fields11",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        9360,
+        5312
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "6VBYrrSTrlJxBkA1",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/6VBYrrSTrlJxBkA1",
+          "cachedResultName": "Operations Department — CS - Zendesk ticket update request [Template]"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "6cafbb31-808f-4af1-915b-1f0de6d31a87",
+      "name": "Update zendesk ticket7",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        9584,
+        5312
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# Cancellation confirmation",
+        "height": 544,
+        "width": 864,
+        "color": 7
+      },
+      "id": "07394e5a-04a3-465c-8683-239fb78c57ed",
+      "name": "Sticky Note 38ebad",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        9312,
+        5152
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Status: solved\n## Macro: Cancellation confirmation",
+        "height": 224,
+        "width": 336,
+        "color": 7
+      },
+      "id": "de72774b-c005-4e85-bbd8-2cb737d177dd",
+      "name": "Sticky Note d731ffc",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        9824,
+        5456
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e285dcc2-00bc-4fe3-9a10-844d74b4192e",
+              "leftValue": "={{ $json.output[0].content[0].text.request_category }}",
+              "rightValue": "c",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "78afe9a5-2815-475a-8c6c-2e19c3205758",
+      "name": "Is cancellation request",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        7680,
+        5360
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-5.4",
+          "mode": "list",
+          "cachedResultName": "GPT-5.4"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a customer support ticket classifier. You analyze customer support messages and identify if they are refund requests or not based only on the user’s written message\n\nRefunds (r)\nUse this category if the customer is asking for money back, a refund, a charge reversal, or mentions being charged and wanting the charge undone.  \n\nOther  (o)\nUse this category for all other messages like:\naccount deletion requests\nproduct questions\nfeature requests\naccount access issues\ncomplaints \nunclear or ambiguous messages\nharassment or threatening\n\nIMPORTANT RULES:\nIf a refund is requested or clearly implied, choose Refunds category\nDo NOT assume a refund request from frustration or complaints alone.\nDo NOT assume a refund from a cancellation request unless money back is explicitly requested.\nIf the intent is unclear or ambiguous, choose Other \nUse only the customer’s message to evaluate, do not include include any forwarded text or previous messages. If the message contains forwarded content (often labelled with \"Forwarded message\") disregard everything that comes after that and only consider the content before it in the classification\n\nOUTPUT FORMAT:\nOutput only one letter based on the category of the ticket, the output must be a single token\nr = Refunds\no = Other\n\nReturn only a valid JSON object with exactly one key:\n{\n  \"request_category\": \"o\" | \"r\" \n}\n\nDo not include explanations, evidence, markdown, or extra keys. Output only the letter."
+            },
+            {
+              "content": "=Customer message: {{$('Aggregate').item.json.data[0].translated_data.is_translated?$('Aggregate').item.json.data.first().translated_data.translations.description:$('Aggregate').item.json.data.first().original_ticket_content.description  }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_schema",
+              "schema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"request_category\": {\n      \"type\": \"string\",\n      \"enum\": [\"o\", \"r\"]\n    }\n  },\n  \"required\": [\"request_category\"],\n  \"additionalProperties\": false\n}"
+            }
+          }
+        }
+      },
+      "id": "85001f1d-b12c-4c9e-8971-aa3e21393627",
+      "name": "Identify refund requests1",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        6432,
+        4816
+      ],
+      "retryOnFail": true,
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e285dcc2-00bc-4fe3-9a10-844d74b4192e",
+              "leftValue": "={{ $json.output[0].content[0].text.request_category }}",
+              "rightValue": "r",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6d2394e4-3149-497b-8aae-e05d6b3160c1",
+      "name": "Is refund request1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        6832,
+        4816
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $(\"Aggregate\").item.json.data[0].original_ticket_content.ticket_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ticket.comment.public",
+              "value": "false"
+            },
+            {
+              "name": "ticket.comment.body",
+              "value": "=Note: This ticket has been analysed by the CS automation and did not fit into any of the predefined categories \n- Thanks\n- Cancel/refund confirmation\n- Complaint\n- Acc/pass info\n\nIf the ticket DOES fit into any of the category above please reach out to the Operations Dept. \n\nPlease handle this ticket manually. "
+            },
+            {
+              "name": "ticket.custom_status_id",
+              "value": "={{ $(\"Get Project Config\").first().json.ticket_custom_status_open_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b1786403-6ae1-44ba-b081-2412529ea7dd",
+      "name": "Reply to internally and set status to open6",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        9360,
+        6144
+      ],
+      "retryOnFail": true,
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "content": "# Other, do nothing\n",
+        "height": 544,
+        "width": 640,
+        "color": 7
+      },
+      "id": "9bab8dbc-c14b-4fa4-86e7-502459b65dfb",
+      "name": "Sticky Note 8a9db06e2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        9296,
+        6064
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Status: open\n## Category: none\n## Assign to CS\n",
+        "height": 208,
+        "width": 288,
+        "color": 7
+      },
+      "id": "cc0453a4-360f-4c4b-aa64-df863f0f0b10",
+      "name": "Sticky Note 2b4aa75c1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        9632,
+        6384
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# Process a refund\n",
+        "height": 544,
+        "width": 640,
+        "color": 7
+      },
+      "id": "fc2fab9e-f445-4a97-8fad-ac720ff28cfe",
+      "name": "Sticky Note 8a9db06e3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        8400,
+        4480
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"original_ticket_content\": {\n    \"ticket_id\": {{ $('Aggregate').item.json.data[0].original_ticket_content.ticket_id }},\n    \"title\": \"{{ $('Aggregate').item.json.data[0].original_ticket_content.title }}\",\n    \"description\": {{ JSON.stringify($('Aggregate').item.json.data[0].original_ticket_content.description) }},\n    \"ticket_url\": \"{{ $('Aggregate').item.json.data[0].original_ticket_content.ticket_url }}\",\n    \"user_email\": \"{{ $('Aggregate').item.json.data[0].original_ticket_content.user_email }}\",\n     \"payment_provider_account_ID\": \"123456789\"\n  },\n  \"translated_data\": {\n    \"originalLanguage\": \"{{ $('Aggregate').item.json.data[0].translated_data.originalLanguage }}\",\n    \"is_translated\":{{ $('Aggregate').item.json.data[0].translated_data.is_translated }},\n    \"translations\": {\n      \"title\": \"{{ $('Aggregate').item.json.data[0].translated_data.translations.title }}\",\n      \"description\": {{ JSON.stringify($('Aggregate').item.json.data[0].translated_data.translations.description) }}\n    }\n  }\n} ",
+        "options": {}
+      },
+      "id": "4e39c4b3-1057-4026-b5d5-e21795fedb4c",
+      "name": "Set request data test5",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        8480,
+        4608
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "dJfhIiG72BwXX2Is",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/dJfhIiG72BwXX2Is",
+          "cachedResultName": "Operations Department — CS - Refund requests flow [Template]"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "314166fe-e4ea-4017-83f4-58530aec0f32",
+      "name": "Call 'CS - Refund requests flow [Template]'2",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        8704,
+        4608
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "926279a0-598a-48c6-9073-efde28b9d573",
+              "leftValue": "={{ $(\"Webhook\").item.json.body[\"ticket.ticket_field_\" + $(\"Get Project Config\").first().json.ticket_field_allow_automation] }}",
+              "rightValue": "_no_",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6c37968b-fb60-4eb4-afa9-33b0a20b5f1f",
+      "name": "Discard tickets that shouldn't be automated",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        576,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $(\"Aggregate\").item.json.data[0].original_ticket_content.ticket_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ticket.comment.public",
+              "value": "false"
+            },
+            {
+              "name": "ticket.comment.body",
+              "value": "=Note: This ticket has been analysed by the CS automation and did not fit into any of the predefined categories \n- Thanks\n- Cancel/refund confirmation\n- Complaint\n- Acc/pass info\n\nIf the ticket DOES fit into any of the category above please reach out to the Operations Dept. \n\nPlease handle this ticket manually. "
+            },
+            {
+              "name": "ticket.custom_status_id",
+              "value": "={{ $(\"Get Project Config\").first().json.ticket_custom_status_open_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "dae8c973-801b-4414-b9e3-bca0be8b18a2",
+      "name": "Reply to internally and set status to open2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        8160,
+        7680
+      ],
+      "retryOnFail": true,
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "content": "# Other, do nothing\n",
+        "height": 544,
+        "width": 640,
+        "color": 7
+      },
+      "id": "7f8243a8-707c-4ec9-a981-b667422ea494",
+      "name": "Sticky Note 8a9db06e",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        8096,
+        7600
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Status: open\n## Category: none\n## Assign to CS\n",
+        "height": 208,
+        "width": 288,
+        "color": 7
+      },
+      "id": "53d711ef-35aa-499e-ae8f-b2b89283d05d",
+      "name": "Sticky Note 2b4aa75c",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        8432,
+        7920
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a54f8417-e017-4270-9953-85fcb3b1568a",
+              "name": "requestType",
+              "value": "search",
+              "type": "string"
+            },
+            {
+              "id": "a259490f-b011-4a72-a1b0-7615c01e1e29",
+              "name": "email",
+              "value": "={{ $('Aggregate').item.json.data[0].original_ticket_content.user_email }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1e33b3e3-0ad4-4aac-92c4-86f1346189b7",
+      "name": "Edit Fields12",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        6960,
+        7088
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $(\"Get Project Config\").first().json.payments_api_base_url }}/api/payments/v1/bot/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "X-Nonce",
+              "value": "={{ $json.nonce }}"
+            },
+            {
+              "name": "X-Key-Id",
+              "value": "={{ $json.keyID }}"
+            },
+            {
+              "name": "X-Signature",
+              "value": "={{ $json.signedString }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.sortedBody }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "a3727d0e-c14f-4df4-9b14-9dbd32a9c5cc",
+      "name": "DEV bot/search3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        7408,
+        7088
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "7fadc4eb-12fd-40fa-9659-732b4b169e80",
+              "leftValue": "={{ $item(\"0\").$node[\"DEV bot/search3\"].json[\"body\"][\"subscriptionStatus\"] }}",
+              "rightValue": "cancelling",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "c0c93dc2-824d-4771-a1ce-8ea3a664848d",
+              "leftValue": "={{ $item(\"0\").$node[\"DEV bot/search3\"].json[\"body\"][\"subscriptionStatus\"] }}",
+              "rightValue": "cancelled",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "05471db9-7c96-4130-bf6d-c6452b7fd933",
+      "name": "Subscription is cancelled1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        7648,
+        7088
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "pIjrE6QWBnzj1LQP",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/pIjrE6QWBnzj1LQP",
+          "cachedResultName": "Operations Department — PS prod - HMAC"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "80f828bb-8bdf-4972-ba85-9b482c20efb5",
+      "name": "Call 'PS prod - HMAC'2",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        7184,
+        7088
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-5.4",
+          "mode": "list",
+          "cachedResultName": "GPT-5.4"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a customer support ticket classifier. You analyze customer support messages and identify if they are cancellation requests or not based only on the user’s written message\n\nCancellations (c)\nUse this category if the customer is asking for subscription cancellation, account cancellation, if they want to cancel, mentions being charged for something they didn't want or mentions stopping payments\n\nOther  (o)\nUse this category for all other messages like:\naccount deletion requests\nproduct questions\nfeature requests\naccount access issues\ncomplaints \nunclear or ambiguous messages\nharassment or threatening\n\nIMPORTANT RULES:\nIf a cancellation is requested or clearly implied, choose Cancellation category\nDo NOT assume a cancellation request from frustration or complaints alone.\nIf the intent is unclear or ambiguous, choose Other \nUse only the customer’s message to evaluate, do not include include any forwarded text or previous messages. If the message contains forwarded content (often labelled with \"Forwarded message\") disregard everything that comes after that and only consider the content before it in the classification\n\nOUTPUT FORMAT:\nOutput only one letter based on the category of the ticket, the output must be a single token\nc = cancellation\no = Other\n\nReturn only a valid JSON object with exactly one key:\n{\n  \"request_category\": \"o\" | \"c\" \n}\n\nDo not include explanations, evidence, markdown, or extra keys. Output only the letter."
+            },
+            {
+              "content": "=Customer message: {{$('Aggregate').item.json.data[0].translated_data.is_translated?$('Aggregate').item.json.data.first().translated_data.translations.description:$('Aggregate').item.json.data.first().original_ticket_content.description  }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_schema",
+              "schema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"request_category\": {\n      \"type\": \"string\",\n      \"enum\": [\"o\", \"c\"]\n    }\n  },\n  \"required\": [\"request_category\"],\n  \"additionalProperties\": false\n}"
+            }
+          }
+        }
+      },
+      "id": "87fc7908-5b8c-48a4-9ada-52a4b9a356ec",
+      "name": "Identify cancellation requests1",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        5888,
+        7104
+      ],
+      "retryOnFail": true,
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1cd28a5a-ebdc-48ec-b7aa-843d62120e9c",
+              "name": "zendeskDomain",
+              "value": "={{ $(\"Get Project Config\").first().json.zendesk_domain }}",
+              "type": "string"
+            },
+            {
+              "id": "38365ab6-cfd8-4f1e-831e-8201bba149a6",
+              "name": "ticketID",
+              "value": "={{ $('Aggregate').item.json.data[0].original_ticket_content.ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "02f10455-5b28-4e0e-9abd-2a99977ead23",
+              "name": "isTranslated",
+              "value": "={{ $('Aggregate').item.json.data[0].translated_data.is_translated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "8ac448b2-4d85-40e7-bfe4-2481c1289874",
+              "name": "originalLanguage",
+              "value": "={{ $('Aggregate').item.json.data[0].translated_data.originalLanguage }}",
+              "type": "string"
+            },
+            {
+              "id": "585a3f6b-dbe1-4b0b-bc48-b7ed661a3a76",
+              "name": "publicComment",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "21835068-3534-41a7-a05c-382dbab406f4",
+              "name": "macroID",
+              "value": "={{ $(\"Get Project Config\").first().json.macro_cancellation_confirmation }}",
+              "type": "number"
+            },
+            {
+              "id": "52881d1d-cc0a-42a2-9c07-d74fcdcae912",
+              "name": "ticketCustomStatusID",
+              "value": "={{ $(\"Get Project Config\").first().json.ticket_custom_status_solved_id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e351775a-3316-4e8d-a4f4-b32038ef6e7c",
+      "name": "Edit Fields13",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        8144,
+        7072
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "t3mYaHf1eNXaxcts",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/t3mYaHf1eNXaxcts",
+          "cachedResultName": "Operations Department — PS prod - Zendesk ticket update request"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "dff0537e-13b6-4fbb-88f4-9cd40d0cfc35",
+      "name": "Update zendesk ticket8",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        8368,
+        7072
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# Cancellation confirmation",
+        "height": 544,
+        "width": 864,
+        "color": 7
+      },
+      "id": "06402f43-afd7-499f-96fb-a5e810fe9e7f",
+      "name": "Sticky Note 38ebad1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        8096,
+        6912
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Status: solved\n## Macro: Cancellation confirmation",
+        "height": 224,
+        "width": 336,
+        "color": 7
+      },
+      "id": "f1ef9c19-a897-4b20-a684-8f144c8184dc",
+      "name": "Sticky Note d731ffc1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        8608,
+        7216
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e285dcc2-00bc-4fe3-9a10-844d74b4192e",
+              "leftValue": "={{ $json.output[0].content[0].text.request_category }}",
+              "rightValue": "c",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ff5bc4c9-4e69-4db2-97ee-04042ec8f5f9",
+      "name": "Is cancellation request1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        6256,
+        7104
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a54f8417-e017-4270-9953-85fcb3b1568a",
+              "name": "requestType",
+              "value": "search",
+              "type": "string"
+            },
+            {
+              "id": "a259490f-b011-4a72-a1b0-7615c01e1e29",
+              "name": "email",
+              "value": "={{ $('Aggregate').item.json.data[0].original_ticket_content.user_email }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a4ad8362-9288-4ca8-92c7-b68b074162c0",
+      "name": "Edit Fields14",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        8048,
+        5344
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $(\"Get Project Config\").first().json.payments_api_base_url }}/api/payments/v1/bot/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "X-Nonce",
+              "value": "={{ $json.nonce }}"
+            },
+            {
+              "name": "X-Key-Id",
+              "value": "={{ $json.keyID }}"
+            },
+            {
+              "name": "X-Signature",
+              "value": "={{ $json.signedString }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.sortedBody }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "ceb748c6-02af-4357-b993-a0a097608a65",
+      "name": "DEV bot/search4",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        8496,
+        5344
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "7fadc4eb-12fd-40fa-9659-732b4b169e80",
+              "leftValue": "={{ $item(\"0\").$node[\"DEV bot/search4\"].json[\"body\"][\"subscriptionStatus\"] }}",
+              "rightValue": "cancelling",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "c0c93dc2-824d-4771-a1ce-8ea3a664848d",
+              "leftValue": "={{ $item(\"0\").$node[\"DEV bot/search4\"].json[\"body\"][\"subscriptionStatus\"] }}",
+              "rightValue": "cancelled",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "2f2bd57c-e4b7-4bd1-936c-7b39e636756d",
+      "name": "Subscription is cancelled2",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        8736,
+        5344
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "9dHFAZqAbAj42xR3",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/9dHFAZqAbAj42xR3",
+          "cachedResultName": "Operations Department — CS - HMAC [Template]"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "edbbf1ff-336d-480c-9237-5c360ae9d626",
+      "name": "Call 'CS - HMAC [Template]'1",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        8272,
+        5344
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "964820c2-c42b-4684-a248-e353121dc9f7",
+              "leftValue": "={{ $json.proceedWithAutomation }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1248,
+        784
+      ],
+      "id": "92ad8018-d18f-4713-920c-eba5523865d9",
+      "name": "Passed eligibility?"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "6lYSxMlA2bQYIaaq",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/6lYSxMlA2bQYIaaq",
+          "cachedResultName": "Operations Department — PS prod - User eligibility check"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1040,
+        784
+      ],
+      "id": "dabe3bff-f2a0-43e5-b4fa-d1021fb38b3d",
+      "name": "Call 'PS - User eligibility check'"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get Project Config returns the config row, replacing the trigger\n// payload as $json. Re-emit the trigger's items so downstream nodes\n// (Edit Fields1, Split Out, etc.) see the original input as $json,\n// while explicit refs like $('Get Project Config').first().json.foo\n// continue to work because that node has now executed.\nreturn $('Webhook').all();"
+      },
+      "id": "99d565f3-5e75-4669-bb68-155479d28291",
+      "name": "Restore trigger data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        816,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get Project Config returns the config row, replacing the trigger\n// payload as $json. Re-emit the trigger's items so downstream nodes\n// (Edit Fields1, Split Out, etc.) see the original input as $json,\n// while explicit refs like $('Get Project Config').first().json.foo\n// continue to work because that node has now executed.\nreturn $('Return last comment').all();"
+      },
+      "id": "44e30a4f-ebe3-4125-a9e5-feeeec205e47",
+      "name": "Restore last comment data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1456,
+        768
+      ]
+    }
+  ],
+  "connections": {
+    "Set project_key": {
+      "main": [
+        [
+          {
+            "node": "Get Project Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Project Config": {
+      "main": [
+        [
+          {
+            "node": "Get ticket comments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get ticket comments": {
+      "main": [
+        [
+          {
+            "node": "Return last comment",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Is under message limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is under message limit": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Discard CS updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return last comment": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discard CS updates": {
+      "main": [
+        [
+          {
+            "node": "Discard \"other\" requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discard \"other\" requests": {
+      "main": [
+        [
+          {
+            "node": "Discard tickets that shouldn't be automated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check ticket language1": {
+      "main": [
+        [
+          {
+            "node": "Translate ticket to english1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set request data test2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Check ticket language1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set request data test2": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "Ticket classification2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Translate ticket to english1": {
+      "main": [
+        [
+          {
+            "node": "Set translated request data test1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set translated request data test1": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ticket classification2": {
+      "main": [
+        [
+          {
+            "node": "Is account and password",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is account and password": {
+      "main": [
+        [
+          {
+            "node": "Email extraction",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email extraction": {
+      "main": [
+        [
+          {
+            "node": "is email provided",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "is email provided": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply to internally and set status to open4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Call 'CS - HMAC'1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'CS - HMAC'1": {
+      "main": [
+        [
+          {
+            "node": "DEV bot/search2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DEV bot/search2": {
+      "main": [
+        [
+          {
+            "node": "is email provided1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "is email provided1": {
+      "main": [
+        [
+          {
+            "node": "Switch1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply to internally and set status to open3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch1": {
+      "main": [
+        [
+          {
+            "node": "Set request data test1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set request data test",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set request data test1": {
+      "main": [
+        [
+          {
+            "node": "Call 'CS - Cancellation request [Template]'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set request data test": {
+      "main": [
+        [
+          {
+            "node": "Call 'CS - Refund requests flow [Template]'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields4",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Has refunded transactions",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Identify refund requests1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields4": {
+      "main": [
+        [
+          {
+            "node": "Call 'CS - HMAC [Template]'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DEV bot/search": {
+      "main": [
+        [
+          {
+            "node": "Has refunded transations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has refunded transations": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields5",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Subscription is cancelled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields5": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subscription is cancelled": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields6",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply to internally and set status to open",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields6": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has refunded transactions": {
+      "main": [
+        [
+          {
+            "node": "Has 1 refunded transaction",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply to internally and set status to open5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has 1 refunded transaction": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields7",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields7": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields8": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'CS - HMAC [Template]'": {
+      "main": [
+        [
+          {
+            "node": "DEV bot/search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Set project_key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has refunded transactions1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields10",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set request data test5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields9": {
+      "main": [
+        [
+          {
+            "node": "Call 'PS prod - HMAC'1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DEV bot/search1": {
+      "main": [
+        [
+          {
+            "node": "Has refunded transactions1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'PS prod - HMAC'1": {
+      "main": [
+        [
+          {
+            "node": "DEV bot/search1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields10": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Identify cancellation requests": {
+      "main": [
+        [
+          {
+            "node": "Is cancellation request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields11": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is cancellation request": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields14",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply to internally and set status to open6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Identify refund requests1": {
+      "main": [
+        [
+          {
+            "node": "Is refund request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is refund request1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields9",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Identify cancellation requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set request data test5": {
+      "main": [
+        [
+          {
+            "node": "Call 'CS - Refund requests flow [Template]'2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discard tickets that shouldn't be automated": {
+      "main": [
+        [
+          {
+            "node": "Restore trigger data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields12": {
+      "main": [
+        [
+          {
+            "node": "Call 'PS prod - HMAC'2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DEV bot/search3": {
+      "main": [
+        [
+          {
+            "node": "Subscription is cancelled1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subscription is cancelled1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields13",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply to internally and set status to open2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'PS prod - HMAC'2": {
+      "main": [
+        [
+          {
+            "node": "DEV bot/search3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Identify cancellation requests1": {
+      "main": [
+        [
+          {
+            "node": "Is cancellation request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields13": {
+      "main": [
+        [
+          {
+            "node": "Update zendesk ticket8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is cancellation request1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields12",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply to internally and set status to open2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields14": {
+      "main": [
+        [
+          {
+            "node": "Call 'CS - HMAC [Template]'1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DEV bot/search4": {
+      "main": [
+        [
+          {
+            "node": "Subscription is cancelled2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'CS - HMAC [Template]'1": {
+      "main": [
+        [
+          {
+            "node": "DEV bot/search4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subscription is cancelled2": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields11",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply to internally and set status to open6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Passed eligibility?": {
+      "main": [
+        [
+          {
+            "node": "Restore last comment data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'PS - User eligibility check'": {
+      "main": [
+        [
+          {
+            "node": "Passed eligibility?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore trigger data": {
+      "main": [
+        [
+          {
+            "node": "Call 'PS - User eligibility check'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore last comment data": {
+      "main": [
+        [
+          {
+            "node": "Check ticket language1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "ueE9FpTQ3OBvvHQ7",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": {
+    "node:Zendesk Trigger": {}
+  },
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "nodeGroups": [],
+  "pinData": {},
+  "versionId": "e0d2cb6c-de6e-4f30-8022-a6139e424e4b",
+  "activeVersionId": null,
+  "versionCounter": 2,
+  "triggerCount": 0,
+  "sourceWorkflowId": null,
+  "shared": [
+    {
+      "updatedAt": "2026-07-28T16:04:02.569Z",
+      "createdAt": "2026-07-28T16:04:02.569Z",
+      "role": "workflow:owner",
+      "workflowId": "bLHsvruO1JOf5XJX",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "updatedAt": "2025-09-16T08:57:49.000Z",
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
+}
