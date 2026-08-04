@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-05-26T14:04:11.631Z",
+  "updatedAt": "2026-08-03T21:14:30.757Z",
   "createdAt": "2026-05-26T09:06:44.784Z",
   "id": "qjkkXpzrhwQeVEeZ",
   "name": "LS prod - Zendesk ticket update request",
@@ -22,7 +22,7 @@
     },
     {
       "parameters": {
-        "url": "={{ \"https://\" + $json.zendeskDomain + \".zendesk.com/api/v2/tickets/\" + $json.ticketID + \"/macros/\" + $json.macroID + \"/apply\" }}",
+        "url": "={{ \"https://\" + $('When Executed by Another Workflow').item.json.zendeskDomain + \".zendesk.com/api/v2/tickets/\" + $('When Executed by Another Workflow').item.json.ticketID + \"/macros/\" + $('When Executed by Another Workflow').item.json.macroID + \"/apply\" }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "zendeskApi",
         "options": {}
@@ -440,6 +440,10 @@
             {
               "name": "ticket.custom_fields.value",
               "value": "={{ $(\"When Executed by Another Workflow\").item.json.ticketCustomFieldValue }}"
+            },
+            {
+              "name": "ticket.additional_tags[0]",
+              "value": "automation_replied"
             }
           ]
         },
@@ -485,6 +489,10 @@
             {
               "name": "ticket.custom_fields.value",
               "value": "={{ $(\"When Executed by Another Workflow\").item.json.ticketCustomFieldValue }}"
+            },
+            {
+              "name": "ticket.additional_tags[0]",
+              "value": "automation_replied"
             }
           ]
         },
@@ -504,6 +512,103 @@
           "id": "GAJckAtNBWv1L38R",
           "name": "LoveStyle prod Zendesk account"
         }
+      }
+    },
+    {
+      "id": "e8f17cc3-f364-4d43-aac0-c8dee6edd72f",
+      "name": "Get ticket status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        16,
+        336
+      ],
+      "parameters": {
+        "url": "={{ \"https://\" + $('When Executed by Another Workflow').item.json.zendeskDomain + \".zendesk.com/api/v2/tickets/\" + $('When Executed by Another Workflow').item.json.ticketID }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {}
+      },
+      "credentials": {
+        "zendeskApi": {
+          "id": "GAJckAtNBWv1L38R",
+          "name": "LoveStyle prod Zendesk account"
+        }
+      },
+      "notes": "Re-reads the ticket immediately before any write. Do not trust status passed in from the caller - stale caller data is the exact failure mode this guards against.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "b4d0930c-752b-45da-9193-6c32edc0bb2a",
+      "name": "Ticket not solved or closed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        240,
+        336
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "b1c4e7a2-9f31-4c88-8d21-5a7e3f0b1c01",
+              "leftValue": "={{ $json.ticket.status }}",
+              "rightValue": "solved",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "b1c4e7a2-9f31-4c88-8d21-5a7e3f0b1c02",
+              "leftValue": "={{ $json.ticket.status }}",
+              "rightValue": "closed",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "notes": "Base status only - new/open/pending/hold pass, solved/closed are blocked."
+    },
+    {
+      "id": "934bb915-a2a5-4e93-b893-604389ff6776",
+      "name": "Skip: ticket already solved or closed",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        464,
+        336
+      ],
+      "parameters": {},
+      "notes": "Terminal. Reached when a duplicate or replayed webhook targets a ticket the automation has already finished. No Zendesk write on purpose."
+    },
+    {
+      "id": "d58ef696-25d2-4219-bb76-9ab463972baa",
+      "name": "Sticky Status Guard",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        688,
+        336
+      ],
+      "parameters": {
+        "content": "## Status guard\n\nBlocks all writes when the ticket is already `solved` or `closed`.\n\nAdded after 2026-07-23: Zendesk redelivered a `ticket created` webhook 8h37m late, the automation re-ran on the original email and contradicted its own earlier reply.\n\nUses the base `status` string, so no `cs_project_config` column is needed and `closed` is covered for free.\n\nSafe for legitimate follow-ups: Zendesk auto-reopens a solved ticket on requester reply, so status is `open` by the time the 2nd-message flow calls this.",
+        "height": 260,
+        "width": 460,
+        "color": 3
       }
     }
   ],
@@ -619,7 +724,40 @@
         ]
       ]
     },
+    "Reply to customer and set status to solved1": {
+      "main": [
+        [
+          {
+            "node": "Reply to customer and set status to solved13",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Merge": {
+      "main": [
+        [
+          {
+            "node": "Get ticket status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get ticket status": {
+      "main": [
+        [
+          {
+            "node": "Ticket not solved or closed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ticket not solved or closed?": {
       "main": [
         [
           {
@@ -627,14 +765,10 @@
             "type": "main",
             "index": 0
           }
-        ]
-      ]
-    },
-    "Reply to customer and set status to solved1": {
-      "main": [
+        ],
         [
           {
-            "node": "Reply to customer and set status to solved13",
+            "node": "Skip: ticket already solved or closed",
             "type": "main",
             "index": 0
           }
@@ -680,9 +814,9 @@
   },
   "nodeGroups": [],
   "pinData": {},
-  "versionId": "991dbb5e-f67f-45e1-b54c-543c58f37b4d",
+  "versionId": "f207a0c4-f564-44db-8927-bb8a759db5fa",
   "activeVersionId": "991dbb5e-f67f-45e1-b54c-543c58f37b4d",
-  "versionCounter": 113,
+  "versionCounter": 116,
   "triggerCount": 0,
   "sourceWorkflowId": null,
   "shared": [
