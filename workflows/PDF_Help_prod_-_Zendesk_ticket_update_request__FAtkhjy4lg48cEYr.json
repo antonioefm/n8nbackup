@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-07-28T12:46:44.629Z",
+  "updatedAt": "2026-08-03T21:13:34.585Z",
   "createdAt": "2026-07-28T09:27:35.320Z",
   "id": "FAtkhjy4lg48cEYr",
   "name": "PDF Help prod - Zendesk ticket update request",
@@ -22,7 +22,7 @@
     },
     {
       "parameters": {
-        "url": "={{ \"https://\" + $json.zendeskDomain + \".zendesk.com/api/v2/tickets/\" + $json.ticketID + \"/macros/\" + $json.macroID + \"/apply\" }}",
+        "url": "={{ \"https://\" + $('When Executed by Another Workflow').item.json.zendeskDomain + \".zendesk.com/api/v2/tickets/\" + $('When Executed by Another Workflow').item.json.ticketID + \"/macros/\" + $('When Executed by Another Workflow').item.json.macroID + \"/apply\" }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "zendeskApi",
         "options": {}
@@ -181,6 +181,10 @@
             {
               "name": "ticket.custom_fields.value",
               "value": "={{ $(\"When Executed by Another Workflow\").item.json.ticketCustomFieldValue }}"
+            },
+            {
+              "name": "ticket.additional_tags[0]",
+              "value": "automation_replied"
             }
           ]
         },
@@ -226,6 +230,10 @@
             {
               "name": "ticket.custom_fields.value",
               "value": "={{ $(\"When Executed by Another Workflow\").item.json.ticketCustomFieldValue }}"
+            },
+            {
+              "name": "ticket.additional_tags[0]",
+              "value": "automation_replied"
             }
           ]
         },
@@ -489,6 +497,103 @@
           "name": "PDF Zendesk account"
         }
       }
+    },
+    {
+      "id": "85491ff3-2ec0-42aa-8c50-42f4217373f3",
+      "name": "Get ticket status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        16,
+        336
+      ],
+      "parameters": {
+        "url": "={{ \"https://\" + $('When Executed by Another Workflow').item.json.zendeskDomain + \".zendesk.com/api/v2/tickets/\" + $('When Executed by Another Workflow').item.json.ticketID }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {}
+      },
+      "credentials": {
+        "zendeskApi": {
+          "id": "9M06uRPbxoSk63jK",
+          "name": "PDF Zendesk account"
+        }
+      },
+      "notes": "Re-reads the ticket immediately before any write. Do not trust status passed in from the caller - stale caller data is the exact failure mode this guards against.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "ba9c7861-bd86-4d77-8b1e-84a1203af9b1",
+      "name": "Ticket not solved or closed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        240,
+        336
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "b1c4e7a2-9f31-4c88-8d21-5a7e3f0b1c01",
+              "leftValue": "={{ $json.ticket.status }}",
+              "rightValue": "solved",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "b1c4e7a2-9f31-4c88-8d21-5a7e3f0b1c02",
+              "leftValue": "={{ $json.ticket.status }}",
+              "rightValue": "closed",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "notes": "Base status only - new/open/pending/hold pass, solved/closed are blocked."
+    },
+    {
+      "id": "5d93f840-cd20-4c76-becc-0f035d390c72",
+      "name": "Skip: ticket already solved or closed",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        464,
+        336
+      ],
+      "parameters": {},
+      "notes": "Terminal. Reached when a duplicate or replayed webhook targets a ticket the automation has already finished. No Zendesk write on purpose."
+    },
+    {
+      "id": "8a4ebb39-b1d3-47f1-8f57-235d4377e9c9",
+      "name": "Sticky Status Guard",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        688,
+        336
+      ],
+      "parameters": {
+        "content": "## Status guard\n\nBlocks all writes when the ticket is already `solved` or `closed`.\n\nAdded after 2026-07-23: Zendesk redelivered a `ticket created` webhook 8h37m late, the automation re-ran on the original email and contradicted its own earlier reply.\n\nUses the base `status` string, so no `cs_project_config` column is needed and `closed` is covered for free.\n\nSafe for legitimate follow-ups: Zendesk auto-reopens a solved ticket on requester reply, so status is `open` by the time the 2nd-message flow calls this.",
+        "height": 260,
+        "width": 460,
+        "color": 3
+      }
     }
   ],
   "connections": {
@@ -548,28 +653,6 @@
         ]
       ]
     },
-    "Reply to customer and set status to solved12": {
-      "main": [
-        [
-          {
-            "node": "Set status to solved",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Reply to customer and set status to solved13": {
-      "main": [
-        [
-          {
-            "node": "Set status to solved1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Set language": {
       "main": [
         [
@@ -603,17 +686,6 @@
         ]
       ]
     },
-    "Merge": {
-      "main": [
-        [
-          {
-            "node": "Generate customer reply with macro8",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Set language1": {
       "main": [
         [
@@ -641,6 +713,68 @@
         [
           {
             "node": "Reply to customer and set status to solved15",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Get ticket status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get ticket status": {
+      "main": [
+        [
+          {
+            "node": "Ticket not solved or closed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ticket not solved or closed?": {
+      "main": [
+        [
+          {
+            "node": "Generate customer reply with macro8",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip: ticket already solved or closed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply to customer and set status to solved12": {
+      "main": [
+        [
+          {
+            "node": "Set status to solved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply to customer and set status to solved13": {
+      "main": [
+        [
+          {
+            "node": "Set status to solved1",
             "type": "main",
             "index": 0
           }
@@ -682,9 +816,9 @@
       }
     ]
   },
-  "versionId": "eeeca5f0-426b-4d11-bac8-e581c855d06f",
+  "versionId": "2eacc5bf-dc41-4e28-a3f1-f2536e6142bf",
   "activeVersionId": "9c62c62d-c086-4515-9f1c-76c873deee91",
-  "versionCounter": 4,
+  "versionCounter": 7,
   "triggerCount": 0,
   "sourceWorkflowId": null,
   "shared": [
