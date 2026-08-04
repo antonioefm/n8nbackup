@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-07-29T09:38:24.884Z",
+  "updatedAt": "2026-08-03T20:44:14.433Z",
   "createdAt": "2026-07-29T09:04:49.324Z",
   "id": "xol77ZCjU0nD2JzJ",
   "name": "Realchecker prod - User eligibility check",
@@ -687,6 +687,145 @@
         4144,
         1424
       ]
+    },
+    {
+      "id": "140e5b09-892f-4d1b-8597-d9287ac0c64c",
+      "name": "Get ticket status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2400,
+        1600
+      ],
+      "parameters": {
+        "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $('Restore trigger data').first().json.body['ticket.id'] }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {}
+      },
+      "credentials": {
+        "zendeskApi": {
+          "id": "OCiadiDsrFfoaNwC",
+          "name": "Realchecker Zendesk account"
+        }
+      },
+      "notes": "Live re-read of the ticket. Runs before the blocklist read and requester lookup so a duplicate delivery costs one GET, not the whole pipeline.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "ec5e2be5-99b3-42b0-8a87-2ee82bd15188",
+      "name": "Ticket not solved or closed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2624,
+        1600
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c2d5f8b3-a042-4d99-9e32-6b8f4a1c2d01",
+              "leftValue": "={{ $json.ticket.status }}",
+              "rightValue": "solved",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "c2d5f8b3-a042-4d99-9e32-6b8f4a1c2d02",
+              "leftValue": "={{ $json.ticket.status }}",
+              "rightValue": "closed",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "notes": "True (continue): new, open, pending, hold. False (stop): solved, closed."
+    },
+    {
+      "id": "85cebdcc-fdd2-41a2-8223-ff9c1079a670",
+      "name": "Note: Ticket already solved or closed",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2848,
+        1600
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c2d5f8b3-a042-4d99-9e32-6b8f4a1c2d03",
+              "name": "fail_reason",
+              "value": "already_solved_or_closed",
+              "type": "string"
+            },
+            {
+              "id": "c2d5f8b3-a042-4d99-9e32-6b8f4a1c2d04",
+              "name": "note_body",
+              "value": "=Note: Ticket #{{ $('Restore trigger data').first().json.body['ticket.id'] }} is already in status \"{{ $json.ticket.status }}\", so the automation had already finished with it. This run was almost certainly a duplicate or replayed Zendesk webhook. Automation was skipped and no reply was sent. No agent action needed.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Execution log only - deliberately not written to Zendesk."
+    },
+    {
+      "id": "3626a0f3-6af4-4c7c-9f17-d236d51bb17b",
+      "name": "Do not proceed2",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3072,
+        1600
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c2d5f8b3-a042-4d99-9e32-6b8f4a1c2d05",
+              "name": "proceedWithAutomation",
+              "value": false,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Same output shape as Do not proceed1, so the caller needs no change."
+    },
+    {
+      "id": "97bd4b14-d094-49b3-a78d-23b0c5082187",
+      "name": "Sticky Status Guard",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2352,
+        1760
+      ],
+      "parameters": {
+        "content": "## 0) Ticket not already solved or closed\n\nOn 2026-07-23 Zendesk redelivered a `ticket created` webhook 8h37m late. The automation re-ran on the original first email, found the refundable charges already consumed, and emailed the customer a refund rejection after having already granted the refund.\n\nUses the base `status` string, so no `cs_project_config` column is needed and `closed` is covered for free.\n\nDeliberately does NOT post an internal note or reopen the ticket - the shared `Do not proceed` path sets status back to `open`, which would re-queue solved tickets for agents and could re-fire the 2nd-message trigger.\n\nSafe for legitimate follow-ups: Zendesk auto-reopens a solved ticket on requester reply, so status is `open` by then.",
+        "height": 340,
+        "width": 460,
+        "color": 3
+      }
     }
   ],
   "connections": {
@@ -717,17 +856,6 @@
         [
           {
             "node": "Restore trigger data",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Restore trigger data": {
-      "main": [
-        [
-          {
-            "node": "Get Email Blocklist",
             "type": "main",
             "index": 0
           }
@@ -966,6 +1094,57 @@
           }
         ]
       ]
+    },
+    "Restore trigger data": {
+      "main": [
+        [
+          {
+            "node": "Get ticket status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get ticket status": {
+      "main": [
+        [
+          {
+            "node": "Ticket not solved or closed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ticket not solved or closed?": {
+      "main": [
+        [
+          {
+            "node": "Get Email Blocklist",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Note: Ticket already solved or closed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Note: Ticket already solved or closed": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
@@ -1034,9 +1213,9 @@
       }
     ]
   },
-  "versionId": "c0b30fc9-5e30-40cf-8455-dd90a7bec0d1",
+  "versionId": "7bda8bd8-60db-4c41-af67-551ed4555d3d",
   "activeVersionId": "c0b30fc9-5e30-40cf-8455-dd90a7bec0d1",
-  "versionCounter": 3,
+  "versionCounter": 4,
   "triggerCount": 0,
   "sourceWorkflowId": null,
   "shared": [
