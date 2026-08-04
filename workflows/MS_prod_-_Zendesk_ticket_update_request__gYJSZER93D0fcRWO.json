@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-07-15T07:31:39.607Z",
+  "updatedAt": "2026-08-03T21:13:19.520Z",
   "createdAt": "2026-07-14T14:48:19.787Z",
   "id": "gYJSZER93D0fcRWO",
   "name": "MS prod - Zendesk ticket update request",
@@ -22,7 +22,7 @@
     },
     {
       "parameters": {
-        "url": "={{ \"https://\" + $json.zendeskDomain + \".zendesk.com/api/v2/tickets/\" + $json.ticketID + \"/macros/\" + $json.macroID + \"/apply\" }}",
+        "url": "={{ \"https://\" + $('When Executed by Another Workflow').item.json.zendeskDomain + \".zendesk.com/api/v2/tickets/\" + $('When Executed by Another Workflow').item.json.ticketID + \"/macros/\" + $('When Executed by Another Workflow').item.json.macroID + \"/apply\" }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "zendeskApi",
         "options": {}
@@ -181,6 +181,10 @@
             {
               "name": "ticket.custom_fields.value",
               "value": "={{ $(\"When Executed by Another Workflow\").item.json.ticketCustomFieldValue }}"
+            },
+            {
+              "name": "ticket.additional_tags[0]",
+              "value": "automation_replied"
             }
           ]
         },
@@ -226,6 +230,10 @@
             {
               "name": "ticket.custom_fields.value",
               "value": "={{ $(\"When Executed by Another Workflow\").item.json.ticketCustomFieldValue }}"
+            },
+            {
+              "name": "ticket.additional_tags[0]",
+              "value": "automation_replied"
             }
           ]
         },
@@ -505,6 +513,103 @@
           "name": "Mindspree prod"
         }
       }
+    },
+    {
+      "id": "e615e2fb-a96d-4639-afe4-894f36420f66",
+      "name": "Get ticket status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        16,
+        336
+      ],
+      "parameters": {
+        "url": "={{ \"https://\" + $('When Executed by Another Workflow').item.json.zendeskDomain + \".zendesk.com/api/v2/tickets/\" + $('When Executed by Another Workflow').item.json.ticketID }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {}
+      },
+      "credentials": {
+        "zendeskApi": {
+          "id": "PiWnsor2zNuExPMR",
+          "name": "Mindspree prod"
+        }
+      },
+      "notes": "Re-reads the ticket immediately before any write. Do not trust status passed in from the caller - stale caller data is the exact failure mode this guards against.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "31871e64-40b6-47f3-b804-5990d68790ac",
+      "name": "Ticket not solved or closed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        240,
+        336
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "b1c4e7a2-9f31-4c88-8d21-5a7e3f0b1c01",
+              "leftValue": "={{ $json.ticket.status }}",
+              "rightValue": "solved",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "b1c4e7a2-9f31-4c88-8d21-5a7e3f0b1c02",
+              "leftValue": "={{ $json.ticket.status }}",
+              "rightValue": "closed",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "notes": "Base status only - new/open/pending/hold pass, solved/closed are blocked."
+    },
+    {
+      "id": "9c85a80e-430f-4542-a3b0-574069e14461",
+      "name": "Skip: ticket already solved or closed",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        464,
+        336
+      ],
+      "parameters": {},
+      "notes": "Terminal. Reached when a duplicate or replayed webhook targets a ticket the automation has already finished. No Zendesk write on purpose."
+    },
+    {
+      "id": "267825e5-6f35-4354-8d7e-5133898055ac",
+      "name": "Sticky Status Guard",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        688,
+        336
+      ],
+      "parameters": {
+        "content": "## Status guard\n\nBlocks all writes when the ticket is already `solved` or `closed`.\n\nAdded after 2026-07-23: Zendesk redelivered a `ticket created` webhook 8h37m late, the automation re-ran on the original email and contradicted its own earlier reply.\n\nUses the base `status` string, so no `cs_project_config` column is needed and `closed` is covered for free.\n\nSafe for legitimate follow-ups: Zendesk auto-reopens a solved ticket on requester reply, so status is `open` by the time the 2nd-message flow calls this.",
+        "height": 260,
+        "width": 460,
+        "color": 3
+      }
     }
   ],
   "connections": {
@@ -564,28 +669,6 @@
         ]
       ]
     },
-    "Reply to customer and set status to solved12": {
-      "main": [
-        [
-          {
-            "node": "Set status to solved",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Reply to customer and set status to solved13": {
-      "main": [
-        [
-          {
-            "node": "Set status to solved1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Set language": {
       "main": [
         [
@@ -615,17 +698,6 @@
             "node": "Merge",
             "type": "main",
             "index": 1
-          }
-        ]
-      ]
-    },
-    "Merge": {
-      "main": [
-        [
-          {
-            "node": "Generate customer reply with macro8",
-            "type": "main",
-            "index": 0
           }
         ]
       ]
@@ -662,11 +734,73 @@
           }
         ]
       ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Get ticket status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get ticket status": {
+      "main": [
+        [
+          {
+            "node": "Ticket not solved or closed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ticket not solved or closed?": {
+      "main": [
+        [
+          {
+            "node": "Generate customer reply with macro8",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip: ticket already solved or closed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply to customer and set status to solved12": {
+      "main": [
+        [
+          {
+            "node": "Set status to solved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply to customer and set status to solved13": {
+      "main": [
+        [
+          {
+            "node": "Set status to solved1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
     "executionOrder": "v1",
-    "availableInMCP": false,
+    "availableInMCP": true,
     "binaryMode": "separate",
     "timeSavedMode": "fixed",
     "errorWorkflow": "BY3PNiyJJJ9EMdEi",
@@ -698,9 +832,9 @@
       }
     ]
   },
-  "versionId": "6c7111f8-9641-4e0a-897d-bb887c5603c4",
+  "versionId": "a8c55ea6-a51c-488a-a5d9-a0229dc9c004",
   "activeVersionId": "6c7111f8-9641-4e0a-897d-bb887c5603c4",
-  "versionCounter": 16,
+  "versionCounter": 20,
   "triggerCount": 0,
   "sourceWorkflowId": null,
   "shared": [
@@ -1413,8 +1547,24 @@
         "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e"
       },
       {
+        "createdAt": "2026-08-03T20:36:16.851Z",
+        "id": 1345,
+        "workflowId": "gYJSZER93D0fcRWO",
+        "versionId": "6c7111f8-9641-4e0a-897d-bb887c5603c4",
+        "event": "activated",
+        "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e"
+      },
+      {
         "createdAt": "2026-07-15T07:31:39.737Z",
         "id": 1152,
+        "workflowId": "gYJSZER93D0fcRWO",
+        "versionId": "6c7111f8-9641-4e0a-897d-bb887c5603c4",
+        "event": "deactivated",
+        "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e"
+      },
+      {
+        "createdAt": "2026-08-03T20:36:16.815Z",
+        "id": 1344,
         "workflowId": "gYJSZER93D0fcRWO",
         "versionId": "6c7111f8-9641-4e0a-897d-bb887c5603c4",
         "event": "deactivated",
