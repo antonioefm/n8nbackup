@@ -1,0 +1,400 @@
+{
+  "updatedAt": "2026-08-12T12:47:56.111Z",
+  "createdAt": "2026-08-12T12:40:02.138Z",
+  "id": "dngy4enSOfwKYup7",
+  "name": "TEMP - Personality CS gap analysis (Aug 8-11)",
+  "description": "Temporary read-only analysis workflow. Pulls Personality prod Zendesk tickets created in a date window, excludes tickets assigned to the automation agent, fetches comments, and buckets each ticket by who replied. Safe to delete after the gap analysis.",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "0d13d350-e416-4fd9-b8c9-9c6a9c79ce00",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "0ca9932a-77e9-4d50-b9e0-ad219f2907af",
+      "name": "Set params",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "p1",
+              "name": "project_key",
+              "type": "string",
+              "value": "personality_prod"
+            },
+            {
+              "id": "p2",
+              "name": "created_from",
+              "type": "string",
+              "value": "2026-08-11"
+            },
+            {
+              "id": "p3",
+              "name": "created_to_exclusive",
+              "type": "string",
+              "value": "2026-08-12"
+            },
+            {
+              "id": "p4",
+              "name": "automation_email",
+              "type": "string",
+              "value": "zendeskautomation@efuturemedia.com"
+            },
+            {
+              "id": "p5",
+              "name": "text_limit",
+              "type": "number",
+              "value": 700
+            },
+            {
+              "id": "p6",
+              "name": "max_tickets",
+              "type": "number",
+              "value": 0
+            },
+            {
+              "id": "p7",
+              "name": "include_bodies",
+              "type": "boolean",
+              "value": true
+            },
+            {
+              "id": "p8",
+              "name": "bucket_filter",
+              "type": "number",
+              "value": 0
+            },
+            {
+              "id": "p9",
+              "name": "output_offset",
+              "type": "number",
+              "value": 0
+            },
+            {
+              "id": "p10",
+              "name": "output_limit",
+              "type": "number",
+              "value": 0
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "mode": "manual",
+        "options": {}
+      }
+    },
+    {
+      "id": "e57f7745-07b7-4489-865b-565a8128214c",
+      "name": "Get Project Config",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "IRxwFN8iBhHLFQxQ",
+          "cachedResultName": "cs_project_config"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "project_key",
+              "keyValue": "={{ $('Set params').first().json.project_key }}"
+            }
+          ]
+        },
+        "limit": 1
+      }
+    },
+    {
+      "id": "cde0b27f-bb90-412c-a46f-51d0c46af9e6",
+      "name": "Find Automation Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/users/search.json\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "=email:{{ $('Set params').first().json.automation_email }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      }
+    },
+    {
+      "id": "f6ee6039-17ac-4eee-91ab-9b4a626cd6a9",
+      "name": "Fetch Tickets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/search/export.json\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filter[type]",
+              "value": "ticket"
+            },
+            {
+              "name": "page[size]",
+              "value": "1000"
+            },
+            {
+              "name": "query",
+              "value": "=type:ticket created>={{ $('Set params').first().json.created_from }} created<{{ $('Set params').first().json.created_to_exclusive }}"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "paginationMode": "responseContainsNextURL",
+              "nextURL": "={{ $response.body.links.next }}",
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ $response.body.meta.has_more === false }}",
+              "limitPagesFetched": true,
+              "maxRequests": 25
+            }
+          }
+        }
+      },
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      }
+    },
+    {
+      "id": "dc259798-f49e-4657-915d-53fbbb85a2df",
+      "name": "Flatten Tickets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const params = $('Set params').first().json;\nconst cfg = $('Get Project Config').first().json;\nconst users = $('Find Automation Agent').first().json.users || [];\nconst autoId = String(users.length && users[0].id ? users[0].id : '');\nconst from = new Date(params.created_from + 'T00:00:00Z').getTime();\nconst toEx = new Date(params.created_to_exclusive + 'T00:00:00Z').getTime();\nlet all = [];\nfor (const p of $('Fetch Tickets').all()) { all = all.concat((p.json && p.json.results) || []); }\nconst seen = new Set();\nconst uniq = [];\nfor (const t of all) { if (!seen.has(t.id)) { seen.add(t.id); uniq.push(t); } }\nconst inWindow = uniq.filter(t => { const ts = new Date(t.created_at).getTime(); return ts >= from && ts < toEx; });\nconst excluded = inWindow.filter(t => autoId && String(t.assignee_id || '') === autoId);\nlet cand = inWindow.filter(t => !autoId || String(t.assignee_id || '') !== autoId);\ncand.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));\nif (Number(params.max_tickets) > 0) cand = cand.slice(0, Number(params.max_tickets));\nconst metaKeys = Object.keys(cfg).filter(k => /automation|agent|user/i.test(k)).map(k => k + '=' + cfg[k]);\nreturn cand.map((t, i) => {\n  const cfs = (t.custom_fields || []).filter(f => f.value !== null && f.value !== '' && f.value !== false).map(f => f.id + '=' + f.value).join('|');\n  const o = { id: t.id, created_at: t.created_at, updated_at: t.updated_at, status: t.status, subject: t.subject, requester_id: t.requester_id, assignee_id: t.assignee_id || null, channel: t.via && t.via.channel, tags: t.tags || [], cf: cfs, description: t.description ? String(t.description).slice(0, 1500) : '' };\n  if (i === 0) { o._meta = { automation_user_id: autoId, automation_users_found: users.length, zendesk_domain: cfg.zendesk_domain, raw_fetched: uniq.length, in_window: inWindow.length, excluded_automation_assignee: excluded.length, candidates: cand.length, config_keys_matching: metaKeys }; }\n  return { json: o };\n});\n"
+      }
+    },
+    {
+      "id": "e2fa7825-7d03-4a2a-875b-8d2d3af167fa",
+      "name": "Get Comments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $json.id + \"/comments.json\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "include_inline_images",
+              "value": "false"
+            },
+            {
+              "name": "page[size]",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "7ff351d5-4c4b-4b4b-8e9f-7f49a550092a",
+      "name": "Build Records",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const params = $('Set params').first().json;\nconst limit = Number(params.text_limit) || 450;\nconst withBodies = params.include_bodies === true || params.include_bodies === 'true';\nconst bucketFilter = Number(params.bucket_filter) || 0;\nconst tickets = $('Flatten Tickets').all();\nconst responses = $input.all();\nconst meta = tickets.length ? (tickets[0].json._meta || {}) : {};\nconst autoId = String(meta.automation_user_id || '');\nfunction clean(s, cap) {\n  if (!s) return '';\n  const c = cap || limit;\n  let t = String(s).replace(/\\r/g, '');\n  t = t.split('\\n').filter(l => !/^\\s*>/.test(l)).join(' ');\n  t = t.replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');\n  t = t.replace(/\\s+/g, ' ').trim();\n  return t.length > c ? t.slice(0, c) + '...' : t;\n}\nconst rows = [];\nconst totals = { analyzed: 0, bucket1: 0, bucket2: 0, bucket3: 0, unresolved: 0, comment_fetch_errors: 0, nocat_notes: 0 };\nfor (let i = 0; i < tickets.length; i++) {\n  const t = tickets[i].json;\n  const resp = responses[i] ? responses[i].json : {};\n  if (!resp || !resp.comments) totals.comment_fetch_errors++;\n  const comments = (resp && resp.comments) || [];\n  const pub = comments.filter(c => c.public);\n  const cust = pub.filter(c => String(c.author_id) === String(t.requester_id));\n  const auto = autoId ? pub.filter(c => String(c.author_id) === autoId) : [];\n  const agent = pub.filter(c => String(c.author_id) !== String(t.requester_id) && (!autoId || String(c.author_id) !== autoId));\n  const notes = comments.filter(c => !c.public);\n  const rawNotes = notes.map(c => String(c.plain_body || c.body || '')).join(' \\n ');\n  const nocat = /did not fit into any of the predefined categories/i.test(rawNotes);\n  const fr = rawNotes.match(/Fail reason:\\s*([a-zA-Z_]+)/);\n  if (nocat) totals.nocat_notes++;\n  let bucket;\n  if (auto.length > 0) { bucket = 3; } else if (agent.length <= 1) { bucket = 1; } else { bucket = 2; }\n  totals.analyzed++;\n  if (bucket === 1) { totals.bucket1++; } else if (bucket === 2) { totals.bucket2++; } else { totals.bucket3++; }\n  if (t.status !== 'solved' && t.status !== 'closed') totals.unresolved++;\n  const row = { id: t.id, d: String(t.created_at).slice(5, 10), st: t.status, b: bucket, ch: t.channel, subj: t.subject, nc: cust.length, na: agent.length, nb: auto.length, nn: notes.length, nocat: nocat, failreason: fr ? fr[1] : '', tags: (t.tags || []).join(','), cf: t.cf || '' };\n  if (withBodies) {\n    row.cust1 = clean((cust[0] && cust[0].plain_body) ? cust[0].plain_body : (t.description || ((pub[0] || {}).plain_body)), 1200);\n    row.agent1 = agent[0] ? clean(agent[0].plain_body) : '';\n    row.cust2 = cust[1] ? clean(cust[1].plain_body) : '';\n    row.agentL = agent.length > 1 ? clean(agent[agent.length - 1].plain_body) : '';\n    row.auto1 = auto[0] ? clean(auto[0].plain_body, 300) : '';\n    row.notes_txt = clean(rawNotes, 700);\n  }\n  if (bucketFilter === 0 || bucketFilter === bucket) rows.push(row);\n}\nconst off = Number(params.output_offset) || 0;\nconst lim = Number(params.output_limit) || 0;\nconst sliced = lim > 0 ? rows.slice(off, off + lim) : rows.slice(off);\nreturn [{ json: { meta, window: { from: params.created_from, to_exclusive: params.created_to_exclusive }, totals, returned: sliced.length, matching_filter: rows.length, tickets: sliced } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Set params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set params": {
+      "main": [
+        [
+          {
+            "node": "Get Project Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Project Config": {
+      "main": [
+        [
+          {
+            "node": "Find Automation Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Automation Agent": {
+      "main": [
+        [
+          {
+            "node": "Fetch Tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Tickets": {
+      "main": [
+        [
+          {
+            "node": "Flatten Tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flatten Tickets": {
+      "main": [
+        [
+          {
+            "node": "Get Comments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Comments": {
+      "main": [
+        [
+          {
+            "node": "Build Records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "nodeGroups": [],
+  "pinData": null,
+  "versionId": "ee4fd60b-0656-4ce3-a4cd-3ddec408fdb1",
+  "activeVersionId": null,
+  "versionCounter": 6,
+  "triggerCount": 0,
+  "sourceWorkflowId": null,
+  "shared": [
+    {
+      "updatedAt": "2026-08-12T12:40:02.140Z",
+      "createdAt": "2026-08-12T12:40:02.140Z",
+      "role": "workflow:owner",
+      "workflowId": "dngy4enSOfwKYup7",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "updatedAt": "2025-09-16T08:57:49.000Z",
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
+}
