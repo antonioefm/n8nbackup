@@ -1,0 +1,364 @@
+{
+  "id": "Wk6eKF4UE7PvmHOB",
+  "name": "Lokalise - Glossary Diff",
+  "description": "Temporary: reads all shared-glossary terms and reports which Chat AI candidate terms are genuinely new.",
+  "active": true,
+  "activeVersionId": "5532c830-9bed-48ef-97bc-bd4173514df2",
+  "createdAt": "2026-08-18T14:49:33.145Z",
+  "updatedAt": "2026-08-18T14:59:29.343Z",
+  "isArchived": false,
+  "versionId": "5532c830-9bed-48ef-97bc-bd4173514df2",
+  "versionCounter": 4,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "f8496a2f-478f-4062-94b2-c5188faea39e",
+      "name": "Diff Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        96
+      ],
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "glossary-verify-v2",
+        "responseMode": "lastNode",
+        "responseData": "allEntries",
+        "options": {}
+      },
+      "webhookId": "e63036a9-727c-4b66-893f-87e7aba3dadf"
+    },
+    {
+      "id": "0711f0d2-dc45-4c11-9111-2f2fa1ba08a4",
+      "name": "P1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500&page=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "73af5d62-c205-4395-81a8-d217758a9b54",
+      "name": "Combine Pages",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        448,
+        96
+      ],
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 2
+      }
+    },
+    {
+      "id": "99276b7b-cef9-4202-aecb-0d88b98d4b80",
+      "name": "P2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500&page=2",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "d11ac81d-6dc7-48a1-b7b0-0cc291128483",
+      "name": "Diff",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const CAND = [\"Chatbot Online\",\"CHATBOT ONLINE LLC\",\"ChatGPT\",\"Claude\",\"DeepSeek\",\"Gemini\",\"Grok\",\"Norton\",\"OpenAI\",\"Premium\",\"PRO\",\"use.ai\",\"account\",\"background\",\"bank statement\",\"billing period\",\"chat\",\"checkout\",\"clipboard\",\"conversation\",\"credentials\",\"email\",\"feature\",\"file\",\"free trial\",\"image\",\"image style\",\"invoice\",\"link\",\"message\",\"model\",\"password\",\"payment\",\"payment details\",\"payment method\",\"plan\",\"project\",\"prompt\",\"receipt\",\"refund\",\"settings\",\"subscription\",\"support\",\"trial\",\"cancel\",\"close\",\"confirm\",\"contact\",\"continue\",\"copy\",\"create\",\"delete\",\"download\",\"enter\",\"get started\",\"log in\",\"reactivate\",\"remove\",\"rename\",\"save\",\"search\",\"send\",\"share\",\"sign in\",\"sign up\",\"start chatting\",\"try again\",\"update\",\"upload\"];\n\nconst norm = (s) => String(s || '').trim().toLowerCase().replace(/\\s+/g, ' ');\nconst counts = new Map();\nlet total = 0;\nconst tagCounts = {};\nfor (const it of items) {\n  const j = it.json || {};\n  const d = j.data !== undefined ? j.data : j;\n  const terms = Array.isArray(d) ? d : (d.terms || []);\n  for (const t of terms) {\n    total++;\n    const n = norm(t.term);\n    counts.set(n, (counts.get(n) || 0) + 1);\n    for (const g of (t.tags || [])) tagCounts[g] = (tagCounts[g] || 0) + 1;\n  }\n}\nconst dupInGlossary = [];\nfor (const [n, c] of counts) if (c > 1) dupInGlossary.push(n + ' x' + c);\nconst stillMissing = CAND.filter(c => !counts.has(norm(c)));\nreturn [{ json: {\n  total_items: total,\n  distinct_terms: counts.size,\n  duplicate_terms_in_glossary: dupInGlossary.sort(),\n  tagCounts: tagCounts,\n  candidates_still_missing: stillMissing\n} }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Diff Trigger": {
+      "main": [
+        [
+          {
+            "node": "P1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "P2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P1": {
+      "main": [
+        [
+          {
+            "node": "Combine Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Pages": {
+      "main": [
+        [
+          {
+            "node": "Diff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P2": {
+      "main": [
+        [
+          {
+            "node": "Combine Pages",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "Wk6eKF4UE7PvmHOB",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-18T14:49:33.148Z",
+      "updatedAt": "2026-08-18T14:49:33.148Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "5532c830-9bed-48ef-97bc-bd4173514df2",
+    "workflowId": "Wk6eKF4UE7PvmHOB",
+    "nodes": [
+      {
+        "id": "f8496a2f-478f-4062-94b2-c5188faea39e",
+        "name": "Diff Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          0,
+          96
+        ],
+        "parameters": {
+          "httpMethod": "GET",
+          "path": "glossary-verify-v2",
+          "responseMode": "lastNode",
+          "responseData": "allEntries",
+          "options": {}
+        },
+        "webhookId": "e63036a9-727c-4b66-893f-87e7aba3dadf"
+      },
+      {
+        "id": "0711f0d2-dc45-4c11-9111-2f2fa1ba08a4",
+        "name": "P1",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          224,
+          0
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500&page=1",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "options": {}
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "4cb6G6nZVVtP4HIO",
+            "name": "Lokalise access token read-write"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "73af5d62-c205-4395-81a8-d217758a9b54",
+        "name": "Combine Pages",
+        "type": "n8n-nodes-base.merge",
+        "typeVersion": 3.2,
+        "position": [
+          448,
+          96
+        ],
+        "parameters": {
+          "mode": "append",
+          "numberInputs": 2
+        }
+      },
+      {
+        "id": "99276b7b-cef9-4202-aecb-0d88b98d4b80",
+        "name": "P2",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          224,
+          192
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500&page=2",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "options": {}
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "4cb6G6nZVVtP4HIO",
+            "name": "Lokalise access token read-write"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "d11ac81d-6dc7-48a1-b7b0-0cc291128483",
+        "name": "Diff",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          672,
+          96
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const CAND = [\"Chatbot Online\",\"CHATBOT ONLINE LLC\",\"ChatGPT\",\"Claude\",\"DeepSeek\",\"Gemini\",\"Grok\",\"Norton\",\"OpenAI\",\"Premium\",\"PRO\",\"use.ai\",\"account\",\"background\",\"bank statement\",\"billing period\",\"chat\",\"checkout\",\"clipboard\",\"conversation\",\"credentials\",\"email\",\"feature\",\"file\",\"free trial\",\"image\",\"image style\",\"invoice\",\"link\",\"message\",\"model\",\"password\",\"payment\",\"payment details\",\"payment method\",\"plan\",\"project\",\"prompt\",\"receipt\",\"refund\",\"settings\",\"subscription\",\"support\",\"trial\",\"cancel\",\"close\",\"confirm\",\"contact\",\"continue\",\"copy\",\"create\",\"delete\",\"download\",\"enter\",\"get started\",\"log in\",\"reactivate\",\"remove\",\"rename\",\"save\",\"search\",\"send\",\"share\",\"sign in\",\"sign up\",\"start chatting\",\"try again\",\"update\",\"upload\"];\n\nconst norm = (s) => String(s || '').trim().toLowerCase().replace(/\\s+/g, ' ');\nconst counts = new Map();\nlet total = 0;\nconst tagCounts = {};\nfor (const it of items) {\n  const j = it.json || {};\n  const d = j.data !== undefined ? j.data : j;\n  const terms = Array.isArray(d) ? d : (d.terms || []);\n  for (const t of terms) {\n    total++;\n    const n = norm(t.term);\n    counts.set(n, (counts.get(n) || 0) + 1);\n    for (const g of (t.tags || [])) tagCounts[g] = (tagCounts[g] || 0) + 1;\n  }\n}\nconst dupInGlossary = [];\nfor (const [n, c] of counts) if (c > 1) dupInGlossary.push(n + ' x' + c);\nconst stillMissing = CAND.filter(c => !counts.has(norm(c)));\nreturn [{ json: {\n  total_items: total,\n  distinct_terms: counts.size,\n  duplicate_terms_in_glossary: dupInGlossary.sort(),\n  tagCounts: tagCounts,\n  candidates_still_missing: stillMissing\n} }];\n"
+        }
+      }
+    ],
+    "connections": {
+      "Diff Trigger": {
+        "main": [
+          [
+            {
+              "node": "P1",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "P2",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P1": {
+        "main": [
+          [
+            {
+              "node": "Combine Pages",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Combine Pages": {
+        "main": [
+          [
+            {
+              "node": "Diff",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P2": {
+        "main": [
+          [
+            {
+              "node": "Combine Pages",
+              "type": "main",
+              "index": 1
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Maria Sica (via MCP)",
+    "name": "Verify totals, duplicates and tag counts",
+    "description": "Updated nodes: Diff Trigger, Diff",
+    "autosaved": false,
+    "createdAt": "2026-08-18T14:59:29.344Z",
+    "updatedAt": "2026-08-18T14:59:29.344Z",
+    "workflowPublishHistory": [
+      {
+        "id": 1454,
+        "workflowId": "Wk6eKF4UE7PvmHOB",
+        "versionId": "5532c830-9bed-48ef-97bc-bd4173514df2",
+        "event": "activated",
+        "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
+        "createdAt": "2026-08-18T14:59:38.652Z"
+      }
+    ]
+  }
+}
