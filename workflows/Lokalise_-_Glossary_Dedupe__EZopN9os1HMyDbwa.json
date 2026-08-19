@@ -1,0 +1,230 @@
+{
+  "id": "EZopN9os1HMyDbwa",
+  "name": "Lokalise - Glossary Dedupe",
+  "description": "Removes the duplicate copies of the 36 Chat AI glossary terms created by a double write, keeping the earliest entry of each pair. Touches only those terms.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-18T15:10:05.176Z",
+  "updatedAt": "2026-08-18T15:12:21.882Z",
+  "isArchived": false,
+  "versionId": "8aca54fb-51d9-4752-8b06-16a669a50521",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "58a4416b-cf47-46b3-a253-8ff58272fd1a",
+      "name": "Dedupe Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "glossary-dedupe-v1",
+        "responseMode": "lastNode",
+        "responseData": "allEntries",
+        "options": {}
+      },
+      "webhookId": "63a18d00-bbea-4638-91d9-72a108ee4cba"
+    },
+    {
+      "id": "31dbd2d1-a007-4c93-b547-5d34f646be16",
+      "name": "Page A",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "cdf19adb-3e59-4593-b03f-753776d9f693",
+      "name": "Page B",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500&cursor={{ $json.meta ? $json.meta.nextCursor : 0 }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "3de0599d-ca93-4812-b2ca-48c0af8af907",
+      "name": "Plan Deletions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const MINE = [\"CHATBOT ONLINE LLC\",\"ChatGPT\",\"Claude\",\"DeepSeek\",\"Gemini\",\"Grok\",\"Norton\",\"OpenAI\",\"Premium\",\"PRO\",\"use.ai\",\"bank statement\",\"billing period\",\"chat\",\"checkout\",\"clipboard\",\"contact\",\"conversation\",\"copy\",\"create\",\"credentials\",\"feature\",\"file\",\"free trial\",\"image style\",\"model\",\"payment method\",\"project\",\"prompt\",\"receipt\",\"refund\",\"rename\",\"send\",\"start chatting\",\"support\",\"trial\"];\nconst norm = (s) => String(s || '').trim().toLowerCase().replace(/\\s+/g, ' ');\nconst MINESET = new Set(MINE.map(norm));\nconst seen = new Set();\nconst all = [];\nconst pages = [];\nfor (const nm of ['Page A', 'Page B']) {\n  let arr = [];\n  try { arr = $(nm).all(); } catch (e) { pages.push(nm + ': unavailable'); continue; }\n  for (const it of arr) {\n    const j = it.json || {};\n    const terms = Array.isArray(j.data) ? j.data : [];\n    const m = j.meta || {};\n    pages.push(nm + ': ' + terms.length + ' items, hasMore=' + m.hasMore);\n    for (const t of terms) if (t && t.id && !seen.has(t.id)) { seen.add(t.id); all.push(t); }\n  }\n}\nconst groups = new Map();\nfor (const t of all) {\n  const n = norm(t.term);\n  if (!MINESET.has(n)) continue;\n  if (!groups.has(n)) groups.set(n, []);\n  groups.get(n).push({ id: t.id, term: t.term, tags: (t.tags || []).join('/') });\n}\nconst deleteIds = [];\nconst plan = [];\nconst singles = [];\nfor (const [n, list] of groups) {\n  list.sort((a, b) => a.id - b.id);\n  if (list.length > 1) {\n    const keep = list[0];\n    const drop = list.slice(1);\n    for (const d of drop) deleteIds.push(d.id);\n    plan.push(n + ': keep ' + keep.id + ' [' + (keep.tags || 'untagged') + '], delete ' + drop.map(d => d.id).join(','));\n  } else {\n    singles.push(n + ': 1 copy (' + list[0].id + ')');\n  }\n}\nreturn [{ json: { pages: pages, total_fetched: all.length, my_terms_found: groups.size, duplicate_groups: plan.length, already_clean: singles.length, delete_count: deleteIds.length, delete_ids: deleteIds, plan: plan, singles: singles } }];\n"
+      }
+    },
+    {
+      "id": "05273816-1a67-4a30-b7fa-967a9af0bc7c",
+      "name": "Delete Duplicates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "DELETE",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"terms\": $json.delete_ids } }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "eb895b29-5832-44af-8158-f9d80425216a",
+      "name": "Dedupe Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const p = $('Plan Deletions').first().json;\nconst j = items[0].json || {};\nreturn [{ json: {\n  total_fetched_before: p.total_fetched,\n  my_terms_found: p.my_terms_found,\n  duplicate_groups: p.duplicate_groups,\n  already_clean: p.already_clean,\n  attempted_deletions: p.delete_count,\n  delete_response: JSON.stringify(j).slice(0, 500),\n  plan: p.plan\n} }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Dedupe Trigger": {
+      "main": [
+        [
+          {
+            "node": "Page A",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Page A": {
+      "main": [
+        [
+          {
+            "node": "Page B",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Page B": {
+      "main": [
+        [
+          {
+            "node": "Plan Deletions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan Deletions": {
+      "main": [
+        [
+          {
+            "node": "Delete Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Duplicates": {
+      "main": [
+        [
+          {
+            "node": "Dedupe Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "EZopN9os1HMyDbwa",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-18T15:10:05.178Z",
+      "updatedAt": "2026-08-18T15:10:05.178Z"
+    }
+  ],
+  "activeVersion": null
+}
