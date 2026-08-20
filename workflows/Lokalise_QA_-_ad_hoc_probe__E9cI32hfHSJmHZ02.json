@@ -1,0 +1,200 @@
+{
+  "id": "E9cI32hfHSJmHZ02",
+  "name": "Lokalise QA - ad hoc probe",
+  "description": "Reusable scratch probe: counts Lokalise QA-flagged keys per project via the x-pagination-total-count header on GET /keys?filter_qa_issues=. Checks are set in the Build QA Requests code node.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-19T12:55:14.307Z",
+  "updatedAt": "2026-08-19T16:35:49.350Z",
+  "isArchived": false,
+  "versionId": "504cd58e-98fa-494f-9d8f-3aa17943ec01",
+  "versionCounter": 8,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "1a64b57d-19ee-4fc7-bbf6-667912978ba6",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "5ba9b52e-b59d-408e-be43-d75b0999f4a3",
+      "name": "Fetch Lokalise Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=500&page=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "3821c95c-fbad-4b67-8aa9-57607be7d1ac",
+      "name": "Build QA Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const QA = [\n  { type: 'placeholders', label: 'Placeholders', tr: false },\n  { type: 'html', label: 'HTML', tr: false },\n  { type: 'double_space', label: 'Double space', tr: true }\n];\nconst out = [];\nlet first = true;\nfor (const it of items) {\n  for (const p of (it.json.projects || [])) {\n    const base = (p.base_language_iso || 'en').toLowerCase();\n    for (const q of QA) {\n      out.push({ json: {\n        project_id: p.project_id,\n        project_name: p.name,\n        base_lang: base,\n        qa_type: q.type,\n        qa_label: q.label,\n        extra: q.tr ? '&include_translations=1' : ''\n      }});\n    }\n    if (first) {\n      out.push({ json: {\n        project_id: p.project_id,\n        project_name: p.name,\n        base_lang: base,\n        qa_type: '__control_invalid__',\n        qa_label: '__CONTROL__',\n        extra: ''\n      }});\n      first = false;\n    }\n  }\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "67458d0a-3b4a-4caa-bdcc-c2216cb6a83e",
+      "name": "Fetch QA Issue Counts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?filter_qa_issues={{ $json.qa_type }}&limit=500&page=1{{ $json.extra }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 220
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "e0fefcda-cfdc-4cd4-97a6-b4f616a99a09",
+      "name": "Collect Counts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const LABELS = ['Placeholders', 'HTML', 'Double space (translations)', 'Double space (EN source)'];\nconst reqs = $('Build QA Requests').all();\nconst res = $input.all();\nconst rows = {};\nconst order = [];\nconst failed = [];\nconst truncated = [];\nlet controlStatus = null;\n\nfunction isPseudo(iso) {\n  const s = (iso || '').toLowerCase();\n  return s === 'pst' || s.indexOf('pseudo') >= 0;\n}\n\nfor (let i = 0; i < res.length; i++) {\n  const pi = res[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const metaItem = reqs[idx] || reqs[i];\n  if (!metaItem) { continue; }\n  const meta = metaItem.json;\n\n  const r = res[i].json || {};\n  const hdr = r.headers || {};\n\n  if (meta.qa_label === '__CONTROL__') { controlStatus = r.statusCode; continue; }\n\n  const raw = hdr['x-pagination-total-count'];\n  let total = null;\n  if (r.statusCode === 200 && raw !== undefined && raw !== null) {\n    const n = parseInt(raw, 10);\n    if (!isNaN(n)) { total = n; }\n  }\n  if (total === null) { failed.push(meta.project_name + ' / ' + meta.qa_label); }\n\n  const keys = (r.body && r.body.keys) ? r.body.keys : [];\n  if (total !== null && total > keys.length) { truncated.push(meta.project_name + ' / ' + meta.qa_label); }\n\n  if (!rows[meta.project_name]) { rows[meta.project_name] = {}; order.push(meta.project_name); }\n\n  if (meta.qa_label === 'Double space') {\n    let srcCount = 0;\n    let tgtCount = 0;\n    for (const k of keys) {\n      if (k.is_archived) { continue; }\n      let inSrc = false;\n      let inTgt = false;\n      for (const tr of (k.translations || [])) {\n        const v = tr.translation;\n        if (typeof v !== 'string') { continue; }\n        if (!/ {2,}/.test(v)) { continue; }\n        const iso = (tr.language_iso || '').toLowerCase();\n        if (iso === meta.base_lang) { inSrc = true; }\n        else if (!isPseudo(iso)) { inTgt = true; }\n      }\n      if (inSrc) { srcCount++; }\n      if (inTgt) { tgtCount++; }\n    }\n    rows[meta.project_name]['Double space (translations)'] = (total === null) ? null : tgtCount;\n    rows[meta.project_name]['Double space (EN source)'] = (total === null) ? null : srcCount;\n  } else {\n    let active = 0;\n    for (const k of keys) { if (!k.is_archived) { active++; } }\n    rows[meta.project_name][meta.qa_label] = (total === null) ? null : active;\n  }\n}\n\nconst totals = {};\nfor (const l of LABELS) { totals[l] = 0; }\nconst flagged = [];\nfor (const name of order) {\n  const r = rows[name];\n  let sum = 0;\n  for (const l of LABELS) {\n    const v = r[l];\n    if (typeof v === 'number') { sum += v; totals[l] += v; }\n  }\n  if (sum > 0) { flagged.push({ name: name, r: r, sum: sum }); }\n}\nflagged.sort(function (a, b) {\n  return a.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase().localeCompare(b.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase());\n});\n\nreturn [{ json: {\n  rows: rows,\n  totals: totals,\n  failed: failed,\n  failures: failed.length,\n  truncated: truncated,\n  project_count: order.length,\n  flagged_count: flagged.length,\n  control_status: controlStatus,\n  zeros_are_trustworthy: controlStatus === 400,\n  archived_excluded: true,\n  note: 'Non-archived keys only; pseudo-language excluded from translation counts. EN source split out separately.'\n}}];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lokalise Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lokalise Projects": {
+      "main": [
+        [
+          {
+            "node": "Build QA Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build QA Requests": {
+      "main": [
+        [
+          {
+            "node": "Fetch QA Issue Counts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch QA Issue Counts": {
+      "main": [
+        [
+          {
+            "node": "Collect Counts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "E9cI32hfHSJmHZ02",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-19T12:55:14.309Z",
+      "updatedAt": "2026-08-19T12:55:14.309Z"
+    }
+  ],
+  "activeVersion": null
+}
