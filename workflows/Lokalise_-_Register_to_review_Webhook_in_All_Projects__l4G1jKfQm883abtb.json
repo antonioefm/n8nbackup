@@ -1,0 +1,326 @@
+{
+  "id": "l4G1jKfQm883abtb",
+  "name": "Lokalise - Register to_review Webhook in All Projects",
+  "description": "One-time (re-runnable) helper: lists every Lokalise project, checks its existing webhooks, and registers the to_review n8n webhook for project.key.added + project.translation.updated wherever it is missing. Skips projects that already have it.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-19T11:19:05.873Z",
+  "updatedAt": "2026-08-19T11:25:36.139Z",
+  "isArchived": false,
+  "versionId": "15b1fa8e-8a72-4313-bfbf-aaabaadb2306",
+  "versionCounter": 4,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "3cbf7837-bb23-4138-9694-6ac5ddaa7e4b",
+      "name": "Run Once Manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a4811d0e-b3a6-406c-b7bf-78be6d6d72ca",
+      "name": "List All Lokalise Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=100&page=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "0105cb6a-8eff-40a6-a861-b3f0cb3a1312",
+      "name": "Split Out Projects",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "fieldToSplitOut": "projects",
+        "include": "noOtherFields",
+        "options": {}
+      }
+    },
+    {
+      "id": "0d6be24b-1b6d-45ed-8e2f-a37374d45485",
+      "name": "List Project Webhooks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/webhooks?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 3,
+              "batchInterval": 1200
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "22443b64-e1d0-4978-b0ff-754631004233",
+      "name": "Find Missing Webhooks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const TARGET_URL = 'https://efuturemedia.app.n8n.cloud/webhook/lokalise-to-review';\nconst EVENTS = ['project.key.added', 'project.translation.updated'];\nconst ONLY_PROJECT_IDS = [];\nconst projects = $('Split Out Projects').all();\nconst rows = $input.all();\nconst out = [];\nfor (let i = 0; i < rows.length; i++) {\n  const p = (projects[i] && projects[i].json) || {};\n  const j = rows[i].json || {};\n  const hooks = j.webhooks || j.data || [];\n  const checkFailed = !!j.error;\n  const inScope = ONLY_PROJECT_IDS.length === 0 || ONLY_PROJECT_IDS.indexOf(p.project_id) !== -1;\n  let existing = null;\n  for (const h of hooks) {\n    if (String(h.url || '') === TARGET_URL) { existing = h; break; }\n  }\n  const currentEvents = existing && Array.isArray(existing.events) ? existing.events : [];\n  const missingEvents = EVENTS.filter((e) => currentEvents.indexOf(e) === -1);\n  out.push({ json: {\n    projectId: p.project_id || '',\n    projectName: p.name || '',\n    baseLanguage: p.base_language_iso || '',\n    targetUrl: TARGET_URL,\n    events: EVENTS,\n    scopeLimitedTo: ONLY_PROJECT_IDS,\n    inScope: inScope,\n    webhookCount: hooks.length,\n    existingWebhookId: existing ? existing.webhook_id : null,\n    existingEvents: currentEvents,\n    missingEvents: missingEvents,\n    checkFailed: checkFailed,\n    needsCreate: inScope && !checkFailed && !!p.project_id && !existing\n  } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "b2c157e9-4b96-4bda-9baf-c6b32978a229",
+      "name": "Only Projects Missing It",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "needs-create",
+              "leftValue": "={{ $json.needsCreate }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "30d6e540-09b4-456b-ad32-7a512fd3dcc0",
+      "name": "Register Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.projectId }}/webhooks",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"url\": $json.targetUrl, \"events\": $json.events } }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 3,
+              "batchInterval": 1200
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "7a60a870-4614-4ba0-b96a-ef027ebf1c78",
+      "name": "Registration Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const checked = $('Find Missing Webhooks').all().map((i) => i.json);\nconst targets = $('Only Projects Missing It').all().map((i) => i.json);\nconst results = $input.all().map((i) => i.json);\nconst created = [];\nconst failed = [];\nfor (let i = 0; i < targets.length; i++) {\n  const r = results[i] || {};\n  const label = targets[i].projectName + ' (' + targets[i].projectId + ')';\n  if (r.error) {\n    failed.push({ project: label, error: String((r.error && r.error.message) || r.error) });\n  } else {\n    const w = r.webhook || r;\n    created.push({ project: label, webhookId: w.webhook_id || null });\n  }\n}\nconst scope = (checked[0] && checked[0].scopeLimitedTo) || [];\nreturn [{ json: {\n  scope: scope.length === 0 ? 'all projects' : scope,\n  projectsSeen: checked.length,\n  projectsInScope: checked.filter((p) => p.inScope).length,\n  alreadyRegisteredInScope: checked.filter((p) => p.inScope && p.existingWebhookId).length,\n  createdCount: created.length,\n  failedCount: failed.length,\n  createdIn: created,\n  failures: failed,\n  couldNotCheck: checked.filter((p) => p.checkFailed).map((p) => p.projectName),\n  existingButMissingEvents: checked.filter((p) => p.existingWebhookId && p.missingEvents.length > 0).map((p) => ({ project: p.projectName, webhookId: p.existingWebhookId, missingEvents: p.missingEvents }))\n} }];"
+      }
+    },
+    {
+      "id": "9fef4b72-9f0a-4e63-aeef-44de903bf431",
+      "name": "Sticky Note b55e3706",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -50,
+        -50
+      ],
+      "parameters": {
+        "content": "## Setup helper - rollout control\n\nRegisters the to_review webhook in Lokalise projects. Safe to re-run: it reads each project's existing webhooks first and only creates what is missing.\n\n**Rollout scope lives in the Find Missing Webhooks node**, in the ONLY_PROJECT_IDS array at the top.\n\n- Right now it holds one ID: Realchecker (FE) - the pilot, already registered.\n- **Empty the array (ONLY_PROJECT_IDS = []) and run again to roll out to all 39 projects.**\n\nSubscribed events: project.key.added and project.translation.updated. Lokalise delivers the bulk variants under those same two subscriptions.\n\nRead Registration Summary after each run for created / already-registered / failed counts.",
+        "color": 4,
+        "width": 440,
+        "height": 400
+      }
+    }
+  ],
+  "connections": {
+    "Run Once Manually": {
+      "main": [
+        [
+          {
+            "node": "List All Lokalise Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List All Lokalise Projects": {
+      "main": [
+        [
+          {
+            "node": "Split Out Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out Projects": {
+      "main": [
+        [
+          {
+            "node": "List Project Webhooks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Project Webhooks": {
+      "main": [
+        [
+          {
+            "node": "Find Missing Webhooks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Missing Webhooks": {
+      "main": [
+        [
+          {
+            "node": "Only Projects Missing It",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Only Projects Missing It": {
+      "main": [
+        [
+          {
+            "node": "Register Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Register Webhook": {
+      "main": [
+        [
+          {
+            "node": "Registration Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "l4G1jKfQm883abtb",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-19T11:19:05.875Z",
+      "updatedAt": "2026-08-19T11:19:05.875Z"
+    }
+  ],
+  "activeVersion": null
+}
