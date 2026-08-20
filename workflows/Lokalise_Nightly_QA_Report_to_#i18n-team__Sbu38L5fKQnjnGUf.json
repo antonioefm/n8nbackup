@@ -1,0 +1,534 @@
+{
+  "id": "Sbu38L5fKQnjnGUf",
+  "name": "Lokalise Nightly QA Report to #i18n-team",
+  "description": "Every night at 02:00 (Europe/Madrid): counts Lokalise QA issues per project for inconsistent placeholders and inconsistent HTML, and posts a per-project count report to the private #i18n-team Slack channel.",
+  "active": true,
+  "activeVersionId": "ff4bf755-24b5-4540-b0af-2beefd09203e",
+  "createdAt": "2026-08-19T11:52:14.313Z",
+  "updatedAt": "2026-08-19T16:30:18.784Z",
+  "isArchived": false,
+  "versionId": "ff4bf755-24b5-4540-b0af-2beefd09203e",
+  "versionCounter": 9,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "a1905d6c-f273-45d9-a717-896d5b0622f0",
+      "name": "Nightly 02:00 Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 2,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "cd80e8eb-c3f7-4c91-bcd0-a0c687a4e3c0",
+      "name": "Fetch Lokalise Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=500&page=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "794d7bed-2b2d-4234-816d-14e277b5d4ea",
+      "name": "Build QA Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const QA = [\n  { type: 'placeholders', label: 'Placeholders', tr: false },\n  { type: 'html', label: 'HTML', tr: false },\n  { type: 'double_space', label: 'Double space', tr: true }\n];\nconst out = [];\nlet first = true;\nfor (const it of items) {\n  for (const p of (it.json.projects || [])) {\n    const base = (p.base_language_iso || 'en').toLowerCase();\n    for (const q of QA) {\n      out.push({ json: {\n        project_id: p.project_id,\n        project_name: p.name,\n        base_lang: base,\n        qa_type: q.type,\n        qa_label: q.label,\n        extra: q.tr ? '&include_translations=1' : ''\n      }});\n    }\n    if (first) {\n      out.push({ json: {\n        project_id: p.project_id,\n        project_name: p.name,\n        base_lang: base,\n        qa_type: '__control_invalid__',\n        qa_label: '__CONTROL__',\n        extra: ''\n      }});\n      first = false;\n    }\n  }\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "9ff525c6-0f1e-4afa-b073-c988a5025b0a",
+      "name": "Fetch QA Issue Counts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?filter_qa_issues={{ $json.qa_type }}&limit=500&page=1{{ $json.extra }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 220
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "15a7ace0-a3f7-4457-91d8-9ca8258afa27",
+      "name": "Build Slack Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const LABELS = ['Placeholders', 'HTML', 'Double space (translations)', 'Double space (EN source)'];\nconst reqs = $('Build QA Requests').all();\nconst res = $input.all();\nconst rows = {};\nconst order = [];\nconst failed = [];\nconst truncated = [];\nlet controlStatus = null;\n\nfunction isPseudo(iso) {\n  const s = (iso || '').toLowerCase();\n  return s === 'pst' || s.indexOf('pseudo') >= 0;\n}\n\nfor (let i = 0; i < res.length; i++) {\n  const pi = res[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const metaItem = reqs[idx] || reqs[i];\n  if (!metaItem) { continue; }\n  const meta = metaItem.json;\n\n  const r = res[i].json || {};\n  const hdr = r.headers || {};\n\n  if (meta.qa_label === '__CONTROL__') { controlStatus = r.statusCode; continue; }\n\n  const raw = hdr['x-pagination-total-count'];\n  let total = null;\n  if (r.statusCode === 200 && raw !== undefined && raw !== null) {\n    const n = parseInt(raw, 10);\n    if (!isNaN(n)) { total = n; }\n  }\n  if (total === null) { failed.push(meta.project_name + ' / ' + meta.qa_label); }\n\n  const keys = (r.body && r.body.keys) ? r.body.keys : [];\n  if (total !== null && total > keys.length) { truncated.push(meta.project_name + ' / ' + meta.qa_label); }\n\n  if (!rows[meta.project_name]) { rows[meta.project_name] = {}; order.push(meta.project_name); }\n\n  if (meta.qa_label === 'Double space') {\n    let srcCount = 0;\n    let tgtCount = 0;\n    for (const k of keys) {\n      if (k.is_archived) { continue; }\n      let inSrc = false;\n      let inTgt = false;\n      for (const tr of (k.translations || [])) {\n        const v = tr.translation;\n        if (typeof v !== 'string') { continue; }\n        if (!/ {2,}/.test(v)) { continue; }\n        const iso = (tr.language_iso || '').toLowerCase();\n        if (iso === meta.base_lang) { inSrc = true; }\n        else if (!isPseudo(iso)) { inTgt = true; }\n      }\n      if (inSrc) { srcCount++; }\n      if (inTgt) { tgtCount++; }\n    }\n    rows[meta.project_name]['Double space (translations)'] = (total === null) ? null : tgtCount;\n    rows[meta.project_name]['Double space (EN source)'] = (total === null) ? null : srcCount;\n  } else {\n    let active = 0;\n    for (const k of keys) { if (!k.is_archived) { active++; } }\n    rows[meta.project_name][meta.qa_label] = (total === null) ? null : active;\n  }\n}\n\nconst totals = {};\nfor (const l of LABELS) { totals[l] = 0; }\nconst flagged = [];\nfor (const name of order) {\n  const r = rows[name];\n  let sum = 0;\n  for (const l of LABELS) {\n    const v = r[l];\n    if (typeof v === 'number') { sum += v; totals[l] += v; }\n  }\n  if (sum > 0) { flagged.push({ name: name, r: r, sum: sum }); }\n}\nflagged.sort(function (a, b) {\n  return a.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase().localeCompare(b.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase());\n});\n\nconst totalParts = [];\nfor (const l of LABELS) { totalParts.push(l + ': ' + totals[l]); }\n\nlet text = '*Lokalise nightly QA check* — ' + order.length + ' projects scanned\\n';\ntext += '_Keys flagged per check, across all target languages. Archived keys and the pseudo-language excluded. EN source counted separately._\\n\\n';\ntext += '*Totals*\\n';\nfor (const l of LABELS) { text += '• ' + l + ': ' + totals[l] + '\\n'; }\ntext += '\\n';\n\nif (flagged.length === 0) {\n  text += ':white_check_mark: No issues found in any project.\\n';\n} else {\n  text += '*Projects with issues (' + flagged.length + ' of ' + order.length + ')*\\n';\n  for (const f of flagged) {\n    const parts = [];\n    for (const l of LABELS) {\n      const v = f.r[l];\n      if (typeof v === 'number' && v > 0) { parts.push(l + ': ' + v); }\n    }\n    text += '• *' + f.name + '* — ' + parts.join('  ·  ') + '\\n';\n  }\n  text += '\\n:white_check_mark: ' + (order.length - flagged.length) + ' project(s) clean.\\n';\n}\n\nif (failed.length > 0) { text += '\\n:warning: could not read: ' + failed.join(', '); }\nif (truncated.length > 0) { text += '\\n:warning: over 500 flagged keys, count is a floor: ' + truncated.join(', '); }\nif (controlStatus !== 400) { text += '\\n:rotating_light: control probe returned ' + controlStatus + ' instead of 400 — the QA filter may not be applied, treat these numbers as unverified.'; }\n\nif (text.length > 3800) { text = text.slice(0, 3740) + '\\n… truncated, see full run in n8n.'; }\n\nreturn [{ json: { report: text, project_count: order.length, flagged_count: flagged.length, totals: totals, failures: failed.length, truncated: truncated.length, control_status: controlStatus } }];\n"
+      }
+    },
+    {
+      "id": "66dd5287-add7-469a-84d4-a7f039000805",
+      "name": "Post Report to i18n-team",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "authentication": "accessToken",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C094NS33FN0",
+          "cachedResultName": "i18n-team"
+        },
+        "messageType": "text",
+        "text": "={{ $json.report }}",
+        "otherOptions": {
+          "mrkdwn": true,
+          "includeLinkToWorkflow": false,
+          "unfurl_links": false,
+          "unfurl_media": false
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "executeOnce": true,
+      "webhookId": "cd490134-5e1e-43fb-b514-613e17b7efdd"
+    },
+    {
+      "id": "506e9bb2-9898-4d40-b360-7f504494793d",
+      "name": "Sticky Note b9219a72",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        170,
+        -50
+      ],
+      "parameters": {
+        "content": "## Nightly Lokalise QA check\nRuns at 02:00 Europe/Madrid. **One** Slack summary message to #i18n-team, alphabetical, clean projects suppressed but counted.\n\n**Four entries:** Placeholders, HTML, Double space (translations), Double space (EN source). Double space is split by comparing each translation's `language_iso` against the project's `base_language_iso` — EN source issues belong to the dev teams (they come from the repo and get overwritten on next import), translation issues belong to the language leads. Pseudo-language (`pst`) is excluded from translation counts since its strings are auto-mangled.\n\nScope is deliberately these checks only. Brackets, numbers and email checks are intentionally excluded.\n\n**Archived keys are excluded client-side.** `filter_qa_issues` silently IGNORES `filter_archived` (exclude/include/only all return the same count), so the `x-pagination-total-count` header includes archived keys and does NOT match the Lokalise UI. The workflow fetches keys with limit=500 and counts `is_archived == false`. Do not revert to reading the header.\n\n`include_translations=1` is added ONLY to the double_space request — the other checks don't need the text and it keeps the payload down.\n\nA control request with a deliberately invalid filter value runs once per execution; Lokalise returns 400 for it, proving the QA filter is actually applied and the zeros are real. Throttled to ~4.5 req/s under the Lokalise 10 req/s limit.",
+        "color": 4,
+        "width": 1180,
+        "height": 200
+      }
+    }
+  ],
+  "connections": {
+    "Nightly 02:00 Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lokalise Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lokalise Projects": {
+      "main": [
+        [
+          {
+            "node": "Build QA Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build QA Requests": {
+      "main": [
+        [
+          {
+            "node": "Fetch QA Issue Counts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch QA Issue Counts": {
+      "main": [
+        [
+          {
+            "node": "Build Slack Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Slack Report": {
+      "main": [
+        [
+          {
+            "node": "Post Report to i18n-team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Madrid",
+    "saveDataErrorExecution": "all",
+    "executionTimeout": 900
+  },
+  "staticData": {
+    "node:Nightly 02:00 Trigger": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    }
+  },
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "Sbu38L5fKQnjnGUf",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-19T11:52:14.314Z",
+      "updatedAt": "2026-08-19T11:52:14.314Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "ff4bf755-24b5-4540-b0af-2beefd09203e",
+    "workflowId": "Sbu38L5fKQnjnGUf",
+    "nodes": [
+      {
+        "id": "a1905d6c-f273-45d9-a717-896d5b0622f0",
+        "name": "Nightly 02:00 Trigger",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.3,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "days",
+                "daysInterval": 1,
+                "triggerAtHour": 2,
+                "triggerAtMinute": 0
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "cd80e8eb-c3f7-4c91-bcd0-a0c687a4e3c0",
+        "name": "Fetch Lokalise Projects",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          220,
+          0
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://api.lokalise.com/api2/projects?limit=500&page=1",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "4cb6G6nZVVtP4HIO",
+            "name": "Lokalise access token read-write"
+          }
+        }
+      },
+      {
+        "id": "794d7bed-2b2d-4234-816d-14e277b5d4ea",
+        "name": "Build QA Requests",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          440,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const QA = [\n  { type: 'placeholders', label: 'Placeholders', tr: false },\n  { type: 'html', label: 'HTML', tr: false },\n  { type: 'double_space', label: 'Double space', tr: true }\n];\nconst out = [];\nlet first = true;\nfor (const it of items) {\n  for (const p of (it.json.projects || [])) {\n    const base = (p.base_language_iso || 'en').toLowerCase();\n    for (const q of QA) {\n      out.push({ json: {\n        project_id: p.project_id,\n        project_name: p.name,\n        base_lang: base,\n        qa_type: q.type,\n        qa_label: q.label,\n        extra: q.tr ? '&include_translations=1' : ''\n      }});\n    }\n    if (first) {\n      out.push({ json: {\n        project_id: p.project_id,\n        project_name: p.name,\n        base_lang: base,\n        qa_type: '__control_invalid__',\n        qa_label: '__CONTROL__',\n        extra: ''\n      }});\n      first = false;\n    }\n  }\n}\nreturn out;\n"
+        }
+      },
+      {
+        "id": "9ff525c6-0f1e-4afa-b073-c988a5025b0a",
+        "name": "Fetch QA Issue Counts",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          660,
+          0
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?filter_qa_issues={{ $json.qa_type }}&limit=500&page=1{{ $json.extra }}",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "options": {
+            "timeout": 30000,
+            "batching": {
+              "batch": {
+                "batchSize": 1,
+                "batchInterval": 220
+              }
+            },
+            "response": {
+              "response": {
+                "fullResponse": true,
+                "neverError": true
+              }
+            }
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "4cb6G6nZVVtP4HIO",
+            "name": "Lokalise access token read-write"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "15a7ace0-a3f7-4457-91d8-9ca8258afa27",
+        "name": "Build Slack Report",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          880,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const LABELS = ['Placeholders', 'HTML', 'Double space (translations)', 'Double space (EN source)'];\nconst reqs = $('Build QA Requests').all();\nconst res = $input.all();\nconst rows = {};\nconst order = [];\nconst failed = [];\nconst truncated = [];\nlet controlStatus = null;\n\nfunction isPseudo(iso) {\n  const s = (iso || '').toLowerCase();\n  return s === 'pst' || s.indexOf('pseudo') >= 0;\n}\n\nfor (let i = 0; i < res.length; i++) {\n  const pi = res[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const metaItem = reqs[idx] || reqs[i];\n  if (!metaItem) { continue; }\n  const meta = metaItem.json;\n\n  const r = res[i].json || {};\n  const hdr = r.headers || {};\n\n  if (meta.qa_label === '__CONTROL__') { controlStatus = r.statusCode; continue; }\n\n  const raw = hdr['x-pagination-total-count'];\n  let total = null;\n  if (r.statusCode === 200 && raw !== undefined && raw !== null) {\n    const n = parseInt(raw, 10);\n    if (!isNaN(n)) { total = n; }\n  }\n  if (total === null) { failed.push(meta.project_name + ' / ' + meta.qa_label); }\n\n  const keys = (r.body && r.body.keys) ? r.body.keys : [];\n  if (total !== null && total > keys.length) { truncated.push(meta.project_name + ' / ' + meta.qa_label); }\n\n  if (!rows[meta.project_name]) { rows[meta.project_name] = {}; order.push(meta.project_name); }\n\n  if (meta.qa_label === 'Double space') {\n    let srcCount = 0;\n    let tgtCount = 0;\n    for (const k of keys) {\n      if (k.is_archived) { continue; }\n      let inSrc = false;\n      let inTgt = false;\n      for (const tr of (k.translations || [])) {\n        const v = tr.translation;\n        if (typeof v !== 'string') { continue; }\n        if (!/ {2,}/.test(v)) { continue; }\n        const iso = (tr.language_iso || '').toLowerCase();\n        if (iso === meta.base_lang) { inSrc = true; }\n        else if (!isPseudo(iso)) { inTgt = true; }\n      }\n      if (inSrc) { srcCount++; }\n      if (inTgt) { tgtCount++; }\n    }\n    rows[meta.project_name]['Double space (translations)'] = (total === null) ? null : tgtCount;\n    rows[meta.project_name]['Double space (EN source)'] = (total === null) ? null : srcCount;\n  } else {\n    let active = 0;\n    for (const k of keys) { if (!k.is_archived) { active++; } }\n    rows[meta.project_name][meta.qa_label] = (total === null) ? null : active;\n  }\n}\n\nconst totals = {};\nfor (const l of LABELS) { totals[l] = 0; }\nconst flagged = [];\nfor (const name of order) {\n  const r = rows[name];\n  let sum = 0;\n  for (const l of LABELS) {\n    const v = r[l];\n    if (typeof v === 'number') { sum += v; totals[l] += v; }\n  }\n  if (sum > 0) { flagged.push({ name: name, r: r, sum: sum }); }\n}\nflagged.sort(function (a, b) {\n  return a.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase().localeCompare(b.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase());\n});\n\nconst totalParts = [];\nfor (const l of LABELS) { totalParts.push(l + ': ' + totals[l]); }\n\nlet text = '*Lokalise nightly QA check* — ' + order.length + ' projects scanned\\n';\ntext += '_Keys flagged per check, across all target languages. Archived keys and the pseudo-language excluded. EN source counted separately._\\n\\n';\ntext += '*Totals*\\n';\nfor (const l of LABELS) { text += '• ' + l + ': ' + totals[l] + '\\n'; }\ntext += '\\n';\n\nif (flagged.length === 0) {\n  text += ':white_check_mark: No issues found in any project.\\n';\n} else {\n  text += '*Projects with issues (' + flagged.length + ' of ' + order.length + ')*\\n';\n  for (const f of flagged) {\n    const parts = [];\n    for (const l of LABELS) {\n      const v = f.r[l];\n      if (typeof v === 'number' && v > 0) { parts.push(l + ': ' + v); }\n    }\n    text += '• *' + f.name + '* — ' + parts.join('  ·  ') + '\\n';\n  }\n  text += '\\n:white_check_mark: ' + (order.length - flagged.length) + ' project(s) clean.\\n';\n}\n\nif (failed.length > 0) { text += '\\n:warning: could not read: ' + failed.join(', '); }\nif (truncated.length > 0) { text += '\\n:warning: over 500 flagged keys, count is a floor: ' + truncated.join(', '); }\nif (controlStatus !== 400) { text += '\\n:rotating_light: control probe returned ' + controlStatus + ' instead of 400 — the QA filter may not be applied, treat these numbers as unverified.'; }\n\nif (text.length > 3800) { text = text.slice(0, 3740) + '\\n… truncated, see full run in n8n.'; }\n\nreturn [{ json: { report: text, project_count: order.length, flagged_count: flagged.length, totals: totals, failures: failed.length, truncated: truncated.length, control_status: controlStatus } }];\n"
+        }
+      },
+      {
+        "id": "66dd5287-add7-469a-84d4-a7f039000805",
+        "name": "Post Report to i18n-team",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.7,
+        "position": [
+          1100,
+          0
+        ],
+        "parameters": {
+          "resource": "message",
+          "operation": "post",
+          "authentication": "accessToken",
+          "select": "channel",
+          "channelId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "C094NS33FN0",
+            "cachedResultName": "i18n-team"
+          },
+          "messageType": "text",
+          "text": "={{ $json.report }}",
+          "otherOptions": {
+            "mrkdwn": true,
+            "includeLinkToWorkflow": false,
+            "unfurl_links": false,
+            "unfurl_media": false
+          }
+        },
+        "credentials": {
+          "slackApi": {
+            "id": "CXa5wwj5tndNAnHG",
+            "name": "i18n assignment bot"
+          }
+        },
+        "executeOnce": true,
+        "webhookId": "cd490134-5e1e-43fb-b514-613e17b7efdd"
+      },
+      {
+        "id": "506e9bb2-9898-4d40-b360-7f504494793d",
+        "name": "Sticky Note b9219a72",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          170,
+          -50
+        ],
+        "parameters": {
+          "content": "## Nightly Lokalise QA check\nRuns at 02:00 Europe/Madrid. **One** Slack summary message to #i18n-team, alphabetical, clean projects suppressed but counted.\n\n**Four entries:** Placeholders, HTML, Double space (translations), Double space (EN source). Double space is split by comparing each translation's `language_iso` against the project's `base_language_iso` — EN source issues belong to the dev teams (they come from the repo and get overwritten on next import), translation issues belong to the language leads. Pseudo-language (`pst`) is excluded from translation counts since its strings are auto-mangled.\n\nScope is deliberately these checks only. Brackets, numbers and email checks are intentionally excluded.\n\n**Archived keys are excluded client-side.** `filter_qa_issues` silently IGNORES `filter_archived` (exclude/include/only all return the same count), so the `x-pagination-total-count` header includes archived keys and does NOT match the Lokalise UI. The workflow fetches keys with limit=500 and counts `is_archived == false`. Do not revert to reading the header.\n\n`include_translations=1` is added ONLY to the double_space request — the other checks don't need the text and it keeps the payload down.\n\nA control request with a deliberately invalid filter value runs once per execution; Lokalise returns 400 for it, proving the QA filter is actually applied and the zeros are real. Throttled to ~4.5 req/s under the Lokalise 10 req/s limit.",
+          "color": 4,
+          "width": 1180,
+          "height": 200
+        }
+      }
+    ],
+    "connections": {
+      "Nightly 02:00 Trigger": {
+        "main": [
+          [
+            {
+              "node": "Fetch Lokalise Projects",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Lokalise Projects": {
+        "main": [
+          [
+            {
+              "node": "Build QA Requests",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build QA Requests": {
+        "main": [
+          [
+            {
+              "node": "Fetch QA Issue Counts",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch QA Issue Counts": {
+        "main": [
+          [
+            {
+              "node": "Build Slack Report",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Slack Report": {
+        "main": [
+          [
+            {
+              "node": "Post Report to i18n-team",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Maria Sica (via MCP)",
+    "name": "Update canvas note for EN source split",
+    "description": "Updated nodes: Sticky Note b9219a72",
+    "autosaved": false,
+    "createdAt": "2026-08-19T16:30:18.785Z",
+    "updatedAt": "2026-08-19T16:30:18.785Z",
+    "workflowPublishHistory": [
+      {
+        "id": 1487,
+        "workflowId": "Sbu38L5fKQnjnGUf",
+        "versionId": "ff4bf755-24b5-4540-b0af-2beefd09203e",
+        "event": "activated",
+        "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
+        "createdAt": "2026-08-19T16:30:55.110Z"
+      }
+    ]
+  }
+}
