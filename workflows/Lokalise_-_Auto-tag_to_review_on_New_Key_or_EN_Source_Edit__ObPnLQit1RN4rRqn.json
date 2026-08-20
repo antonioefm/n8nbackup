@@ -1,0 +1,697 @@
+{
+  "id": "ObPnLQit1RN4rRqn",
+  "name": "Lokalise - Auto-tag to_review on New Key or EN Source Edit",
+  "description": "Webhook-driven: on a new Lokalise key or an EN source-language edit in any project, adds the to_review tag to that key (merge_tags, skipped if already tagged) and flags its existing target translations as unverified.",
+  "active": true,
+  "activeVersionId": "d15f82aa-8091-48ce-a39f-96edf7b0fe07",
+  "createdAt": "2026-08-19T11:09:42.896Z",
+  "updatedAt": "2026-08-19T11:19:33.257Z",
+  "isArchived": false,
+  "versionId": "d15f82aa-8091-48ce-a39f-96edf7b0fe07",
+  "versionCounter": 8,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lokalise-to-review",
+        "options": {}
+      },
+      "id": "466b4209-221f-4dfa-8787-e37850a4c19f",
+      "name": "Lokalise Event Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "c5010523-d18d-4cdd-95b4-4ac4684c990f"
+    },
+    {
+      "parameters": {
+        "jsCode": "const SOURCE_PREFIX = 'en';\nconst isSource = (iso) => String(iso || '').toLowerCase().indexOf(SOURCE_PREFIX) === 0;\nconst projectRef = (p) => {\n  const id = p && p.id ? String(p.id) : '';\n  const br = p && p.branch ? String(p.branch) : '';\n  return (br && br !== 'master') ? id + ':' + br : id;\n};\nconst readName = (n) => (typeof n === 'string') ? n : ((n && (n.web || n.other || n.ios || n.android)) || '');\nconst out = [];\nfor (const item of $input.all()) {\n  const b = (item.json && item.json.body) ? item.json.body : (item.json || {});\n  const ev = String(b.event || '');\n  const project = projectRef(b.project);\n  if (!project) continue;\n  const push = (keyId, name, tags, reason) => {\n    if (!keyId) return;\n    out.push({ json: {\n      projectId: project,\n      projectName: (b.project && b.project.name) || '',\n      branch: (b.project && b.project.branch) || '',\n      event: ev,\n      action: b.action || '',\n      keyId: String(keyId),\n      keyNameHint: name || '',\n      reason: reason,\n      actor: (b.user && b.user.email) || ''\n    } });\n  };\n  if (ev === 'project.key.added') {\n    push(b.key && b.key.id, readName(b.key && b.key.name), b.key && b.key.tags, 'new key');\n  } else if (ev === 'project.keys.added') {\n    for (const k of (b.keys || [])) push(k.id, readName(k.name), k.tags, 'new key');\n  } else if (ev === 'project.translation.updated') {\n    const iso = b.language && b.language.iso;\n    const t = b.translation || {};\n    if (isSource(iso) && t.value !== t.previous_value) push(b.key && b.key.id, readName(b.key && b.key.name), null, 'source edited (' + iso + ')');\n  } else if (ev === 'project.translations.updated') {\n    for (const t of (b.translations || [])) {\n      const iso = t.language && t.language.iso;\n      if (isSource(iso) && t.value !== t.previous_value) push(t.key && t.key.id, readName(t.key && t.key.name), null, 'source edited (' + iso + ')');\n    }\n  }\n}\nconst seen = {};\nconst deduped = [];\nfor (const o of out) {\n  const sig = o.json.projectId + '|' + o.json.keyId;\n  if (seen[sig]) continue;\n  seen[sig] = true;\n  deduped.push(o);\n}\nreturn deduped;"
+      },
+      "id": "066da6c5-6b9e-4840-a626-8c7f09a74783",
+      "name": "Normalize Lokalise Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.projectId }}/keys/{{ $json.keyId }}?include_translations=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 4
+            }
+          }
+        }
+      },
+      "id": "e2d62133-5321-414c-9ae3-1ae5e776d8ab",
+      "name": "Get Key + Translations",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const TAG = 'to_review';\nconst SOURCE_PREFIX = 'en';\nconst meta = $('Normalize Lokalise Events').all();\nconst rows = $input.all();\nconst readName = (n) => (typeof n === 'string') ? n : ((n && (n.web || n.other || n.ios || n.android)) || '');\nconst isEmptyValue = (v) => {\n  if (v === null || v === undefined || v === '') return true;\n  if (typeof v === 'object') return Object.keys(v).every((k) => !v[k]);\n  return false;\n};\nconst out = [];\nfor (let i = 0; i < rows.length; i++) {\n  const m = (meta[i] && meta[i].json) || {};\n  const j = rows[i].json || {};\n  if (j.error) continue;\n  const k = j.key || j;\n  if (!k || !k.key_id) continue;\n  const tags = Array.isArray(k.tags) ? k.tags : [];\n  const targets = [];\n  for (const t of (k.translations || [])) {\n    const iso = String(t.language_iso || '').toLowerCase();\n    if (iso.indexOf(SOURCE_PREFIX) === 0) continue;\n    if (isEmptyValue(t.translation)) continue;\n    if (t.is_unverified === true) continue;\n    targets.push({ translationId: t.translation_id, languageIso: t.language_iso, translation: t.translation });\n  }\n  out.push({ json: {\n    projectId: m.projectId,\n    projectName: m.projectName || '',\n    keyId: String(k.key_id),\n    keyName: readName(k.key_name) || m.keyNameHint || '',\n    event: m.event || '',\n    reason: m.reason || '',\n    actor: m.actor || '',\n    tag: TAG,\n    currentTags: tags,\n    alreadyTagged: tags.indexOf(TAG) !== -1,\n    targets: targets,\n    targetCount: targets.length\n  } });\n}\nreturn out;"
+      },
+      "id": "f70490ee-dff6-4b2d-9c10-e3d49ae25132",
+      "name": "Decide Tag Actions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "not-tagged",
+              "leftValue": "={{ $json.alreadyTagged }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4a49cd88-a358-4a95-8193-6d83a4a2139c",
+      "name": "Skip Keys Already Tagged",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        896,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.projectId }}/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"keys\": [ { \"key_id\": Number($json.keyId), \"tags\": [ $json.tag ], \"merge_tags\": true } ] } }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 4
+            }
+          }
+        }
+      },
+      "id": "67c77567-98fa-49a9-b4ee-d78c69b3bb1a",
+      "name": "Add to_review Tag",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const kept = $('Skip Keys Already Tagged').all();\nconst out = [];\nfor (const it of kept) {\n  const j = it.json || {};\n  for (const t of (j.targets || [])) {\n    if (!t.translationId) continue;\n    out.push({ json: {\n      projectId: j.projectId,\n      keyId: j.keyId,\n      keyName: j.keyName,\n      translationId: t.translationId,\n      languageIso: t.languageIso,\n      translation: t.translation\n    } });\n  }\n}\nreturn out;"
+      },
+      "id": "2e40dc38-63f6-472b-8a8c-91df4a490bfb",
+      "name": "List Target Translations",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.projectId }}/translations/{{ $json.translationId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"translation\": $json.translation, \"is_unverified\": true } }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 4
+            }
+          }
+        }
+      },
+      "id": "d0769671-600e-4325-8fa2-01acee49dc22",
+      "name": "Mark Translation Unverified",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1568,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "content": "## Setup - register the webhook per project\n\nEasiest way: run the companion workflow **Lokalise - Register to_review Webhook in All Projects**. It does every project at once and is safe to re-run.\n\nManual way, per project: More > Settings > Webhooks > Add webhook\n\nURL: https://efuturemedia.app.n8n.cloud/webhook/lokalise-to-review\n\nEvents to tick (only these two exist as subscriptions):\n- New key added (project.key.added)\n- Translation updated (project.translation.updated)\n\nLokalise sends the bulk variants (project.keys.added, project.translations.updated) under those same two subscriptions, and this workflow handles all four payload shapes.\n\nThe project ID is read out of each payload, so one URL serves every project.",
+        "height": 420,
+        "width": 420,
+        "color": 4
+      },
+      "id": "e81f1060-cdd7-4999-89fd-6b646b16b453",
+      "name": "Sticky Note a100bdd1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        -480
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## What counts as needs review\n\n1. Any newly added key.\n2. Any translation update where the language ISO starts with en and the value actually changed (the EN source edit).\n\nTarget-language edits are ignored, so the unverified writes this workflow makes cannot re-trigger it.\n\nTo change the tag name or the source-language prefix, edit TAG / SOURCE_PREFIX at the top of Normalize Lokalise Events and Decide Tag Actions.",
+        "height": 420,
+        "width": 460,
+        "color": 5
+      },
+      "id": "118b346c-7aae-495e-ad40-0f747e24a7b2",
+      "name": "Sticky Note 5768b47d",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        400,
+        -480
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Writes back to Lokalise\n\n- to_review is added with merge_tags: true, so existing tags survive.\n- Keys that already carry to_review are filtered out, so nothing is re-tagged.\n- Every non-source translation that has content and is not already unverified gets the Unverified flag, which is what puts it back in the linguists' review queue.\n\nIf you ever want tag-only behaviour, disconnect List Target Translations.",
+        "height": 420,
+        "width": 460,
+        "color": 3
+      },
+      "id": "39ff102d-5bda-4822-8e32-b19c052baf66",
+      "name": "Sticky Note ce5e9c62",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        900,
+        -480
+      ]
+    }
+  ],
+  "connections": {
+    "Lokalise Event Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Lokalise Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Lokalise Events": {
+      "main": [
+        [
+          {
+            "node": "Get Key + Translations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Key + Translations": {
+      "main": [
+        [
+          {
+            "node": "Decide Tag Actions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide Tag Actions": {
+      "main": [
+        [
+          {
+            "node": "Skip Keys Already Tagged",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Keys Already Tagged": {
+      "main": [
+        [
+          {
+            "node": "Add to_review Tag",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add to_review Tag": {
+      "main": [
+        [
+          {
+            "node": "List Target Translations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Target Translations": {
+      "main": [
+        [
+          {
+            "node": "Mark Translation Unverified",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "pinData": {},
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "ObPnLQit1RN4rRqn",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-19T11:09:42.899Z",
+      "updatedAt": "2026-08-19T11:09:42.899Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "d15f82aa-8091-48ce-a39f-96edf7b0fe07",
+    "workflowId": "ObPnLQit1RN4rRqn",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "lokalise-to-review",
+          "options": {}
+        },
+        "id": "466b4209-221f-4dfa-8787-e37850a4c19f",
+        "name": "Lokalise Event Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          0,
+          0
+        ],
+        "webhookId": "c5010523-d18d-4cdd-95b4-4ac4684c990f"
+      },
+      {
+        "parameters": {
+          "jsCode": "const SOURCE_PREFIX = 'en';\nconst isSource = (iso) => String(iso || '').toLowerCase().indexOf(SOURCE_PREFIX) === 0;\nconst projectRef = (p) => {\n  const id = p && p.id ? String(p.id) : '';\n  const br = p && p.branch ? String(p.branch) : '';\n  return (br && br !== 'master') ? id + ':' + br : id;\n};\nconst readName = (n) => (typeof n === 'string') ? n : ((n && (n.web || n.other || n.ios || n.android)) || '');\nconst out = [];\nfor (const item of $input.all()) {\n  const b = (item.json && item.json.body) ? item.json.body : (item.json || {});\n  const ev = String(b.event || '');\n  const project = projectRef(b.project);\n  if (!project) continue;\n  const push = (keyId, name, tags, reason) => {\n    if (!keyId) return;\n    out.push({ json: {\n      projectId: project,\n      projectName: (b.project && b.project.name) || '',\n      branch: (b.project && b.project.branch) || '',\n      event: ev,\n      action: b.action || '',\n      keyId: String(keyId),\n      keyNameHint: name || '',\n      reason: reason,\n      actor: (b.user && b.user.email) || ''\n    } });\n  };\n  if (ev === 'project.key.added') {\n    push(b.key && b.key.id, readName(b.key && b.key.name), b.key && b.key.tags, 'new key');\n  } else if (ev === 'project.keys.added') {\n    for (const k of (b.keys || [])) push(k.id, readName(k.name), k.tags, 'new key');\n  } else if (ev === 'project.translation.updated') {\n    const iso = b.language && b.language.iso;\n    const t = b.translation || {};\n    if (isSource(iso) && t.value !== t.previous_value) push(b.key && b.key.id, readName(b.key && b.key.name), null, 'source edited (' + iso + ')');\n  } else if (ev === 'project.translations.updated') {\n    for (const t of (b.translations || [])) {\n      const iso = t.language && t.language.iso;\n      if (isSource(iso) && t.value !== t.previous_value) push(t.key && t.key.id, readName(t.key && t.key.name), null, 'source edited (' + iso + ')');\n    }\n  }\n}\nconst seen = {};\nconst deduped = [];\nfor (const o of out) {\n  const sig = o.json.projectId + '|' + o.json.keyId;\n  if (seen[sig]) continue;\n  seen[sig] = true;\n  deduped.push(o);\n}\nreturn deduped;"
+        },
+        "id": "066da6c5-6b9e-4840-a626-8c7f09a74783",
+        "name": "Normalize Lokalise Events",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          224,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "url": "=https://api.lokalise.com/api2/projects/{{ $json.projectId }}/keys/{{ $json.keyId }}?include_translations=1",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "options": {
+            "batching": {
+              "batch": {
+                "batchSize": 4
+              }
+            }
+          }
+        },
+        "id": "e2d62133-5321-414c-9ae3-1ae5e776d8ab",
+        "name": "Get Key + Translations",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          448,
+          0
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "4cb6G6nZVVtP4HIO",
+            "name": "Lokalise access token read-write"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const TAG = 'to_review';\nconst SOURCE_PREFIX = 'en';\nconst meta = $('Normalize Lokalise Events').all();\nconst rows = $input.all();\nconst readName = (n) => (typeof n === 'string') ? n : ((n && (n.web || n.other || n.ios || n.android)) || '');\nconst isEmptyValue = (v) => {\n  if (v === null || v === undefined || v === '') return true;\n  if (typeof v === 'object') return Object.keys(v).every((k) => !v[k]);\n  return false;\n};\nconst out = [];\nfor (let i = 0; i < rows.length; i++) {\n  const m = (meta[i] && meta[i].json) || {};\n  const j = rows[i].json || {};\n  if (j.error) continue;\n  const k = j.key || j;\n  if (!k || !k.key_id) continue;\n  const tags = Array.isArray(k.tags) ? k.tags : [];\n  const targets = [];\n  for (const t of (k.translations || [])) {\n    const iso = String(t.language_iso || '').toLowerCase();\n    if (iso.indexOf(SOURCE_PREFIX) === 0) continue;\n    if (isEmptyValue(t.translation)) continue;\n    if (t.is_unverified === true) continue;\n    targets.push({ translationId: t.translation_id, languageIso: t.language_iso, translation: t.translation });\n  }\n  out.push({ json: {\n    projectId: m.projectId,\n    projectName: m.projectName || '',\n    keyId: String(k.key_id),\n    keyName: readName(k.key_name) || m.keyNameHint || '',\n    event: m.event || '',\n    reason: m.reason || '',\n    actor: m.actor || '',\n    tag: TAG,\n    currentTags: tags,\n    alreadyTagged: tags.indexOf(TAG) !== -1,\n    targets: targets,\n    targetCount: targets.length\n  } });\n}\nreturn out;"
+        },
+        "id": "f70490ee-dff6-4b2d-9c10-e3d49ae25132",
+        "name": "Decide Tag Actions",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          672,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "not-tagged",
+                "leftValue": "={{ $json.alreadyTagged }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "false",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "4a49cd88-a358-4a95-8193-6d83a4a2139c",
+        "name": "Skip Keys Already Tagged",
+        "type": "n8n-nodes-base.filter",
+        "typeVersion": 2.3,
+        "position": [
+          896,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PUT",
+          "url": "=https://api.lokalise.com/api2/projects/{{ $json.projectId }}/keys",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ { \"keys\": [ { \"key_id\": Number($json.keyId), \"tags\": [ $json.tag ], \"merge_tags\": true } ] } }}",
+          "options": {
+            "batching": {
+              "batch": {
+                "batchSize": 4
+              }
+            }
+          }
+        },
+        "id": "67c77567-98fa-49a9-b4ee-d78c69b3bb1a",
+        "name": "Add to_review Tag",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          1120,
+          0
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "4cb6G6nZVVtP4HIO",
+            "name": "Lokalise access token read-write"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const kept = $('Skip Keys Already Tagged').all();\nconst out = [];\nfor (const it of kept) {\n  const j = it.json || {};\n  for (const t of (j.targets || [])) {\n    if (!t.translationId) continue;\n    out.push({ json: {\n      projectId: j.projectId,\n      keyId: j.keyId,\n      keyName: j.keyName,\n      translationId: t.translationId,\n      languageIso: t.languageIso,\n      translation: t.translation\n    } });\n  }\n}\nreturn out;"
+        },
+        "id": "2e40dc38-63f6-472b-8a8c-91df4a490bfb",
+        "name": "List Target Translations",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1344,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PUT",
+          "url": "=https://api.lokalise.com/api2/projects/{{ $json.projectId }}/translations/{{ $json.translationId }}",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ { \"translation\": $json.translation, \"is_unverified\": true } }}",
+          "options": {
+            "batching": {
+              "batch": {
+                "batchSize": 4
+              }
+            }
+          }
+        },
+        "id": "d0769671-600e-4325-8fa2-01acee49dc22",
+        "name": "Mark Translation Unverified",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          1568,
+          0
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "4cb6G6nZVVtP4HIO",
+            "name": "Lokalise access token read-write"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "content": "## Setup - register the webhook per project\n\nEasiest way: run the companion workflow **Lokalise - Register to_review Webhook in All Projects**. It does every project at once and is safe to re-run.\n\nManual way, per project: More > Settings > Webhooks > Add webhook\n\nURL: https://efuturemedia.app.n8n.cloud/webhook/lokalise-to-review\n\nEvents to tick (only these two exist as subscriptions):\n- New key added (project.key.added)\n- Translation updated (project.translation.updated)\n\nLokalise sends the bulk variants (project.keys.added, project.translations.updated) under those same two subscriptions, and this workflow handles all four payload shapes.\n\nThe project ID is read out of each payload, so one URL serves every project.",
+          "height": 420,
+          "width": 420,
+          "color": 4
+        },
+        "id": "e81f1060-cdd7-4999-89fd-6b646b16b453",
+        "name": "Sticky Note a100bdd1",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -60,
+          -480
+        ]
+      },
+      {
+        "parameters": {
+          "content": "## What counts as needs review\n\n1. Any newly added key.\n2. Any translation update where the language ISO starts with en and the value actually changed (the EN source edit).\n\nTarget-language edits are ignored, so the unverified writes this workflow makes cannot re-trigger it.\n\nTo change the tag name or the source-language prefix, edit TAG / SOURCE_PREFIX at the top of Normalize Lokalise Events and Decide Tag Actions.",
+          "height": 420,
+          "width": 460,
+          "color": 5
+        },
+        "id": "118b346c-7aae-495e-ad40-0f747e24a7b2",
+        "name": "Sticky Note 5768b47d",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          400,
+          -480
+        ]
+      },
+      {
+        "parameters": {
+          "content": "## Writes back to Lokalise\n\n- to_review is added with merge_tags: true, so existing tags survive.\n- Keys that already carry to_review are filtered out, so nothing is re-tagged.\n- Every non-source translation that has content and is not already unverified gets the Unverified flag, which is what puts it back in the linguists' review queue.\n\nIf you ever want tag-only behaviour, disconnect List Target Translations.",
+          "height": 420,
+          "width": 460,
+          "color": 3
+        },
+        "id": "39ff102d-5bda-4822-8e32-b19c052baf66",
+        "name": "Sticky Note ce5e9c62",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          900,
+          -480
+        ]
+      }
+    ],
+    "connections": {
+      "Lokalise Event Webhook": {
+        "main": [
+          [
+            {
+              "node": "Normalize Lokalise Events",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalize Lokalise Events": {
+        "main": [
+          [
+            {
+              "node": "Get Key + Translations",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Key + Translations": {
+        "main": [
+          [
+            {
+              "node": "Decide Tag Actions",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Decide Tag Actions": {
+        "main": [
+          [
+            {
+              "node": "Skip Keys Already Tagged",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Skip Keys Already Tagged": {
+        "main": [
+          [
+            {
+              "node": "Add to_review Tag",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Add to_review Tag": {
+        "main": [
+          [
+            {
+              "node": "List Target Translations",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "List Target Translations": {
+        "main": [
+          [
+            {
+              "node": "Mark Translation Unverified",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Maria Sica (via MCP)",
+    "name": "Correct webhook setup note and tidy sticky layout",
+    "description": "Lokalise only exposes project.key.added and project.translation.updated as subscribable events (the bulk variants arrive under the same subscriptions), so the setup note now lists just those two and points at the companion registration workflow. Stickies moved above the node row so they no longer overlap each other.",
+    "autosaved": false,
+    "createdAt": "2026-08-19T11:19:33.258Z",
+    "updatedAt": "2026-08-19T11:19:33.258Z",
+    "workflowPublishHistory": [
+      {
+        "id": 1462,
+        "workflowId": "ObPnLQit1RN4rRqn",
+        "versionId": "d15f82aa-8091-48ce-a39f-96edf7b0fe07",
+        "event": "activated",
+        "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
+        "createdAt": "2026-08-19T11:19:48.722Z"
+      }
+    ]
+  }
+}
