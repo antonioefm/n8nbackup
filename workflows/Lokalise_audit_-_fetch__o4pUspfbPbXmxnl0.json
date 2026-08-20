@@ -1,0 +1,183 @@
+{
+  "id": "o4pUspfbPbXmxnl0",
+  "name": "Lokalise audit - fetch",
+  "description": "Reusable scratch workflow for the lokalise-linguistic-audit skill. Config node selects mode (projects | languages | keys); Fetch node paginates the Lokalise API; Shape node returns compact rows.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-19T14:00:19.164Z",
+  "updatedAt": "2026-08-19T18:36:34.129Z",
+  "isArchived": false,
+  "versionId": "76ab411c-6257-4304-9407-c34a512ade4a",
+  "versionCounter": 20,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "2943804e-02ea-43b0-916e-0ca0433426f9",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "ca118138-61b6-4dea-aced-833999ff2c53",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const CFG = {\n  mode: 'keys',\n  project_id: '852017176a3ce11141ecd5.60405885',\n  langs: [\"el\"],\n  qa_check: 'double_space',\n  lang_ids: '761',\n  filter_tags: '',\n  filter_untranslated: 0\n};\n\nconst BASE = 'https://api.lokalise.com/api2';\n\nif (CFG.mode === 'projects') {\n  return [{ json: { mode: 'projects', langs: CFG.langs, url: BASE + '/projects?limit=100' } }];\n}\nif (CFG.mode === 'languages') {\n  return [{ json: { mode: 'languages', langs: CFG.langs, url: BASE + '/projects/' + CFG.project_id + '/languages?limit=500' } }];\n}\nlet qs = 'include_translations=1&disable_references=1&limit=500&pagination=cursor';\nif (CFG.filter_tags) { qs += '&filter_tags=' + encodeURIComponent(CFG.filter_tags); }\nif (CFG.filter_untranslated) { qs += '&filter_untranslated=1'; }\nif (CFG.qa_check) { qs += '&filter_qa_issues=' + encodeURIComponent(CFG.qa_check); }\nif (CFG.lang_ids) { qs += '&filter_translation_lang_ids=' + encodeURIComponent(CFG.lang_ids); }\nreturn [{ json: { mode: 'keys', langs: CFG.langs, url: BASE + '/projects/' + CFG.project_id + '/keys?' + qs } }];\n"
+      }
+    },
+    {
+      "id": "e4bf48d2-97a5-433c-8300-9e9136fb5abc",
+      "name": "Fetch Lokalise",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 200,
+              "requestInterval": 250
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "2aa6c387-9b97-460f-9afb-6e7c76f145da",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const cfg = $('Config').first().json;\nconst mode = cfg.mode;\nconst want = new Set(cfg.langs || []);\nconst pages = $input.all();\nconst errors = [];\nconst bodies = [];\n\nfor (const p of pages) {\n  const r = p.json || {};\n  const status = r.statusCode;\n  const body = r.body !== undefined ? r.body : r;\n  if (status !== undefined && status !== 200) {\n    errors.push({ status: status, body: typeof body === 'string' ? body.slice(0, 300) : JSON.stringify(body).slice(0, 300) });\n    continue;\n  }\n  bodies.push(body);\n}\n\nif (mode === 'projects') {\n  const out = [];\n  for (const b of bodies) {\n    for (const p of (b.projects || [])) {\n      out.push({ id: p.project_id, name: p.name, keys: (p.statistics || {}).keys_total || 0, base: p.base_language_iso });\n    }\n  }\n  out.sort(function (a, b) { return a.name.toLowerCase().localeCompare(b.name.toLowerCase()); });\n  return [{ json: { mode: mode, count: out.length, projects: out, errors: errors } }];\n}\n\nif (mode === 'languages') {\n  const out = [];\n  for (const b of bodies) {\n    for (const l of (b.languages || [])) { out.push({ id: l.lang_id, iso: l.lang_iso, name: l.lang_name }); }\n  }\n  return [{ json: { mode: mode, count: out.length, languages: out, errors: errors } }];\n}\n\nconst rows = [];\nlet total = 0;\nlet sourceMissing = 0;\nconst seen = {};\nfor (const b of bodies) {\n  for (const k of (b.keys || [])) {\n    total++;\n    const plat = k.key_name || {};\n    const name = plat.web || plat.ios || plat.android || plat.other || '';\n    const t = {};\n    const m = {};\n    let en = '';\n    for (const tr of (k.translations || [])) {\n      const iso = tr.language_iso;\n      if (iso !== 'en') { seen[iso] = 1; }\n      const val = tr.translation;\n      const s = (typeof val === 'string') ? val : JSON.stringify(val);\n      if (iso === 'en') { en = s; continue; }\n      if (want.size && !want.has(iso)) { continue; }\n      if (!s || !s.trim()) { continue; }\n      t[iso] = s;\n      m[iso] = [tr.modified_at || '', tr.is_reviewed ? 1 : 0, tr.is_unverified ? 1 : 0].join('|');\n    }\n    // A QA/language-filtered request returns only that language, so `en` is\n    // absent. Dropping those rows made every QA run look clean. Keep them and\n    // join the English source locally from the unfiltered fetch.\n    if (!en || !en.trim()) { sourceMissing++; }\n    if (Object.keys(t).length === 0) { continue; }\n    rows.push({ k: name, en: en, t: t, m: m });\n  }\n}\nreturn [{ json: { mode: 'keys', keys_seen: total, rows_kept: rows.length, source_missing: sourceMissing, langs_requested: cfg.langs || [], langs_in_project: Object.keys(seen).sort(), errors: errors, rows: rows } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lokalise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lokalise": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "o4pUspfbPbXmxnl0",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-19T14:00:19.167Z",
+      "updatedAt": "2026-08-19T14:00:19.167Z"
+    }
+  ],
+  "activeVersion": null
+}
