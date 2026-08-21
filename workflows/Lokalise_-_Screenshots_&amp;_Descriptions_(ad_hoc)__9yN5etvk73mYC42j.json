@@ -1,0 +1,183 @@
+{
+  "id": "9yN5etvk73mYC42j",
+  "name": "Lokalise - Screenshots &amp; Descriptions (ad hoc)",
+  "description": "Scratch driver for linking Figma screenshots to Lokalise keys and writing key descriptions. Config node holds the phase; Fetch node calls the Lokalise API; Shape returns compact rows.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-20T11:44:46.264Z",
+  "updatedAt": "2026-08-20T11:58:21.435Z",
+  "isArchived": false,
+  "versionId": "136b4b27-a7e4-441f-8274-35f438bae287",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "ef63593a-85e3-43f2-977a-1bead3c97dbf",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "bcfae636-14de-48ff-b3ae-9ba5f0de674a",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const PROJECT = '225008626a33e62b328c63.04676982';\nconst BASE = 'https://api.lokalise.com/api2';\nconst url = BASE + '/projects/' + PROJECT + '/keys?include_translations=1&include_screenshots=1&disable_references=1&limit=500&pagination=cursor';\nreturn [{ json: { mode: 'keys', project: PROJECT, url: url } }];\n"
+      }
+    },
+    {
+      "id": "99ede4f7-119c-4d69-8a6e-2d449e5d128c",
+      "name": "Fetch Lokalise",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 50,
+              "requestInterval": 250
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "e08ea102-be3d-4436-a3c5-a30ea4cee8aa",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const pages = $input.all();\nconst errors = [];\nconst rows = [];\nlet total = 0;\nfor (const p of pages) {\n  const r = p.json || {};\n  const status = r.statusCode;\n  const body = r.body !== undefined ? r.body : r;\n  if (status !== undefined && status !== 200) { errors.push({ status: status, body: JSON.stringify(body).slice(0, 300) }); continue; }\n  for (const k of (body.keys || [])) {\n    total++;\n    const kn = k.key_name || {};\n    const name = kn.web || kn.other || kn.ios || kn.android || '';\n    const shots = (k.screenshots || []).map(function (s) { return s.title; });\n    rows.push({ id: k.key_id, n: name, d: k.description || '', s: shots.length, st: shots.join(' | ') });\n  }\n}\nconst noDesc = rows.filter(function (x) { return !x.d.trim(); });\nconst over = rows.filter(function (x) { return x.s > 2; });\nreturn [{ json: { count: total, with_desc: rows.length - noDesc.length, no_desc: noDesc.map(function (x) { return x.n; }), with_shot: rows.filter(function (x) { return x.s > 0; }).length, over_cap: over.map(function (x) { return x.n + ' (' + x.s + ')'; }), errors: errors, rows: rows } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lokalise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lokalise": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "9yN5etvk73mYC42j",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-20T11:44:46.266Z",
+      "updatedAt": "2026-08-20T11:44:46.266Z"
+    }
+  ],
+  "activeVersion": null
+}
