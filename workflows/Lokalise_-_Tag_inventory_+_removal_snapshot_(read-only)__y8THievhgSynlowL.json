@@ -1,0 +1,219 @@
+{
+  "id": "y8THievhgSynlowL",
+  "name": "Lokalise - Tag inventory + removal snapshot (read-only)",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-20T10:37:35.255Z",
+  "updatedAt": "2026-08-20T10:37:35.255Z",
+  "isArchived": false,
+  "versionId": "f9a6910d-1869-47a5-b25e-6631a5a68052",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "e7e1190f-88c3-433b-b9a9-949f66c0eacd",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "8f08a7bd-7ec4-4b4b-a4c0-0cf9a7a7097b",
+      "name": "Fetch Lokalise Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=500&page=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "0299f9c5-0fc3-4505-81d9-6d112f4a783f",
+      "name": "Flatten Projects",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const out = [];\nfor (const it of items) {\n  for (const p of (it.json.projects || [])) {\n    out.push({ json: { project_id: p.project_id, project_name: p.name } });\n  }\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "3a1aa06c-0cfe-4ff8-90b9-4b6d55accf5f",
+      "name": "Fetch All Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?limit=500&pagination=cursor",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 220
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 200,
+              "requestInterval": 220
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "597ba7a7-e3c0-4a26-8e5f-d653a4f2023f",
+      "name": "Scan Tags",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const reqs = $('Flatten Projects').all();\nconst res = $input.all();\nconst NUM = /^[0-9]+$/;\nconst TARGET = 'z_human';\nconst inv = {};\nconst snap = [];\nconst perProject = {};\nconst failed = [];\nlet totalKeys = 0;\nlet unpaired = 0;\n\nfor (let i = 0; i < res.length; i++) {\n  const pi = res[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  else { unpaired++; }\n  const metaItem = reqs[idx] || reqs[i];\n  if (!metaItem) { continue; }\n  const meta = metaItem.json;\n  const r = res[i].json || {};\n  if (r.statusCode !== 200) { failed.push(meta.project_name + ' (status ' + r.statusCode + ')'); continue; }\n  if (!perProject[meta.project_name]) { perProject[meta.project_name] = { project_id: meta.project_id, keys_seen: 0, z_human: 0, numeric_keys: 0, numeric_tags: {} }; }\n  const pp = perProject[meta.project_name];\n  const keys = (r.body && r.body.keys) ? r.body.keys : [];\n  for (const k of keys) {\n    totalKeys++;\n    pp.keys_seen++;\n    const tags = k.tags || [];\n    let hasZ = false;\n    const numHits = [];\n    for (const t of tags) {\n      if (!inv[t]) { inv[t] = { keys: 0, projects: {} }; }\n      inv[t].keys++;\n      inv[t].projects[meta.project_name] = (inv[t].projects[meta.project_name] || 0) + 1;\n      if (t === TARGET) { hasZ = true; }\n      else if (NUM.test(t)) { numHits.push(t); }\n    }\n    if (hasZ) { pp.z_human++; }\n    if (numHits.length > 0) {\n      pp.numeric_keys++;\n      for (const t of numHits) { pp.numeric_tags[t] = (pp.numeric_tags[t] || 0) + 1; }\n    }\n    if (hasZ || numHits.length > 0) {\n      const after = [];\n      for (const t of tags) { if (t !== TARGET && !NUM.test(t)) { after.push(t); } }\n      const removed = [];\n      if (hasZ) { removed.push(TARGET); }\n      for (const t of numHits) { removed.push(t); }\n      snap.push({ project_id: meta.project_id, project_name: meta.project_name, key_id: k.key_id, is_archived: !!k.is_archived, tags_before: tags, tags_after: after, removed: removed });\n    }\n  }\n}\n\nconst numericTags = {};\nconst mixedTags = [];\nfor (const t in inv) {\n  if (NUM.test(t)) { numericTags[t] = inv[t]; }\n  else if (/[0-9]/.test(t)) { mixedTags.push(t); }\n}\n\nreturn [\n  { json: { kind: 'summary', total_keys: totalKeys, projects_scanned: Object.keys(perProject).length, distinct_tags: Object.keys(inv).length, unpaired_pages: unpaired, z_human_inventory: inv[TARGET] || null, numeric_tags: numericTags, mixed_digit_tags_kept: mixedTags, affected_keys: snap.length, per_project: perProject, failed: failed } },\n  { json: { kind: 'snapshot', rows: snap } }\n];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lokalise Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lokalise Projects": {
+      "main": [
+        [
+          {
+            "node": "Flatten Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flatten Projects": {
+      "main": [
+        [
+          {
+            "node": "Fetch All Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch All Keys": {
+      "main": [
+        [
+          {
+            "node": "Scan Tags",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "y8THievhgSynlowL",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-20T10:37:35.257Z",
+      "updatedAt": "2026-08-20T10:37:35.257Z"
+    }
+  ],
+  "activeVersion": null
+}
