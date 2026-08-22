@@ -3,12 +3,12 @@
   "name": "Lokalise - Auto-tag to_review on New Key or EN Source Edit",
   "description": "Webhook-driven: on a new Lokalise key or an EN source-language edit in any project, adds the to_review tag to that key (merge_tags, skipped if already tagged) and flags its existing target translations as unverified.",
   "active": true,
-  "activeVersionId": "d15f82aa-8091-48ce-a39f-96edf7b0fe07",
+  "activeVersionId": "1255ada3-b9dc-4df6-9abd-11646ba96296",
   "createdAt": "2026-08-19T11:09:42.896Z",
-  "updatedAt": "2026-08-19T11:19:33.257Z",
+  "updatedAt": "2026-08-21T14:12:54.587Z",
   "isArchived": false,
-  "versionId": "d15f82aa-8091-48ce-a39f-96edf7b0fe07",
-  "versionCounter": 8,
+  "versionId": "1255ada3-b9dc-4df6-9abd-11646ba96296",
+  "versionCounter": 10,
   "sourceWorkflowId": null,
   "triggerCount": 1,
   "nodes": [
@@ -243,6 +243,238 @@
         900,
         -480
       ]
+    },
+    {
+      "id": "3d56aa92-67d1-40e2-8ff6-b78e7ceb0481",
+      "name": "Find Sibling Screens",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        300
+      ],
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "GET",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchInterval": 300,
+              "batchSize": 1
+            }
+          },
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        },
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.projectId }}/keys?limit=500&page=1&include_screenshots=1&filter_tags=has_screenshot"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "ddb4c6be-c9d6-41df-90fa-7b509fec0dac",
+      "name": "Pick Best Screen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const src = $('Decide Tag Actions').all();\nconst details = $('Get Key + Translations').all();\nconst rows = $input.all();\nconst infoByKey = {};\nfor (const d of details) {\n  const j = d.json || {};\n  const k = j.key || j;\n  if (k && k.key_id) { infoByKey[String(k.key_id)] = { description: k.description || '', shots: (k.screenshots || []).length }; }\n}\nfunction segs(n) { return String(n || '').split('::'); }\nfunction readName(n) {\n  if (typeof n === 'string') { return n; }\n  return (n && (n.web || n.other || n.ios || n.android)) || '';\n}\nfunction screenTag(title) {\n  let t = String(title || '').replace(/^[DM]\\s*-\\s*/, '').replace(/^Email\\s*-\\s*/i, 'email_');\n  t = t.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');\n  if (t.length > 60) { t = t.slice(0, 60).replace(/_+$/, ''); }\n  return 'screen_' + t;\n}\nconst out = [];\nfor (let i = 0; i < rows.length; i++) {\n  const pi = rows[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const m = (src[idx] || src[i] || {}).json || {};\n  const info = infoByKey[String(m.keyId)] || { description: '', shots: 0 };\n  const base = { projectId: m.projectId, projectName: m.projectName || '', keyId: m.keyId, keyName: m.keyName, reason: m.reason || '' };\n  if (info.shots > 0) {\n    out.push({ json: Object.assign({}, base, { matched: false, why: 'key already has ' + info.shots + ' screenshot(s)' }) });\n    continue;\n  }\n  const r = rows[i].json || {};\n  const keys = r.keys || [];\n  const mine = segs(m.keyName);\n  const cand = {};\n  for (const k of keys) {\n    if (String(k.key_id) === String(m.keyId)) { continue; }\n    const s = segs(readName(k.key_name));\n    let common = 0;\n    while (common < mine.length && common < s.length && mine[common] === s[common]) { common++; }\n    if (common === 0) { continue; }\n    for (const sh of (k.screenshots || [])) {\n      const id = String(sh.screenshot_id);\n      if (!cand[id]) { cand[id] = { id: sh.screenshot_id, title: sh.title || '', desc: sh.description || '', score: 0, votes: 0, depth: 0 }; }\n      cand[id].score += common * common;\n      cand[id].votes += 1;\n      if (common > cand[id].depth) { cand[id].depth = common; }\n    }\n  }\n  let best = null;\n  for (const id of Object.keys(cand)) {\n    const c = cand[id];\n    if (!best || c.score > best.score || (c.score === best.score && c.votes > best.votes)) { best = c; }\n  }\n  if (!best) {\n    out.push({ json: Object.assign({}, base, { matched: false, why: 'no sibling key with a screenshot in this namespace' }) });\n    continue;\n  }\n  const link = (String(best.desc).match(/https?:\\/\\/www\\.figma\\.com\\/[^\\s]+/) || [''])[0];\n  const shown = String(best.title).replace(/^[DM]\\s*-\\s*/, '');\n  out.push({ json: Object.assign({}, base, {\n    matched: true,\n    screenshotId: best.id,\n    screenTitle: best.title,\n    screenTag: screenTag(best.title),\n    votes: best.votes,\n    score: best.score,\n    prefixDepth: best.depth,\n    existingDescription: info.description,\n    writeDescription: String(info.description).trim() === '',\n    description: 'Seen on: ' + shown + (link ? ' — ' + link : '')\n  }) });\n}\nreturn out;\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "c68c3adb-4031-4368-afab-0a1daa0412f2",
+      "name": "Has A Screen?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        1568,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "matched",
+              "leftValue": "={{ $json.matched }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "2a4c138b-210a-4632-a204-7a1ad9808979",
+      "name": "Fetch Screenshot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1792,
+        300
+      ],
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "GET",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchInterval": 300,
+              "batchSize": 1
+            }
+          },
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        },
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.projectId }}/screenshots/{{ $json.screenshotId }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "2dbb73e4-ad3e-432f-b498-76a370d0c8b7",
+      "name": "Merge Key Ids",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const src = $('Has A Screen?').all();\nconst rows = $input.all();\nconst out = [];\nfor (let i = 0; i < rows.length; i++) {\n  const pi = rows[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const m = (src[idx] || src[i] || {}).json || {};\n  const r = rows[i].json || {};\n  const shot = r.screenshot || {};\n  const ids = {};\n  for (const kid of (shot.key_ids || [])) { ids[String(kid)] = true; }\n  const already = ids[String(m.keyId)] === true;\n  ids[String(m.keyId)] = true;\n  const merged = [];\n  for (const id of Object.keys(ids)) { merged.push(Number(id)); }\n  out.push({ json: Object.assign({}, m, { alreadyLinked: already, keyIdCountBefore: (shot.key_ids || []).length, keyIds: merged, screenshotTitleLive: shot.title || m.screenTitle }) });\n}\nreturn out;\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "455bd934-360b-4178-bc37-6e699cba474d",
+      "name": "Link Key To Screenshot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2240,
+        300
+      ],
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "jsonBody": "={{ JSON.stringify({ key_ids: $json.keyIds }) }}",
+        "method": "PUT",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchInterval": 300,
+              "batchSize": 1
+            }
+          },
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.projectId }}/screenshots/{{ $json.screenshotId }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "6144e830-16fa-44f5-a151-08d582e4da97",
+      "name": "Tag And Describe Key",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2464,
+        300
+      ],
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "jsonBody": "={{ JSON.stringify({ keys: [ Object.assign({ key_id: Number($('Merge Key Ids').item.json.keyId), tags: [ $('Merge Key Ids').item.json.screenTag, 'has_screenshot' ], merge_tags: true }, $('Merge Key Ids').item.json.writeDescription ? { description: $('Merge Key Ids').item.json.description } : {}) ] }) }}",
+        "method": "PUT",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchInterval": 300,
+              "batchSize": 1
+            }
+          },
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $('Merge Key Ids').item.json.projectId }}/keys"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "81a3d890-bdc0-4069-ad5b-ce9bc943d5b2",
+      "name": "Sticky Note Screenshot Branch",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        520
+      ],
+      "parameters": {
+        "color": 6,
+        "content": "## Screenshot + screen tag + description\n\nRuns for every key the webhook reports, in any project, right after the to_review decision.\n\n**How the screen is chosen (no Figma access needed):**\n1. `Find Sibling Screens` pulls the project's keys that already carry `has_screenshot` (one request, limit 500).\n2. `Pick Best Screen` scores each candidate screenshot by how many leading `::` segments its keys share with the new key (squared, so a 3-segment match beats three 1-segment matches). Highest score wins, vote count breaks ties.\n3. Keys that already have a screenshot, or whose namespace has no screenshotted sibling, are left untouched.\n\n**Writes:** `key_ids` on the screenshot are MERGED, never replaced. Tags are added with `merge_tags`. The description is only written when the key has none, so hand-written context is never overwritten.\n\nCoverage depends on a Figma backfill having run for that product first - see claude/chatai-figma-screenshots-backfill-2026-08-21.md and claude/figma-file-map.md.",
+        "height": 460,
+        "width": 520
+      }
     }
   ],
   "connections": {
@@ -286,6 +518,11 @@
             "node": "Skip Keys Already Tagged",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Find Sibling Screens",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -317,6 +554,72 @@
         [
           {
             "node": "Mark Translation Unverified",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Sibling Screens": {
+      "main": [
+        [
+          {
+            "node": "Pick Best Screen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Best Screen": {
+      "main": [
+        [
+          {
+            "node": "Has A Screen?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has A Screen?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Screenshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Screenshot": {
+      "main": [
+        [
+          {
+            "node": "Merge Key Ids",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Key Ids": {
+      "main": [
+        [
+          {
+            "node": "Link Key To Screenshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Link Key To Screenshot": {
+      "main": [
+        [
+          {
+            "node": "Tag And Describe Key",
             "type": "main",
             "index": 0
           }
@@ -361,7 +664,7 @@
     }
   ],
   "activeVersion": {
-    "versionId": "d15f82aa-8091-48ce-a39f-96edf7b0fe07",
+    "versionId": "1255ada3-b9dc-4df6-9abd-11646ba96296",
     "workflowId": "ObPnLQit1RN4rRqn",
     "nodes": [
       {
@@ -595,6 +898,238 @@
           900,
           -480
         ]
+      },
+      {
+        "id": "3d56aa92-67d1-40e2-8ff6-b78e7ceb0481",
+        "name": "Find Sibling Screens",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          1120,
+          300
+        ],
+        "parameters": {
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "method": "GET",
+          "options": {
+            "batching": {
+              "batch": {
+                "batchInterval": 300,
+                "batchSize": 1
+              }
+            },
+            "response": {
+              "response": {
+                "neverError": true
+              }
+            },
+            "timeout": 60000
+          },
+          "url": "=https://api.lokalise.com/api2/projects/{{ $json.projectId }}/keys?limit=500&page=1&include_screenshots=1&filter_tags=has_screenshot"
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "4cb6G6nZVVtP4HIO",
+            "name": "Lokalise access token read-write"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "ddb4c6be-c9d6-41df-90fa-7b509fec0dac",
+        "name": "Pick Best Screen",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1344,
+          300
+        ],
+        "parameters": {
+          "jsCode": "const src = $('Decide Tag Actions').all();\nconst details = $('Get Key + Translations').all();\nconst rows = $input.all();\nconst infoByKey = {};\nfor (const d of details) {\n  const j = d.json || {};\n  const k = j.key || j;\n  if (k && k.key_id) { infoByKey[String(k.key_id)] = { description: k.description || '', shots: (k.screenshots || []).length }; }\n}\nfunction segs(n) { return String(n || '').split('::'); }\nfunction readName(n) {\n  if (typeof n === 'string') { return n; }\n  return (n && (n.web || n.other || n.ios || n.android)) || '';\n}\nfunction screenTag(title) {\n  let t = String(title || '').replace(/^[DM]\\s*-\\s*/, '').replace(/^Email\\s*-\\s*/i, 'email_');\n  t = t.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');\n  if (t.length > 60) { t = t.slice(0, 60).replace(/_+$/, ''); }\n  return 'screen_' + t;\n}\nconst out = [];\nfor (let i = 0; i < rows.length; i++) {\n  const pi = rows[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const m = (src[idx] || src[i] || {}).json || {};\n  const info = infoByKey[String(m.keyId)] || { description: '', shots: 0 };\n  const base = { projectId: m.projectId, projectName: m.projectName || '', keyId: m.keyId, keyName: m.keyName, reason: m.reason || '' };\n  if (info.shots > 0) {\n    out.push({ json: Object.assign({}, base, { matched: false, why: 'key already has ' + info.shots + ' screenshot(s)' }) });\n    continue;\n  }\n  const r = rows[i].json || {};\n  const keys = r.keys || [];\n  const mine = segs(m.keyName);\n  const cand = {};\n  for (const k of keys) {\n    if (String(k.key_id) === String(m.keyId)) { continue; }\n    const s = segs(readName(k.key_name));\n    let common = 0;\n    while (common < mine.length && common < s.length && mine[common] === s[common]) { common++; }\n    if (common === 0) { continue; }\n    for (const sh of (k.screenshots || [])) {\n      const id = String(sh.screenshot_id);\n      if (!cand[id]) { cand[id] = { id: sh.screenshot_id, title: sh.title || '', desc: sh.description || '', score: 0, votes: 0, depth: 0 }; }\n      cand[id].score += common * common;\n      cand[id].votes += 1;\n      if (common > cand[id].depth) { cand[id].depth = common; }\n    }\n  }\n  let best = null;\n  for (const id of Object.keys(cand)) {\n    const c = cand[id];\n    if (!best || c.score > best.score || (c.score === best.score && c.votes > best.votes)) { best = c; }\n  }\n  if (!best) {\n    out.push({ json: Object.assign({}, base, { matched: false, why: 'no sibling key with a screenshot in this namespace' }) });\n    continue;\n  }\n  const link = (String(best.desc).match(/https?:\\/\\/www\\.figma\\.com\\/[^\\s]+/) || [''])[0];\n  const shown = String(best.title).replace(/^[DM]\\s*-\\s*/, '');\n  out.push({ json: Object.assign({}, base, {\n    matched: true,\n    screenshotId: best.id,\n    screenTitle: best.title,\n    screenTag: screenTag(best.title),\n    votes: best.votes,\n    score: best.score,\n    prefixDepth: best.depth,\n    existingDescription: info.description,\n    writeDescription: String(info.description).trim() === '',\n    description: 'Seen on: ' + shown + (link ? ' — ' + link : '')\n  }) });\n}\nreturn out;\n",
+          "mode": "runOnceForAllItems"
+        }
+      },
+      {
+        "id": "c68c3adb-4031-4368-afab-0a1daa0412f2",
+        "name": "Has A Screen?",
+        "type": "n8n-nodes-base.filter",
+        "typeVersion": 2.3,
+        "position": [
+          1568,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "matched",
+                "leftValue": "={{ $json.matched }}",
+                "operator": {
+                  "operation": "true",
+                  "singleValue": true,
+                  "type": "boolean"
+                },
+                "rightValue": ""
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            }
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "2a4c138b-210a-4632-a204-7a1ad9808979",
+        "name": "Fetch Screenshot",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          1792,
+          300
+        ],
+        "parameters": {
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "method": "GET",
+          "options": {
+            "batching": {
+              "batch": {
+                "batchInterval": 300,
+                "batchSize": 1
+              }
+            },
+            "response": {
+              "response": {
+                "neverError": true
+              }
+            },
+            "timeout": 60000
+          },
+          "url": "=https://api.lokalise.com/api2/projects/{{ $json.projectId }}/screenshots/{{ $json.screenshotId }}"
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "4cb6G6nZVVtP4HIO",
+            "name": "Lokalise access token read-write"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "2dbb73e4-ad3e-432f-b498-76a370d0c8b7",
+        "name": "Merge Key Ids",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2016,
+          300
+        ],
+        "parameters": {
+          "jsCode": "const src = $('Has A Screen?').all();\nconst rows = $input.all();\nconst out = [];\nfor (let i = 0; i < rows.length; i++) {\n  const pi = rows[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const m = (src[idx] || src[i] || {}).json || {};\n  const r = rows[i].json || {};\n  const shot = r.screenshot || {};\n  const ids = {};\n  for (const kid of (shot.key_ids || [])) { ids[String(kid)] = true; }\n  const already = ids[String(m.keyId)] === true;\n  ids[String(m.keyId)] = true;\n  const merged = [];\n  for (const id of Object.keys(ids)) { merged.push(Number(id)); }\n  out.push({ json: Object.assign({}, m, { alreadyLinked: already, keyIdCountBefore: (shot.key_ids || []).length, keyIds: merged, screenshotTitleLive: shot.title || m.screenTitle }) });\n}\nreturn out;\n",
+          "mode": "runOnceForAllItems"
+        }
+      },
+      {
+        "id": "455bd934-360b-4178-bc37-6e699cba474d",
+        "name": "Link Key To Screenshot",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          2240,
+          300
+        ],
+        "parameters": {
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "jsonBody": "={{ JSON.stringify({ key_ids: $json.keyIds }) }}",
+          "method": "PUT",
+          "options": {
+            "batching": {
+              "batch": {
+                "batchInterval": 300,
+                "batchSize": 1
+              }
+            },
+            "response": {
+              "response": {
+                "neverError": true
+              }
+            },
+            "timeout": 60000
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "url": "=https://api.lokalise.com/api2/projects/{{ $json.projectId }}/screenshots/{{ $json.screenshotId }}"
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "4cb6G6nZVVtP4HIO",
+            "name": "Lokalise access token read-write"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "6144e830-16fa-44f5-a151-08d582e4da97",
+        "name": "Tag And Describe Key",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          2464,
+          300
+        ],
+        "parameters": {
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "jsonBody": "={{ JSON.stringify({ keys: [ Object.assign({ key_id: Number($('Merge Key Ids').item.json.keyId), tags: [ $('Merge Key Ids').item.json.screenTag, 'has_screenshot' ], merge_tags: true }, $('Merge Key Ids').item.json.writeDescription ? { description: $('Merge Key Ids').item.json.description } : {}) ] }) }}",
+          "method": "PUT",
+          "options": {
+            "batching": {
+              "batch": {
+                "batchInterval": 300,
+                "batchSize": 1
+              }
+            },
+            "response": {
+              "response": {
+                "neverError": true
+              }
+            },
+            "timeout": 60000
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "url": "=https://api.lokalise.com/api2/projects/{{ $('Merge Key Ids').item.json.projectId }}/keys"
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "4cb6G6nZVVtP4HIO",
+            "name": "Lokalise access token read-write"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "81a3d890-bdc0-4069-ad5b-ce9bc943d5b2",
+        "name": "Sticky Note Screenshot Branch",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          1100,
+          520
+        ],
+        "parameters": {
+          "color": 6,
+          "content": "## Screenshot + screen tag + description\n\nRuns for every key the webhook reports, in any project, right after the to_review decision.\n\n**How the screen is chosen (no Figma access needed):**\n1. `Find Sibling Screens` pulls the project's keys that already carry `has_screenshot` (one request, limit 500).\n2. `Pick Best Screen` scores each candidate screenshot by how many leading `::` segments its keys share with the new key (squared, so a 3-segment match beats three 1-segment matches). Highest score wins, vote count breaks ties.\n3. Keys that already have a screenshot, or whose namespace has no screenshotted sibling, are left untouched.\n\n**Writes:** `key_ids` on the screenshot are MERGED, never replaced. Tags are added with `merge_tags`. The description is only written when the key has none, so hand-written context is never overwritten.\n\nCoverage depends on a Figma backfill having run for that product first - see claude/chatai-figma-screenshots-backfill-2026-08-21.md and claude/figma-file-map.md.",
+          "height": 460,
+          "width": 520
+        }
       }
     ],
     "connections": {
@@ -638,6 +1173,11 @@
               "node": "Skip Keys Already Tagged",
               "type": "main",
               "index": 0
+            },
+            {
+              "node": "Find Sibling Screens",
+              "type": "main",
+              "index": 0
             }
           ]
         ]
@@ -674,23 +1214,89 @@
             }
           ]
         ]
+      },
+      "Find Sibling Screens": {
+        "main": [
+          [
+            {
+              "node": "Pick Best Screen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Pick Best Screen": {
+        "main": [
+          [
+            {
+              "node": "Has A Screen?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has A Screen?": {
+        "main": [
+          [
+            {
+              "node": "Fetch Screenshot",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Screenshot": {
+        "main": [
+          [
+            {
+              "node": "Merge Key Ids",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Merge Key Ids": {
+        "main": [
+          [
+            {
+              "node": "Link Key To Screenshot",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Link Key To Screenshot": {
+        "main": [
+          [
+            {
+              "node": "Tag And Describe Key",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     },
     "nodeGroups": [],
     "authors": "Maria Sica (via MCP)",
-    "name": "Correct webhook setup note and tidy sticky layout",
-    "description": "Lokalise only exposes project.key.added and project.translation.updated as subscribable events (the bulk variants arrive under the same subscriptions), so the setup note now lists just those two and points at the companion registration workflow. Stickies moved above the node row so they no longer overlap each other.",
+    "name": "Screenshot branch covers edits too; skip keys already linked",
+    "description": "Feed the screenshot branch from Decide Tag Actions instead of Add to_review Tag, so a key that already carries to_review (e.g. a later EN source edit) can still get its screenshot. Keys that already have a screenshot linked are skipped.",
     "autosaved": false,
-    "createdAt": "2026-08-19T11:19:33.258Z",
-    "updatedAt": "2026-08-19T11:19:33.258Z",
+    "createdAt": "2026-08-21T14:12:54.588Z",
+    "updatedAt": "2026-08-21T14:12:54.588Z",
     "workflowPublishHistory": [
       {
-        "id": 1462,
+        "id": 1529,
         "workflowId": "ObPnLQit1RN4rRqn",
-        "versionId": "d15f82aa-8091-48ce-a39f-96edf7b0fe07",
+        "versionId": "1255ada3-b9dc-4df6-9abd-11646ba96296",
         "event": "activated",
         "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
-        "createdAt": "2026-08-19T11:19:48.722Z"
+        "createdAt": "2026-08-21T14:50:42.907Z"
       }
     ]
   }
