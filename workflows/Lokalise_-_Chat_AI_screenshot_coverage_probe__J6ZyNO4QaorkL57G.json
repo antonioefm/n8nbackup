@@ -1,0 +1,164 @@
+{
+  "id": "J6ZyNO4QaorkL57G",
+  "name": "Lokalise - Chat AI screenshot coverage probe",
+  "description": "Ad-hoc probe: fetches keys (with translations) and screenshots for Chat AI - frontend and Chat AI (emails), and reports which keys have no screenshot linked.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-21T08:44:47.980Z",
+  "updatedAt": "2026-08-21T08:44:47.980Z",
+  "isArchived": false,
+  "versionId": "c4a65442-edbf-449c-82d0-bedec8feb18b",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "d4fca046-b968-413c-b001-0c252646af5a",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "d43fda52-8f14-4514-a581-68fb336769e6",
+      "name": "Build Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const P = [\n  { id: '691331356a3b9a68428ab3.43540470', name: 'Chat AI - frontend' },\n  { id: '225008626a33e62b328c63.04676982', name: 'Chat AI (emails)' }\n];\nconst out = [];\nfor (const p of P) {\n  for (let page = 1; page <= 3; page++) {\n    out.push({ json: { kind: 'keys', project_id: p.id, project_name: p.name, page: page, url: 'https://api.lokalise.com/api2/projects/' + p.id + '/keys?limit=500&page=' + page + '&include_translations=1' } });\n  }\n  for (let page = 1; page <= 3; page++) {\n    out.push({ json: { kind: 'screenshots', project_id: p.id, project_name: p.name, page: page, url: 'https://api.lokalise.com/api2/projects/' + p.id + '/screenshots?limit=500&page=' + page } });\n  }\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "1769467e-3c94-4595-894e-671824e2cfff",
+      "name": "Fetch Lokalise Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "0341cbef-cfc5-48c8-8663-f35d7a769b69",
+      "name": "Summarize Coverage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const reqs = $('Build Requests').all();\nconst res = $input.all();\nconst byProject = {};\nfunction bucket(name) {\n  if (!byProject[name]) {\n    byProject[name] = { project_name: name, project_id: '', keys: {}, screenshots: [], linked: {}, errors: [] };\n  }\n  return byProject[name];\n}\nfunction sourceText(k) {\n  for (const t of (k.translations || [])) {\n    const iso = String(t.language_iso || '').toLowerCase();\n    if (iso === 'en' || iso.indexOf('en_') === 0 || iso.indexOf('en-') === 0) {\n      const v = t.translation;\n      if (typeof v === 'string') { return v; }\n      if (v && typeof v === 'object') {\n        const parts = [];\n        for (const kk of Object.keys(v)) { if (v[kk]) { parts.push(String(v[kk])); } }\n        return parts.join(' | ');\n      }\n    }\n  }\n  return '';\n}\nfunction keyName(n) {\n  if (typeof n === 'string') { return n; }\n  if (n && typeof n === 'object') { return n.web || n.other || n.ios || n.android || ''; }\n  return '';\n}\nfor (let i = 0; i < res.length; i++) {\n  const pi = res[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const metaItem = reqs[idx] || reqs[i];\n  if (!metaItem) { continue; }\n  const meta = metaItem.json;\n  const b = bucket(meta.project_name);\n  b.project_id = meta.project_id;\n  const r = res[i].json || {};\n  const body = r.body || {};\n  if (r.statusCode !== 200) { b.errors.push(meta.kind + ' p' + meta.page + ' -> ' + r.statusCode); continue; }\n  if (meta.kind === 'keys') {\n    for (const k of (body.keys || [])) {\n      b.keys[String(k.key_id)] = {\n        key_id: String(k.key_id),\n        name: keyName(k.key_name),\n        en: sourceText(k),\n        tags: k.tags || [],\n        description: k.description || '',\n        archived: !!k.is_archived,\n        platforms: k.platforms || []\n      };\n    }\n  } else {\n    for (const s of (body.screenshots || [])) {\n      b.screenshots.push({ screenshot_id: s.screenshot_id, title: s.title || '', tags: s.tags || [], key_count: (s.key_ids || []).length });\n      for (const kid of (s.key_ids || [])) { b.linked[String(kid)] = true; }\n    }\n  }\n}\nconst out = [];\nfor (const name of Object.keys(byProject)) {\n  const b = byProject[name];\n  const allKeys = Object.keys(b.keys);\n  const missing = [];\n  let active = 0;\n  let covered = 0;\n  for (const id of allKeys) {\n    const k = b.keys[id];\n    if (k.archived) { continue; }\n    active++;\n    if (b.linked[id]) { covered++; } else { missing.push({ key_id: id, name: k.name, en: k.en, tags: k.tags, description: k.description, platforms: k.platforms }); }\n  }\n  out.push({ json: {\n    project_name: name,\n    project_id: b.project_id,\n    keys_total: allKeys.length,\n    keys_active: active,\n    keys_with_screenshot: covered,\n    keys_missing_screenshot: missing.length,\n    screenshots_existing: b.screenshots.length,\n    screenshots: b.screenshots,\n    errors: b.errors,\n    missing: missing\n  } });\n}\nreturn out;\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Build Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Requests": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lokalise Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lokalise Data": {
+      "main": [
+        [
+          {
+            "node": "Summarize Coverage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "J6ZyNO4QaorkL57G",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-21T08:44:47.982Z",
+      "updatedAt": "2026-08-21T08:44:47.982Z"
+    }
+  ],
+  "activeVersion": null
+}
