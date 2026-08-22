@@ -1,0 +1,239 @@
+{
+  "id": "TbuZq5rQvcGXbdCf",
+  "name": "Lokalise - Upload Figma screenshots",
+  "description": "Webhook: POST {items:[{project_id,url,title,description,key_ids,tags}]} -> fetches each Figma render URL, base64-encodes it and uploads it to Lokalise as a screenshot linked to the given keys.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-21T10:55:22.880Z",
+  "updatedAt": "2026-08-21T11:13:24.556Z",
+  "isArchived": false,
+  "versionId": "980b2551-85a6-4fb5-b16a-1c07aea3361d",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "82a9abd6-7d51-46f9-9d90-bb7aede487eb",
+      "name": "Upload Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lokalise-figma-screenshots",
+        "options": {}
+      },
+      "webhookId": "f463189f-ec2b-4e9f-a36b-d1deff095fc3"
+    },
+    {
+      "id": "7026cc21-5fe8-4d23-81de-28be5783f7ff",
+      "name": "Explode Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const FILE = 'XXCDf1exA9gaD416aklfjm';\nconst out = [];\nfor (const it of $input.all()) {\n  const b = (it.json && it.json.body) ? it.json.body : (it.json || {});\n  for (const s of (b.items || [])) {\n    out.push({ json: {\n      project_id: String(s.project_id || ''),\n      url: String(s.url || ''),\n      title: String(s.title || ''),\n      description: String(s.description || ''),\n      key_ids: (s.key_ids || []).map(function (x) { return Number(x); }),\n      tags: s.tags || ['figma'],\n      ocr: s.ocr === true\n    } });\n  }\n  const spec = String(b.spec || '');\n  if (spec) {\n    for (const line of spec.split('\\n')) {\n      const t = line.trim();\n      if (!t) continue;\n      const p = t.split(';');\n      if (p.length < 5) continue;\n      const nodeId = p[1].trim();\n      const title = p[2].trim();\n      const page = nodeId.indexOf('7566') === 0 ? 'Emails' : 'Ready for Dev';\n      const ids = [];\n      for (const x of p[4].split(',')) { const n = Number(x.trim()); if (n) ids.push(n); }\n      out.push({ json: {\n        project_id: p[0].trim(),\n        url: p[3].trim(),\n        title: title,\n        description: 'Figma · ' + page + ' · ' + title + ' — https://www.figma.com/design/' + FILE + '/ChatbotOnline?node-id=' + nodeId.replace(':', '-'),\n        key_ids: ids,\n        tags: ['figma'],\n        ocr: false\n      } });\n    }\n  }\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "2ba9e2f4-7ab2-470c-a537-1e9a6c3b83f1",
+      "name": "Fetch Figma Render",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data",
+              "neverError": true
+            }
+          }
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "ccbb5c16-e98c-4549-b981-f97ed802ddde",
+      "name": "Build Upload Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const meta = $('Explode Items').all();\nconst rows = $input.all();\nconst out = [];\nfor (let i = 0; i < rows.length; i++) {\n  const pi = rows[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const m = (meta[idx] || meta[i] || {}).json || {};\n  let b64 = '';\n  let how = '';\n  try {\n    const buf = await this.helpers.getBinaryDataBuffer(i, 'data');\n    if (buf && buf.length) { b64 = buf.toString('base64'); how = 'buffer'; }\n  } catch (e) {\n    how = 'err:' + String(e && e.message ? e.message : e).slice(0, 120);\n  }\n  if (!b64) {\n    const bin = rows[i].binary || {};\n    const d = bin.data || {};\n    if (d.data && !d.id) { b64 = d.data; how = 'inline'; }\n  }\n  if (!b64) {\n    out.push({ json: { skipped: true, reason: 'no image bytes (' + how + ')', title: m.title, url: m.url, project_id: m.project_id, key_ids: m.key_ids } });\n    continue;\n  }\n  out.push({ json: {\n    project_id: m.project_id,\n    title: m.title,\n    description: m.description,\n    key_ids: m.key_ids,\n    tags: m.tags,\n    ocr: m.ocr,\n    how: how,\n    bytes: Math.round((b64.length * 3) / 4),\n    dataUri: 'data:image/png;base64,' + b64,\n    skipped: false\n  } });\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "506ca04f-b4f2-45d4-ab52-978df69d2cfe",
+      "name": "Upload To Lokalise",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/screenshots",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ screenshots: [ { data: $json.dataUri, title: $json.title, description: $json.description, ocr: $json.ocr, key_ids: $json.key_ids, tags: $json.tags } ] }) }}",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "ff597b31-a6c9-416e-b4d4-6d2fd3077e33",
+      "name": "Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const meta = $('Build Upload Payload').all();\nconst rows = $input.all();\nconst ok = [];\nconst bad = [];\nfor (let i = 0; i < rows.length; i++) {\n  const pi = rows[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const m = (meta[idx] || meta[i] || {}).json || {};\n  const r = rows[i].json || {};\n  const body = r.body || {};\n  const shot = (body.screenshots && body.screenshots[0]) ? body.screenshots[0] : null;\n  if (r.statusCode === 200 && shot) {\n    ok.push({ title: m.title, screenshot_id: shot.screenshot_id, keys: (m.key_ids || []).length, bytes: m.bytes });\n  } else {\n    bad.push({ title: m.title, status: r.statusCode, error: JSON.stringify(body).slice(0, 300), keys: (m.key_ids || []).length });\n  }\n}\nreturn [{ json: { uploaded: ok.length, failed: bad.length, ok: ok, bad: bad } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Upload Request": {
+      "main": [
+        [
+          {
+            "node": "Explode Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Explode Items": {
+      "main": [
+        [
+          {
+            "node": "Fetch Figma Render",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Figma Render": {
+      "main": [
+        [
+          {
+            "node": "Build Upload Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Upload Payload": {
+      "main": [
+        [
+          {
+            "node": "Upload To Lokalise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload To Lokalise": {
+      "main": [
+        [
+          {
+            "node": "Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "TbuZq5rQvcGXbdCf",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-21T10:55:22.883Z",
+      "updatedAt": "2026-08-21T10:55:22.883Z"
+    }
+  ],
+  "activeVersion": null
+}
