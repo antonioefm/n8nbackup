@@ -1,0 +1,241 @@
+{
+  "id": "HCbBj9MplU18wItu",
+  "name": "Lokalise - Tag keys from Figma screenshots",
+  "description": "Reads every Lokalise screenshot tagged 'figma' in the two Chat AI projects and adds screen_<frame> + has_screenshot tags (merge_tags) to each key linked to it.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-21T11:24:31.934Z",
+  "updatedAt": "2026-08-21T11:25:52.667Z",
+  "isArchived": false,
+  "versionId": "77b0fc18-dc17-44d9-98a0-1f1e6f7f4565",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "6cd28916-750d-491c-a718-23682f8e5b2e",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "9245ef99-7fdc-45c4-923b-98f9b2f2eabc",
+      "name": "Projects",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [\n  { json: { project_id: '691331356a3b9a68428ab3.43540470', project_name: 'Chat AI - frontend' } },\n  { json: { project_id: '225008626a33e62b328c63.04676982', project_name: 'Chat AI (emails)' } }\n];\n"
+      }
+    },
+    {
+      "id": "7d8b73a6-80ef-4898-b294-b3d8252a20bd",
+      "name": "Fetch Screenshots",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/screenshots?limit=500&page=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "9f5ae1f9-6ef9-43e3-92bc-3d4bddc4d23e",
+      "name": "Build Tag Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const meta = $('Projects').all();\nconst rows = $input.all();\nfunction screenTag(title) {\n  let t = String(title || '');\n  t = t.replace(/^[DM]\\s*-\\s*/, '');\n  t = t.replace(/^Email\\s*-\\s*/i, 'email_');\n  t = t.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');\n  if (t.length > 60) { t = t.slice(0, 60).replace(/_+$/, ''); }\n  return 'screen_' + t;\n}\nfunction isFigma(s) {\n  const tags = s.screenshot_tags || s.tags || [];\n  if (tags.indexOf('figma') !== -1) { return true; }\n  return /^[DM]\\s*-\\s/.test(String(s.title || ''));\n}\nconst out = [];\nconst skipped = [];\nfor (let i = 0; i < rows.length; i++) {\n  const pi = rows[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const m = (meta[idx] || meta[i] || {}).json || {};\n  const r = rows[i].json || {};\n  if (r.statusCode !== 200) { continue; }\n  const shots = (r.body && r.body.screenshots) ? r.body.screenshots : [];\n  const byTag = {};\n  for (const s of shots) {\n    if (!isFigma(s)) { skipped.push(m.project_name + ' / ' + s.title); continue; }\n    const tag = screenTag(s.title);\n    if (!byTag[tag]) { byTag[tag] = {}; }\n    for (const kid of (s.key_ids || [])) { byTag[tag][String(kid)] = true; }\n  }\n  for (const tag of Object.keys(byTag)) {\n    const keys = [];\n    for (const id of Object.keys(byTag[tag])) { keys.push({ key_id: Number(id), tags: [tag, 'has_screenshot'], merge_tags: true }); }\n    if (!keys.length) { continue; }\n    out.push({ json: { project_id: m.project_id, project_name: m.project_name, tag: tag, key_count: keys.length, skipped_titles: skipped, payload: { keys: keys } } });\n  }\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "d2fa85b3-dbba-4def-ad24-259eaa9a50de",
+      "name": "Apply Tags",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "d9a78f18-4489-40ac-a11e-1662610d6657",
+      "name": "Summarize Tagging",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const meta = $('Build Tag Requests').all();\nconst rows = $input.all();\nconst ok = [];\nconst bad = [];\nlet keysTagged = 0;\nfor (let i = 0; i < rows.length; i++) {\n  const pi = rows[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const m = (meta[idx] || meta[i] || {}).json || {};\n  const r = rows[i].json || {};\n  if (r.statusCode === 200) { ok.push(m.project_name + ' / ' + m.tag + ' (' + m.key_count + ')'); keysTagged += m.key_count; }\n  else { bad.push(m.project_name + ' / ' + m.tag + ' -> ' + r.statusCode + ' ' + JSON.stringify(r.body).slice(0, 200)); }\n}\nreturn [{ json: { tag_groups_ok: ok.length, tag_groups_failed: bad.length, key_tag_writes: keysTagged, failures: bad, groups: ok } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Projects": {
+      "main": [
+        [
+          {
+            "node": "Fetch Screenshots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Screenshots": {
+      "main": [
+        [
+          {
+            "node": "Build Tag Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Tag Requests": {
+      "main": [
+        [
+          {
+            "node": "Apply Tags",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Tags": {
+      "main": [
+        [
+          {
+            "node": "Summarize Tagging",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "HCbBj9MplU18wItu",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-21T11:24:31.936Z",
+      "updatedAt": "2026-08-21T11:24:31.936Z"
+    }
+  ],
+  "activeVersion": null
+}
