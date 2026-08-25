@@ -1,0 +1,241 @@
+{
+  "id": "mO900xItF7gBd7KI",
+  "name": "Lokalise - Strip Figma URLs from screenshot descriptions",
+  "description": "Rewrites screenshot descriptions in the Chat AI projects to remove figma.com URLs (freelancers have no Figma access), preserving key_ids so nothing gets unlinked.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-24T13:09:02.885Z",
+  "updatedAt": "2026-08-24T13:09:02.885Z",
+  "isArchived": false,
+  "versionId": "c9e9c4e8-20ce-49e8-a189-9c3048e669a3",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "be4ff280-fa22-4493-8189-978c66f41730",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "f7de1997-44b4-4080-b2d9-721fb0a8d235",
+      "name": "Projects",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [\n  { json: { project_id: '691331356a3b9a68428ab3.43540470', project_name: 'Chat AI - frontend' } },\n  { json: { project_id: '225008626a33e62b328c63.04676982', project_name: 'Chat AI (emails)' } }\n];\n"
+      }
+    },
+    {
+      "id": "e46e11df-e7fd-49db-8e3a-0a8ef73004a2",
+      "name": "Fetch Screenshots",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/screenshots?limit=500&page=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "85eea9c4-5e8f-44dc-b66b-1c06266da1ae",
+      "name": "Plan Rewrites",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const meta = $('Projects').all();\nconst rows = $input.all();\nconst out = [];\nfor (let i = 0; i < rows.length; i++) {\n  const pi = rows[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const m = (meta[idx] || meta[i] || {}).json || {};\n  const r = rows[i].json || {};\n  if (r.statusCode !== 200) { continue; }\n  for (const s of ((r.body && r.body.screenshots) || [])) {\n    const desc = String(s.description || '');\n    if (desc.indexOf('figma.com') === -1) { continue; }\n    let clean = desc.replace(/\\s*[\\u2014-]\\s*https?:\\/\\/\\S+/g, '');\n    clean = clean.replace(/https?:\\/\\/\\S+/g, '');\n    clean = clean.replace(/^\\s*Figma\\s*\\u00b7\\s*/i, '');\n    clean = clean.replace(/\\s{2,}/g, ' ').replace(/[\\s\\u00b7\\u2014-]+$/, '').trim();\n    if (!clean) { clean = String(s.title || 'Design screen'); }\n    out.push({ json: {\n      project_id: m.project_id,\n      project_name: m.project_name,\n      screenshot_id: s.screenshot_id,\n      title: s.title || '',\n      before: desc,\n      after: clean,\n      key_ids: s.key_ids || []\n    } });\n  }\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "db7f5591-a460-4d94-ab27-c4580d074043",
+      "name": "Rewrite Description",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/screenshots/{{ $json.screenshot_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ description: $json.after, key_ids: $json.key_ids }) }}",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "ccdaac50-06fb-4870-97d9-3c8c2a4089b4",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const meta = $('Plan Rewrites').all();\nconst rows = $input.all();\nlet ok = 0;\nconst bad = [];\nconst samples = [];\nlet keysKept = 0;\nfor (let i = 0; i < rows.length; i++) {\n  const pi = rows[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const m = (meta[idx] || meta[i] || {}).json || {};\n  const r = rows[i].json || {};\n  if (r.statusCode === 200) {\n    ok++;\n    keysKept += (m.key_ids || []).length;\n    if (samples.length < 4) { samples.push({ title: m.title, before: m.before, after: m.after, keys: (m.key_ids || []).length }); }\n  } else {\n    bad.push(m.title + ' -> ' + r.statusCode + ' ' + JSON.stringify(r.body).slice(0, 160));\n  }\n}\nreturn [{ json: { rewritten: ok, failed: bad.length, failures: bad, key_links_preserved: keysKept, samples: samples } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Projects": {
+      "main": [
+        [
+          {
+            "node": "Fetch Screenshots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Screenshots": {
+      "main": [
+        [
+          {
+            "node": "Plan Rewrites",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan Rewrites": {
+      "main": [
+        [
+          {
+            "node": "Rewrite Description",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rewrite Description": {
+      "main": [
+        [
+          {
+            "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "mO900xItF7gBd7KI",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-24T13:09:02.887Z",
+      "updatedAt": "2026-08-24T13:09:02.887Z"
+    }
+  ],
+  "activeVersion": null
+}
