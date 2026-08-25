@@ -1,0 +1,230 @@
+{
+  "id": "9w0tyZSk6I2hkE1e",
+  "name": "Lokalise - Chat AI ES flow strings (ad hoc, read-only)",
+  "description": "Read-only: pulls Chat AI - frontend keys with EN+ES translations, reduces to the namespaces on the landing/signup/checkout flow for Spanish LQA cross-checking. Never writes to Lokalise.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-24T14:01:28.278Z",
+  "updatedAt": "2026-08-24T14:01:28.278Z",
+  "isArchived": false,
+  "versionId": "3b657bec-aeb1-4bff-9382-2ca343c5dd90",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "3da157e4-b7e6-4cc4-8881-5e2d287ac905",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        96
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "7a557e44-3d65-4a58-8954-df74bdcb7c27",
+      "name": "Keys page 1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/691331356a3b9a68428ab3.43540470/keys",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "include_translations",
+              "value": "1"
+            },
+            {
+              "name": "filter_langs",
+              "value": "en,es"
+            },
+            {
+              "name": "limit",
+              "value": "500"
+            },
+            {
+              "name": "page",
+              "value": "1"
+            }
+          ]
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "c7201a0f-c91f-4ce2-b419-243c4e486284",
+      "name": "Both pages",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        448,
+        96
+      ],
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 2
+      }
+    },
+    {
+      "id": "7f246b4f-d884-4ed6-9dfd-0e58d0c79618",
+      "name": "Keys page 2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        224,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/691331356a3b9a68428ab3.43540470/keys",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "include_translations",
+              "value": "1"
+            },
+            {
+              "name": "filter_langs",
+              "value": "en,es"
+            },
+            {
+              "name": "limit",
+              "value": "500"
+            },
+            {
+              "name": "page",
+              "value": "2"
+            }
+          ]
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "a3472555-2559-4686-a7e8-157989bcf3eb",
+      "name": "Reduce to flow namespaces",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const NS = ['auth','pricing','checkout','faq','footer','layout','cancel','subscription','chat','common','legal','nav','header','payment','plan','billing','modal','error'];\nconst rows = [];\nlet seen = 0;\nfor (const item of $input.all()) {\n  for (const k of (item.json.keys || [])) {\n    seen++;\n    const kn = k.key_name || {};\n    const name = kn.web || kn.other || kn.ios || kn.android || String(k.key_name);\n    let en = '', es = '', u = 0, r = 0;\n    for (const t of (k.translations || [])) {\n      if (t.language_iso === 'en') en = t.translation;\n      if (t.language_iso === 'es') { es = t.translation; u = t.is_unverified ? 1 : 0; r = t.is_reviewed ? 1 : 0; }\n    }\n    const head = String(name).split('::')[0].toLowerCase();\n    let hit = false;\n    for (const n of NS) { if (head.indexOf(n) !== -1) { hit = true; break; } }\n    if (!hit) continue;\n    rows.push({ k: name, en: String(en).slice(0, 400), es: String(es).slice(0, 400), u: u, r: r, t: (k.tags || []).join(',') });\n  }\n}\nreturn [{ json: { keys_seen: seen, rows_kept: rows.length, rows: rows } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Keys page 1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Keys page 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keys page 1": {
+      "main": [
+        [
+          {
+            "node": "Both pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Both pages": {
+      "main": [
+        [
+          {
+            "node": "Reduce to flow namespaces",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keys page 2": {
+      "main": [
+        [
+          {
+            "node": "Both pages",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "9w0tyZSk6I2hkE1e",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-24T14:01:28.280Z",
+      "updatedAt": "2026-08-24T14:01:28.280Z"
+    }
+  ],
+  "activeVersion": null
+}
