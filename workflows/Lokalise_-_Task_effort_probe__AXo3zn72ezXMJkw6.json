@@ -1,0 +1,207 @@
+{
+  "id": "AXo3zn72ezXMJkw6",
+  "name": "Lokalise - Task effort probe",
+  "description": "Fetches everything needed to measure a linguist's effort on one Lokalise task: the task object, its keys with translations per language, and the audit-log events for each assignee. Analysis happens outside n8n in the lokalise-task-effort skill's Python sc",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-24T10:41:57.494Z",
+  "updatedAt": "2026-08-24T14:49:10.585Z",
+  "isArchived": false,
+  "versionId": "1d90a4a3-b206-48f2-9b67-83385e095bd3",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "8b9ab0c7-091c-4e6f-8c41-6fbda50bacd5",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "1386c90c-cd90-4e3d-83dd-980a597208b6",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: { project_id: '691331356a3b9a68428ab3.43540470', task_id: 3826891 } }];"
+      }
+    },
+    {
+      "id": "a8b834c6-1ceb-47ff-9758-4cce0191868a",
+      "name": "Fetch Task",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/tasks/{{ $json.task_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "f4089fad-7d20-4b1b-9fd7-b2809949e5c5",
+      "name": "Build Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const cfg = $('Config').first().json; const raw = $input.first().json || {}; const body = raw.body || raw; const task = body.task || {}; const langs = task.languages || []; const created = task.created_at_timestamp || 0; const closed = task.completed_at_timestamp || Math.floor(Date.now() / 1000); const ymd = function (ts) { return new Date(ts * 1000).toISOString().slice(0, 10); }; const dateFrom = ymd(created); const dateTo = ymd(closed); const EVENTS = ['translation.updated', 'translation.proofread', 'translations.updated', 'task.item.closed', 'user.authentication.succeeded']; const out = []; const seen = {}; for (const L of langs) { const ids = []; for (const k of (L.keys || [])) { if (typeof k === 'number') { ids.push(k); } else if (k && k.key_id) { ids.push(k.key_id); } } for (let i = 0; i < ids.length; i += 100) { out.push({ json: { kind: 'keys', lang_id: L.language_id, lang_iso: L.language_iso, lang_key_total: ids.length, url: 'https://api.lokalise.com/api2/projects/' + cfg.project_id + '/keys?filter_key_ids=' + ids.slice(i, i + 100).join(',') + '&include_translations=1&filter_translation_lang_ids=' + L.language_id + '&limit=500&page=1' } }); } for (const u of (L.users || [])) { if (seen[u.user_id]) { continue; } seen[u.user_id] = true; for (const ev of EVENTS) { out.push({ json: { kind: 'audit', event_type: ev, user_id: u.user_id, user_email: u.email, url: 'https://api.lokalise.com/v1/audit-logs?limit=1000&date_from=' + dateFrom + '&date_to=' + dateTo + '&user_id=' + u.user_id + '&event_type=' + ev } }); } } } return out;"
+      }
+    },
+    {
+      "id": "2a9fca91-a5ad-487d-b979-542be4b026e4",
+      "name": "Fetch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 220
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Task": {
+      "main": [
+        [
+          {
+            "node": "Build Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Requests": {
+      "main": [
+        [
+          {
+            "node": "Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "AXo3zn72ezXMJkw6",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-24T10:41:57.496Z",
+      "updatedAt": "2026-08-24T10:41:57.496Z"
+    }
+  ],
+  "activeVersion": null
+}
