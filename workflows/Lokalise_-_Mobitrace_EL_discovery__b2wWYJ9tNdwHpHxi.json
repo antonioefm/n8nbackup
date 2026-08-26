@@ -1,0 +1,235 @@
+{
+  "id": "b2wWYJ9tNdwHpHxi",
+  "name": "Lokalise - Mobitrace EL discovery",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-25T14:42:01.206Z",
+  "updatedAt": "2026-08-25T14:42:01.206Z",
+  "isArchived": false,
+  "versionId": "9c8ebb85-98e7-42d5-aa61-def8da938132",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "7c65239f-57b9-46b4-93a5-4795ce794e0c",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a59c8228-9f6f-4eb0-8c1c-274b6b106563",
+      "name": "Fetch Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=500&page=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "5888f3ac-10b9-4fc4-963a-f25601877994",
+      "name": "Pick Project",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const all = [];\nfor (const it of items) { for (const p of (it.json.projects || [])) { all.push({ project_id: p.project_id, name: p.name, base: p.base_language_iso }); } }\nconst hits = all.filter(function (p) { const n = p.name.toLowerCase(); return n.indexOf('mobitrace') >= 0; });\nconst front = hits.filter(function (p) { const n = p.name.toLowerCase(); return n.indexOf('front') >= 0 || n.indexOf('fe') >= 0 || n.indexOf('web') >= 0; });\nconst chosen = front.length === 1 ? front[0] : (hits.length === 1 ? hits[0] : (front[0] || hits[0] || null));\nif (!chosen) { return [{ json: { error: 'no mobitrace project found', all_project_names: all.map(function (p) { return p.name; }) } }]; }\nreturn [{ json: { project_id: chosen.project_id, project_name: chosen.name, base: chosen.base, mobitrace_candidates: hits, total_projects: all.length } }];\n"
+      }
+    },
+    {
+      "id": "45d4c96f-b536-4462-bc93-c525d014123b",
+      "name": "Fetch Languages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/languages?limit=500&page=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "9352c7d8-850a-42c0-8f3a-2fc6ed5f97f3",
+      "name": "Fetch Contributors",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $(\"Pick Project\").first().json.project_id }}/contributors?limit=500&page=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "6aed85a7-bd13-4f18-80be-ff7559db79bc",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const proj = $('Pick Project').first().json;\nconst langsRaw = $('Fetch Languages').all();\nconst contribRaw = $('Fetch Contributors').all();\n\nconst langs = [];\nfor (const it of langsRaw) { for (const l of ((it.json || {}).languages || [])) { langs.push({ lang_id: l.lang_id, lang_iso: l.lang_iso, lang_name: l.lang_name }); } }\n\nconst contribs = [];\nfor (const it of contribRaw) { for (const c of ((it.json || {}).contributors || [])) {\n  const isos = [];\n  for (const l of (c.languages || [])) { isos.push(l.lang_iso); }\n  contribs.push({ user_id: c.user_id, email: c.email, fullname: c.fullname, is_admin: c.is_admin, is_reviewer: c.is_reviewer, langs: isos });\n} }\n\nconst greek = langs.filter(function (l) { const i = (l.lang_iso || '').toLowerCase(); return i === 'el' || i.indexOf('el_') === 0 || i.indexOf('el-') === 0; });\nconst greekPeople = contribs.filter(function (c) { return c.is_admin || c.langs.some(function (i) { return (i || '').toLowerCase().indexOf('el') === 0; }); });\n\nreturn [{ json: {\n  project: proj,\n  greek_languages: greek,\n  all_language_isos: langs.map(function (l) { return l.lang_iso; }),\n  language_count: langs.length,\n  contributor_count: contribs.length,\n  greek_contributors: greekPeople,\n  all_contributors: contribs\n}}];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Projects": {
+      "main": [
+        [
+          {
+            "node": "Pick Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Project": {
+      "main": [
+        [
+          {
+            "node": "Fetch Languages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Languages": {
+      "main": [
+        [
+          {
+            "node": "Fetch Contributors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Contributors": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "b2wWYJ9tNdwHpHxi",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-25T14:42:01.208Z",
+      "updatedAt": "2026-08-25T14:42:01.208Z"
+    }
+  ],
+  "activeVersion": null
+}
