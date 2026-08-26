@@ -1,0 +1,278 @@
+{
+  "id": "kyv31XeFhDyhOJHs",
+  "name": "Lokalise - register translation webhooks (one-off)",
+  "description": "One-off: registers the translation-update webhook on every Lokalise project, skipping projects that already have it.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-25T08:47:55.791Z",
+  "updatedAt": "2026-08-25T08:47:55.791Z",
+  "isArchived": false,
+  "versionId": "31c03bf3-1ee0-4699-a9ba-30d8e9da93a1",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "1fa4e523-eea8-4491-870b-cd362ce7692c",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "6ad65553-946b-4c03-980e-192caf8e8c81",
+      "name": "Fetch Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=500&page=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "a1a8ee3f-d256-40ee-9e9c-a276e37f8d34",
+      "name": "List Projects",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const out = [];\nfor (const it of items) {\n  for (const p of (it.json.projects || [])) {\n    out.push({ json: { project_id: p.project_id, project_name: p.name } });\n  }\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "71fd08e2-3edd-4b7e-b1d1-7561d027f57f",
+      "name": "Get Existing Webhooks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/webhooks?limit=100&page=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 220
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "8b72a717-5ed9-41c0-b1eb-57122c39123e",
+      "name": "Decide Creates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const TARGET = 'https://efuturemedia.app.n8n.cloud/webhook/lokalise-tu-6f2a91c7d5';\nconst reqs = $('List Projects').all();\nconst res = $input.all();\nconst out = [];\nconst skipped = [];\nconst failed = [];\nfor (let i = 0; i < res.length; i++) {\n  const pi = res[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const m = ((reqs[idx] || reqs[i] || {}).json) || {};\n  const r = res[i].json || {};\n  if (r.statusCode !== 200) { failed.push(m.project_name); continue; }\n  const hooks = (r.body || {}).webhooks || [];\n  let exists = false;\n  for (const h of hooks) { if (String(h.url) === TARGET) { exists = true; } }\n  if (exists) { skipped.push(m.project_name); continue; }\n  out.push({ json: {\n    project_id: m.project_id,\n    project_name: m.project_name,\n    skipped_count: skipped.length,\n    failed_list: failed.join(', '),\n    body_json: JSON.stringify({ url: TARGET, events: ['project.translation.updated', 'project.translations.updated'] })\n  }});\n}\nif (out.length === 0) {\n  return [{ json: { none_to_create: true, skipped: skipped.join(', '), failed: failed.join(', ') } }];\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "1d447973-b0c0-4ab1-8e72-cf69fe0d16d1",
+      "name": "Create Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/webhooks",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.body_json }}",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "97bd8254-930c-4b1a-bd00-1695d7b955b4",
+      "name": "Summarise Registration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const reqs = $('Decide Creates').all();\nconst res = $input.all();\nconst ok = [];\nconst bad = [];\nfor (let i = 0; i < res.length; i++) {\n  const pi = res[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const m = ((reqs[idx] || reqs[i] || {}).json) || {};\n  const r = res[i].json || {};\n  const b = r.body || {};\n  if (r.statusCode === 200 && b.webhook) { ok.push(m.project_name); }\n  else { bad.push(m.project_name + ': ' + JSON.stringify(b).slice(0, 160)); }\n}\nconst first = (reqs[0] || {}).json || {};\nreturn [{ json: { created: ok.length, created_list: ok, failed: bad, already_had_it: first.skipped_count, read_failures: first.failed_list } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Projects": {
+      "main": [
+        [
+          {
+            "node": "List Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Projects": {
+      "main": [
+        [
+          {
+            "node": "Get Existing Webhooks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Existing Webhooks": {
+      "main": [
+        [
+          {
+            "node": "Decide Creates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide Creates": {
+      "main": [
+        [
+          {
+            "node": "Create Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Webhook": {
+      "main": [
+        [
+          {
+            "node": "Summarise Registration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "kyv31XeFhDyhOJHs",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-25T08:47:55.792Z",
+      "updatedAt": "2026-08-25T08:47:55.792Z"
+    }
+  ],
+  "activeVersion": null
+}
