@@ -1,0 +1,522 @@
+{
+  "id": "n7uFii79sbrMQSWN",
+  "name": "Lokalise nightly key edits by language",
+  "description": "Nightly 03:00 Madrid: posts keys edited per language per product to #i18n-team, from Lokalise translation-update webhook events collected in the lokalise_translation_updates data table. Rolling 7-day window.",
+  "active": true,
+  "activeVersionId": "b84242d0-f7c9-4ea1-bdf4-17cf1666c94b",
+  "createdAt": "2026-08-25T07:08:47.160Z",
+  "updatedAt": "2026-08-25T08:53:51.774Z",
+  "isArchived": false,
+  "versionId": "b84242d0-f7c9-4ea1-bdf4-17cf1666c94b",
+  "versionCounter": 10,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "78b46f47-9b6a-4acc-9861-9800eb64ab68",
+      "name": "Nightly 03:00 Madrid",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 3,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "64386feb-c7a1-4db6-94b4-92a597457400",
+      "name": "Fetch Lokalise Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=500&page=1&include_statistics=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "c7277150-51c0-4981-a0a0-f8483985fff9",
+      "name": "Format Slack Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Accounts whose edits are not counted as translator work.\nconst EXCLUDE_EMAILS = 'support@lokalise.co,support@lokali.se,maria@efuturemedia.com,kseniya.krasovskaya@efuturemedia.com';\nconst WINDOW_HOURS = 168;\n// When the webhook collector went live; before this there is no event history.\nconst COLLECTION_START = 1787647800;\nconst TZ = 'Europe/Madrid';\n\nconst now = Math.floor(Date.now() / 1000);\nconst since = now - WINDOW_HOURS * 3600;\nlet windowLabel = WINDOW_HOURS + 'h';\nif (WINDOW_HOURS % 24 === 0) { const dys = WINDOW_HOURS / 24; windowLabel = dys + (dys === 1 ? ' day' : ' days'); }\n\nconst excl = [];\nfor (const e of EXCLUDE_EMAILS.toLowerCase().split(',')) { const v = e.trim(); if (v) { excl.push(v); } }\n\nfunction stamp(ts) {\n  const d = new Date(ts * 1000);\n  return d.toLocaleString('en-GB', { timeZone: TZ, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });\n}\nfunction num(n) { return Number(n).toLocaleString('en-US'); }\nfunction isPseudo(iso) { const s = (iso || '').toLowerCase(); return s === 'pst' || s.indexOf('pseudo') >= 0; }\n\nconst projects = ($('Fetch Lokalise Projects').first().json || {}).projects || [];\nconst pmap = {};\nlet productCount = 0;\nfor (const p of projects) {\n  const st = p.statistics || {};\n  const kt = (st.keys_total === undefined || st.keys_total === null) ? 0 : st.keys_total;\n  pmap[String(p.project_id)] = { name: p.name, base: String(p.base_language_iso || 'en').toLowerCase(), keys_total: kt };\n  if (kt) { productCount++; }\n}\n\nconst byProject = {};\nlet events = 0;\nfor (const it of $input.all()) {\n  const r = it.json || {};\n  const ts = parseInt(r.event_ts, 10) || 0;\n  if (ts < since) { continue; }\n  const pid = String(r.project_id || '');\n  const meta = pmap[pid] || { name: r.project_name || pid, base: 'en', keys_total: null };\n  const iso = String(r.language_iso || '').toLowerCase();\n  if (!iso || iso === meta.base || isPseudo(iso)) { continue; }\n  const em = String(r.user_email || '').toLowerCase();\n  if (excl.indexOf(em) >= 0) { continue; }\n  events++;\n  if (!byProject[pid]) { byProject[pid] = { name: meta.name, keys_total: meta.keys_total, langs: {}, all: {} }; }\n  const b = byProject[pid];\n  if (!b.langs[iso]) { b.langs[iso] = {}; }\n  b.langs[iso][r.key_id] = 1;\n  b.all[r.key_id] = 1;\n}\n\nconst rows = [];\nfor (const pid of Object.keys(byProject)) {\n  const b = byProject[pid];\n  const langs = [];\n  for (const l of Object.keys(b.langs)) { langs.push({ lang: l, n: Object.keys(b.langs[l]).length }); }\n  if (!langs.length) { continue; }\n  langs.sort(function (a, c) { if (c.n !== a.n) { return c.n - a.n; } return a.lang.localeCompare(c.lang); });\n  rows.push({ name: b.name, keys_total: b.keys_total, distinct: Object.keys(b.all).length, langs: langs });\n}\nrows.sort(function (a, b) {\n  return a.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase().localeCompare(b.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase());\n});\n\nlet grand = 0;\nfor (const r of rows) { for (const l of r.langs) { grand += l.n; } }\n\nlet text = '*Lokalise — keys edited in the last ' + windowLabel + '*\\n';\ntext += '_' + stamp(since) + ' → ' + stamp(now) + ' (Madrid). Translation updates only — status changes, source language, pseudo-language and admin accounts excluded._\\n\\n';\n\nif (rows.length === 0) {\n  text += 'No translation updates in the window.\\n';\n} else {\n  text += '*' + num(grand) + ' key edits across ' + rows.length + ' of ' + productCount + ' products*\\n\\n';\n  for (const r of rows) {\n    const parts = [];\n    for (const l of r.langs) { parts.push(l.lang + ' ' + num(l.n)); }\n    const totalTxt = (r.keys_total === null || r.keys_total === undefined) ? 'unknown' : num(r.keys_total);\n    text += '• *' + r.name + '* — ' + num(r.distinct) + ' keys touched of ' + totalTxt + ' in the product\\n';\n    text += '   ' + parts.join('  ·  ') + '\\n';\n  }\n  text += '\\n' + (productCount - rows.length) + ' product(s) with no edits.\\n';\n}\n\nif (since < COLLECTION_START) {\n  text += '\\n_Event collection started ' + stamp(COLLECTION_START) + ', so this window is not yet complete._';\n}\nif (text.length > 3800) { text = text.slice(0, 3740) + '\\n… truncated, see the full run in n8n.'; }\n\nreturn [{ json: { report: text, products_with_edits: rows.length, products_total: productCount, grand_total: grand, events_counted: events } }];\n"
+      }
+    },
+    {
+      "id": "70d03968-c24d-42ca-91e1-07592a458124",
+      "name": "Post Report to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "authentication": "accessToken",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C094NS33FN0",
+          "cachedResultName": "i18n-team"
+        },
+        "messageType": "text",
+        "text": "={{ $json.report }}",
+        "otherOptions": {
+          "mrkdwn": true,
+          "includeLinkToWorkflow": false,
+          "unfurl_links": false,
+          "unfurl_media": false
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "disabled": false,
+      "executeOnce": true,
+      "webhookId": "50ae2660-7d5e-4083-aa48-2944ee307ce0"
+    },
+    {
+      "id": "e77dd711-7b21-498b-9632-90dbaf9fbe9a",
+      "name": "Get Recent Edits",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "bU6k3rm4UCE9amy2",
+          "cachedResultName": "lokalise_translation_updates"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "event_ts",
+              "condition": "gte",
+              "keyValue": "={{ Math.floor(Date.now() / 1000) - 604800 }}"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "b2edd40e-f017-472c-b9a6-62b8b40d07f9",
+      "name": "Prune Old Events",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "deleteRows",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "bU6k3rm4UCE9amy2",
+          "cachedResultName": "lokalise_translation_updates"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "event_ts",
+              "condition": "lt",
+              "keyValue": "={{ Math.floor(Date.now() / 1000) - 2592000 }}"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Nightly 03:00 Madrid": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lokalise Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Slack Report": {
+      "main": [
+        [
+          {
+            "node": "Post Report to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lokalise Projects": {
+      "main": [
+        [
+          {
+            "node": "Get Recent Edits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Recent Edits": {
+      "main": [
+        [
+          {
+            "node": "Format Slack Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Report to Slack": {
+      "main": [
+        [
+          {
+            "node": "Prune Old Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Madrid",
+    "saveDataErrorExecution": "all",
+    "executionTimeout": 1800
+  },
+  "staticData": {
+    "node:Nightly 03:00 Madrid": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    }
+  },
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "n7uFii79sbrMQSWN",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-25T07:08:47.161Z",
+      "updatedAt": "2026-08-25T07:08:47.161Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "b84242d0-f7c9-4ea1-bdf4-17cf1666c94b",
+    "workflowId": "n7uFii79sbrMQSWN",
+    "nodes": [
+      {
+        "id": "78b46f47-9b6a-4acc-9861-9800eb64ab68",
+        "name": "Nightly 03:00 Madrid",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.3,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "days",
+                "daysInterval": 1,
+                "triggerAtHour": 3,
+                "triggerAtMinute": 0
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "64386feb-c7a1-4db6-94b4-92a597457400",
+        "name": "Fetch Lokalise Projects",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          220,
+          0
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://api.lokalise.com/api2/projects?limit=500&page=1&include_statistics=1",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "4cb6G6nZVVtP4HIO",
+            "name": "Lokalise access token read-write"
+          }
+        }
+      },
+      {
+        "id": "c7277150-51c0-4981-a0a0-f8483985fff9",
+        "name": "Format Slack Report",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          880,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "// Accounts whose edits are not counted as translator work.\nconst EXCLUDE_EMAILS = 'support@lokalise.co,support@lokali.se,maria@efuturemedia.com,kseniya.krasovskaya@efuturemedia.com';\nconst WINDOW_HOURS = 168;\n// When the webhook collector went live; before this there is no event history.\nconst COLLECTION_START = 1787647800;\nconst TZ = 'Europe/Madrid';\n\nconst now = Math.floor(Date.now() / 1000);\nconst since = now - WINDOW_HOURS * 3600;\nlet windowLabel = WINDOW_HOURS + 'h';\nif (WINDOW_HOURS % 24 === 0) { const dys = WINDOW_HOURS / 24; windowLabel = dys + (dys === 1 ? ' day' : ' days'); }\n\nconst excl = [];\nfor (const e of EXCLUDE_EMAILS.toLowerCase().split(',')) { const v = e.trim(); if (v) { excl.push(v); } }\n\nfunction stamp(ts) {\n  const d = new Date(ts * 1000);\n  return d.toLocaleString('en-GB', { timeZone: TZ, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });\n}\nfunction num(n) { return Number(n).toLocaleString('en-US'); }\nfunction isPseudo(iso) { const s = (iso || '').toLowerCase(); return s === 'pst' || s.indexOf('pseudo') >= 0; }\n\nconst projects = ($('Fetch Lokalise Projects').first().json || {}).projects || [];\nconst pmap = {};\nlet productCount = 0;\nfor (const p of projects) {\n  const st = p.statistics || {};\n  const kt = (st.keys_total === undefined || st.keys_total === null) ? 0 : st.keys_total;\n  pmap[String(p.project_id)] = { name: p.name, base: String(p.base_language_iso || 'en').toLowerCase(), keys_total: kt };\n  if (kt) { productCount++; }\n}\n\nconst byProject = {};\nlet events = 0;\nfor (const it of $input.all()) {\n  const r = it.json || {};\n  const ts = parseInt(r.event_ts, 10) || 0;\n  if (ts < since) { continue; }\n  const pid = String(r.project_id || '');\n  const meta = pmap[pid] || { name: r.project_name || pid, base: 'en', keys_total: null };\n  const iso = String(r.language_iso || '').toLowerCase();\n  if (!iso || iso === meta.base || isPseudo(iso)) { continue; }\n  const em = String(r.user_email || '').toLowerCase();\n  if (excl.indexOf(em) >= 0) { continue; }\n  events++;\n  if (!byProject[pid]) { byProject[pid] = { name: meta.name, keys_total: meta.keys_total, langs: {}, all: {} }; }\n  const b = byProject[pid];\n  if (!b.langs[iso]) { b.langs[iso] = {}; }\n  b.langs[iso][r.key_id] = 1;\n  b.all[r.key_id] = 1;\n}\n\nconst rows = [];\nfor (const pid of Object.keys(byProject)) {\n  const b = byProject[pid];\n  const langs = [];\n  for (const l of Object.keys(b.langs)) { langs.push({ lang: l, n: Object.keys(b.langs[l]).length }); }\n  if (!langs.length) { continue; }\n  langs.sort(function (a, c) { if (c.n !== a.n) { return c.n - a.n; } return a.lang.localeCompare(c.lang); });\n  rows.push({ name: b.name, keys_total: b.keys_total, distinct: Object.keys(b.all).length, langs: langs });\n}\nrows.sort(function (a, b) {\n  return a.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase().localeCompare(b.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase());\n});\n\nlet grand = 0;\nfor (const r of rows) { for (const l of r.langs) { grand += l.n; } }\n\nlet text = '*Lokalise — keys edited in the last ' + windowLabel + '*\\n';\ntext += '_' + stamp(since) + ' → ' + stamp(now) + ' (Madrid). Translation updates only — status changes, source language, pseudo-language and admin accounts excluded._\\n\\n';\n\nif (rows.length === 0) {\n  text += 'No translation updates in the window.\\n';\n} else {\n  text += '*' + num(grand) + ' key edits across ' + rows.length + ' of ' + productCount + ' products*\\n\\n';\n  for (const r of rows) {\n    const parts = [];\n    for (const l of r.langs) { parts.push(l.lang + ' ' + num(l.n)); }\n    const totalTxt = (r.keys_total === null || r.keys_total === undefined) ? 'unknown' : num(r.keys_total);\n    text += '• *' + r.name + '* — ' + num(r.distinct) + ' keys touched of ' + totalTxt + ' in the product\\n';\n    text += '   ' + parts.join('  ·  ') + '\\n';\n  }\n  text += '\\n' + (productCount - rows.length) + ' product(s) with no edits.\\n';\n}\n\nif (since < COLLECTION_START) {\n  text += '\\n_Event collection started ' + stamp(COLLECTION_START) + ', so this window is not yet complete._';\n}\nif (text.length > 3800) { text = text.slice(0, 3740) + '\\n… truncated, see the full run in n8n.'; }\n\nreturn [{ json: { report: text, products_with_edits: rows.length, products_total: productCount, grand_total: grand, events_counted: events } }];\n"
+        }
+      },
+      {
+        "id": "70d03968-c24d-42ca-91e1-07592a458124",
+        "name": "Post Report to Slack",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.7,
+        "position": [
+          1100,
+          0
+        ],
+        "parameters": {
+          "resource": "message",
+          "operation": "post",
+          "authentication": "accessToken",
+          "select": "channel",
+          "channelId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "C094NS33FN0",
+            "cachedResultName": "i18n-team"
+          },
+          "messageType": "text",
+          "text": "={{ $json.report }}",
+          "otherOptions": {
+            "mrkdwn": true,
+            "includeLinkToWorkflow": false,
+            "unfurl_links": false,
+            "unfurl_media": false
+          }
+        },
+        "credentials": {
+          "slackApi": {
+            "id": "CXa5wwj5tndNAnHG",
+            "name": "i18n assignment bot"
+          }
+        },
+        "disabled": false,
+        "executeOnce": true,
+        "webhookId": "50ae2660-7d5e-4083-aa48-2944ee307ce0"
+      },
+      {
+        "id": "e77dd711-7b21-498b-9632-90dbaf9fbe9a",
+        "name": "Get Recent Edits",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          440,
+          0
+        ],
+        "parameters": {
+          "resource": "row",
+          "operation": "get",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "bU6k3rm4UCE9amy2",
+            "cachedResultName": "lokalise_translation_updates"
+          },
+          "matchType": "allConditions",
+          "filters": {
+            "conditions": [
+              {
+                "keyName": "event_ts",
+                "condition": "gte",
+                "keyValue": "={{ Math.floor(Date.now() / 1000) - 604800 }}"
+              }
+            ]
+          },
+          "returnAll": true
+        }
+      },
+      {
+        "id": "b2edd40e-f017-472c-b9a6-62b8b40d07f9",
+        "name": "Prune Old Events",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          1320,
+          0
+        ],
+        "parameters": {
+          "resource": "row",
+          "operation": "deleteRows",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "bU6k3rm4UCE9amy2",
+            "cachedResultName": "lokalise_translation_updates"
+          },
+          "matchType": "allConditions",
+          "filters": {
+            "conditions": [
+              {
+                "keyName": "event_ts",
+                "condition": "lt",
+                "keyValue": "={{ Math.floor(Date.now() / 1000) - 2592000 }}"
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Nightly 03:00 Madrid": {
+        "main": [
+          [
+            {
+              "node": "Fetch Lokalise Projects",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Slack Report": {
+        "main": [
+          [
+            {
+              "node": "Post Report to Slack",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Lokalise Projects": {
+        "main": [
+          [
+            {
+              "node": "Get Recent Edits",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Recent Edits": {
+        "main": [
+          [
+            {
+              "node": "Format Slack Report",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Post Report to Slack": {
+        "main": [
+          [
+            {
+              "node": "Prune Old Events",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Maria Sica (via MCP)",
+    "name": "Re-enable Slack posting",
+    "description": "Updated workflow",
+    "autosaved": false,
+    "createdAt": "2026-08-25T08:53:51.779Z",
+    "updatedAt": "2026-08-25T08:53:51.779Z",
+    "workflowPublishHistory": [
+      {
+        "id": 1555,
+        "workflowId": "n7uFii79sbrMQSWN",
+        "versionId": "b84242d0-f7c9-4ea1-bdf4-17cf1666c94b",
+        "event": "activated",
+        "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
+        "createdAt": "2026-08-25T08:53:55.671Z"
+      }
+    ]
+  }
+}
