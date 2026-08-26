@@ -1,0 +1,548 @@
+{
+  "id": "HfTBYlXz1eGDdFO2",
+  "name": "Lokalise nightly key edits - project scan (sub)",
+  "description": "Sub-workflow: finds keys whose translations changed since a timestamp, then counts edited keys per language for one project.",
+  "active": true,
+  "activeVersionId": "5aa6447f-600d-44f2-9939-5a4376c593e6",
+  "createdAt": "2026-08-25T07:16:33.269Z",
+  "updatedAt": "2026-08-25T07:16:33.269Z",
+  "isArchived": false,
+  "versionId": "5aa6447f-600d-44f2-9939-5a4376c593e6",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "cc12c5c2-2730-4737-be2b-45f08cea5b9d",
+      "name": "Project Input",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "b13dd62b-b6da-453b-82d0-a33c8a503cec",
+      "name": "Fetch Key Page 1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?limit=5000&page=1&disable_references=1&filter_archived=exclude",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 220
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "e1ccc307-882d-4d44-b51a-069f6c4db42b",
+      "name": "Build Key Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const meta = $('Project Input').first().json;\nconst r = $input.first().json || {};\nconst hdr = r.headers || {};\nconst total = parseInt(hdr['x-pagination-total-count'] || '0', 10);\nconst MAX_PAGES = 40;\nlet pages = Math.ceil(total / 5000);\nlet capped = false;\nif (pages > MAX_PAGES) { pages = MAX_PAGES; capped = true; }\nconst out = [];\nfor (let p = 2; p <= pages; p++) {\n  out.push({ json: { page: p, capped: capped, noop: false, url: 'https://api.lokalise.com/api2/projects/' + meta.project_id + '/keys?limit=5000&page=' + p + '&disable_references=1&filter_archived=exclude' } });\n}\nif (out.length === 0) {\n  out.push({ json: { page: 0, capped: false, noop: true, url: 'https://api.lokalise.com/api2/projects/' + meta.project_id + '/keys?limit=1&page=1&disable_references=1' } });\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "0df9fc36-420d-4aa9-9a24-cf5e27ea9951",
+      "name": "Fetch Key Pages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 220
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "63f4d031-2274-472f-a351-50dcf4d29dee",
+      "name": "Find Changed Keys",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const meta = $('Project Input').first().json;\nconst since = parseInt(meta.since_ts, 10) || 0;\nconst CHUNK = 150;\nconst MAX_KEYS = 15000;\nconst pageMeta = $('Build Key Pages').all();\nlet noopPages = false;\nif (pageMeta.length === 1 && pageMeta[0].json.noop) { noopPages = true; }\nlet capped = false;\nfor (const p of pageMeta) { if (p.json.capped) { capped = true; } }\n\nconst first = $('Fetch Key Page 1').first().json || {};\nlet failed = false;\nif (first.statusCode !== 200) { failed = true; }\nconst batches = [];\nbatches.push((first.body || {}).keys || []);\nif (!noopPages) {\n  for (const it of $input.all()) {\n    const j = it.json || {};\n    if (j.statusCode !== 200) { failed = true; continue; }\n    batches.push((j.body || {}).keys || []);\n  }\n}\n\nconst changed = [];\nlet scanned = 0;\nfor (const arr of batches) {\n  for (const k of arr) {\n    scanned++;\n    if (k.is_archived) { continue; }\n    const ts = k.translations_modified_at_timestamp || 0;\n    if (ts >= since) { changed.push(k.key_id); }\n  }\n}\nif (changed.length > MAX_KEYS) { changed.length = MAX_KEYS; capped = true; }\n\nconst out = [];\nfor (let i = 0; i < changed.length; i += CHUNK) {\n  const ids = changed.slice(i, i + CHUNK);\n  out.push({ json: {\n    noop: false,\n    candidates: changed.length,\n    keys_scanned: scanned,\n    failed: failed,\n    capped: capped,\n    chunk_size: ids.length,\n    url: 'https://api.lokalise.com/api2/projects/' + meta.project_id + '/keys?limit=500&page=1&disable_references=1&include_translations=1&filter_key_ids=' + ids.join(',')\n  }});\n}\nif (out.length === 0) {\n  out.push({ json: { noop: true, candidates: 0, keys_scanned: scanned, failed: failed, capped: capped, chunk_size: 0, url: 'https://api.lokalise.com/api2/projects/' + meta.project_id + '/keys?limit=1&page=1&disable_references=1' } });\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "4ce7e12d-15a8-41a9-bf44-d02890546261",
+      "name": "Fetch Changed Key Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 220
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "27724f05-0e87-4ff6-87d3-a6f42185fbf7",
+      "name": "Aggregate Project Edits",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const meta = $('Project Input').first().json;\nconst since = parseInt(meta.since_ts, 10) || 0;\nconst base = String(meta.base_lang || 'en').toLowerCase();\nconst exclRaw = String(meta.exclude_emails || '').toLowerCase();\nconst excl = [];\nfor (const e of exclRaw.split(',')) { const v = e.trim(); if (v) { excl.push(v); } }\n\nconst chunkMeta = $('Find Changed Keys').all();\nconst m0 = chunkMeta[0].json;\nlet failed = m0.failed;\nlet capped = m0.capped;\nconst candidates = m0.candidates;\nconst keysScanned = m0.keys_scanned;\nconst noop = m0.noop;\n\nfunction isPseudo(iso) { const s = (iso || '').toLowerCase(); return s === 'pst' || s.indexOf('pseudo') >= 0; }\n\nconst byLang = {};\nconst allKeys = {};\nconst editors = {};\nlet detailKeys = 0;\nif (!noop) {\n  for (const it of $input.all()) {\n    const j = it.json || {};\n    if (j.statusCode !== 200) { failed = true; continue; }\n    for (const k of ((j.body || {}).keys || [])) {\n      detailKeys++;\n      if (k.is_archived) { continue; }\n      for (const t of (k.translations || [])) {\n        const ts = t.modified_at_timestamp || 0;\n        if (ts < since) { continue; }\n        if (t.is_untranslated) { continue; }\n        const iso = String(t.language_iso || '').toLowerCase();\n        if (iso === base) { continue; }\n        if (isPseudo(iso)) { continue; }\n        const em = String(t.modified_by_email || ('id:' + t.modified_by)).toLowerCase();\n        if (excl.indexOf(em) >= 0) { continue; }\n        if (!byLang[iso]) { byLang[iso] = {}; }\n        byLang[iso][k.key_id] = 1;\n        allKeys[k.key_id] = 1;\n        editors[em] = (editors[em] || 0) + 1;\n      }\n    }\n  }\n}\n\nconst counts = {};\nfor (const l of Object.keys(byLang)) { counts[l] = Object.keys(byLang[l]).length; }\n\nreturn [{ json: {\n  project_name: meta.project_name,\n  project_id: meta.project_id,\n  keys_total: meta.keys_total,\n  base_lang: base,\n  keys_scanned: keysScanned,\n  candidates: candidates,\n  detail_keys: detailKeys,\n  filter_ok: (detailKeys <= candidates),\n  counts: counts,\n  distinct_keys_edited: Object.keys(allKeys).length,\n  editors: editors,\n  failed: failed,\n  capped: capped\n}}];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Project Input": {
+      "main": [
+        [
+          {
+            "node": "Fetch Key Page 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Key Page 1": {
+      "main": [
+        [
+          {
+            "node": "Build Key Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Key Pages": {
+      "main": [
+        [
+          {
+            "node": "Fetch Key Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Key Pages": {
+      "main": [
+        [
+          {
+            "node": "Find Changed Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Changed Keys": {
+      "main": [
+        [
+          {
+            "node": "Fetch Changed Key Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Changed Key Details": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Project Edits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "HfTBYlXz1eGDdFO2",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-25T07:16:33.284Z",
+      "updatedAt": "2026-08-25T07:16:33.284Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "5aa6447f-600d-44f2-9939-5a4376c593e6",
+    "workflowId": "HfTBYlXz1eGDdFO2",
+    "nodes": [
+      {
+        "id": "cc12c5c2-2730-4737-be2b-45f08cea5b9d",
+        "name": "Project Input",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "b13dd62b-b6da-453b-82d0-a33c8a503cec",
+        "name": "Fetch Key Page 1",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          220,
+          0
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?limit=5000&page=1&disable_references=1&filter_archived=exclude",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "options": {
+            "timeout": 120000,
+            "batching": {
+              "batch": {
+                "batchSize": 1,
+                "batchInterval": 220
+              }
+            },
+            "response": {
+              "response": {
+                "fullResponse": true,
+                "neverError": true
+              }
+            }
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "4cb6G6nZVVtP4HIO",
+            "name": "Lokalise access token read-write"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "e1ccc307-882d-4d44-b51a-069f6c4db42b",
+        "name": "Build Key Pages",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          440,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const meta = $('Project Input').first().json;\nconst r = $input.first().json || {};\nconst hdr = r.headers || {};\nconst total = parseInt(hdr['x-pagination-total-count'] || '0', 10);\nconst MAX_PAGES = 40;\nlet pages = Math.ceil(total / 5000);\nlet capped = false;\nif (pages > MAX_PAGES) { pages = MAX_PAGES; capped = true; }\nconst out = [];\nfor (let p = 2; p <= pages; p++) {\n  out.push({ json: { page: p, capped: capped, noop: false, url: 'https://api.lokalise.com/api2/projects/' + meta.project_id + '/keys?limit=5000&page=' + p + '&disable_references=1&filter_archived=exclude' } });\n}\nif (out.length === 0) {\n  out.push({ json: { page: 0, capped: false, noop: true, url: 'https://api.lokalise.com/api2/projects/' + meta.project_id + '/keys?limit=1&page=1&disable_references=1' } });\n}\nreturn out;\n"
+        }
+      },
+      {
+        "id": "0df9fc36-420d-4aa9-9a24-cf5e27ea9951",
+        "name": "Fetch Key Pages",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          660,
+          0
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "={{ $json.url }}",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "options": {
+            "timeout": 120000,
+            "batching": {
+              "batch": {
+                "batchSize": 1,
+                "batchInterval": 220
+              }
+            },
+            "response": {
+              "response": {
+                "fullResponse": true,
+                "neverError": true
+              }
+            }
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "4cb6G6nZVVtP4HIO",
+            "name": "Lokalise access token read-write"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "63f4d031-2274-472f-a351-50dcf4d29dee",
+        "name": "Find Changed Keys",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          880,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const meta = $('Project Input').first().json;\nconst since = parseInt(meta.since_ts, 10) || 0;\nconst CHUNK = 150;\nconst MAX_KEYS = 15000;\nconst pageMeta = $('Build Key Pages').all();\nlet noopPages = false;\nif (pageMeta.length === 1 && pageMeta[0].json.noop) { noopPages = true; }\nlet capped = false;\nfor (const p of pageMeta) { if (p.json.capped) { capped = true; } }\n\nconst first = $('Fetch Key Page 1').first().json || {};\nlet failed = false;\nif (first.statusCode !== 200) { failed = true; }\nconst batches = [];\nbatches.push((first.body || {}).keys || []);\nif (!noopPages) {\n  for (const it of $input.all()) {\n    const j = it.json || {};\n    if (j.statusCode !== 200) { failed = true; continue; }\n    batches.push((j.body || {}).keys || []);\n  }\n}\n\nconst changed = [];\nlet scanned = 0;\nfor (const arr of batches) {\n  for (const k of arr) {\n    scanned++;\n    if (k.is_archived) { continue; }\n    const ts = k.translations_modified_at_timestamp || 0;\n    if (ts >= since) { changed.push(k.key_id); }\n  }\n}\nif (changed.length > MAX_KEYS) { changed.length = MAX_KEYS; capped = true; }\n\nconst out = [];\nfor (let i = 0; i < changed.length; i += CHUNK) {\n  const ids = changed.slice(i, i + CHUNK);\n  out.push({ json: {\n    noop: false,\n    candidates: changed.length,\n    keys_scanned: scanned,\n    failed: failed,\n    capped: capped,\n    chunk_size: ids.length,\n    url: 'https://api.lokalise.com/api2/projects/' + meta.project_id + '/keys?limit=500&page=1&disable_references=1&include_translations=1&filter_key_ids=' + ids.join(',')\n  }});\n}\nif (out.length === 0) {\n  out.push({ json: { noop: true, candidates: 0, keys_scanned: scanned, failed: failed, capped: capped, chunk_size: 0, url: 'https://api.lokalise.com/api2/projects/' + meta.project_id + '/keys?limit=1&page=1&disable_references=1' } });\n}\nreturn out;\n"
+        }
+      },
+      {
+        "id": "4ce7e12d-15a8-41a9-bf44-d02890546261",
+        "name": "Fetch Changed Key Details",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          1100,
+          0
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "={{ $json.url }}",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "options": {
+            "timeout": 120000,
+            "batching": {
+              "batch": {
+                "batchSize": 1,
+                "batchInterval": 220
+              }
+            },
+            "response": {
+              "response": {
+                "fullResponse": true,
+                "neverError": true
+              }
+            }
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "4cb6G6nZVVtP4HIO",
+            "name": "Lokalise access token read-write"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "27724f05-0e87-4ff6-87d3-a6f42185fbf7",
+        "name": "Aggregate Project Edits",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1320,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const meta = $('Project Input').first().json;\nconst since = parseInt(meta.since_ts, 10) || 0;\nconst base = String(meta.base_lang || 'en').toLowerCase();\nconst exclRaw = String(meta.exclude_emails || '').toLowerCase();\nconst excl = [];\nfor (const e of exclRaw.split(',')) { const v = e.trim(); if (v) { excl.push(v); } }\n\nconst chunkMeta = $('Find Changed Keys').all();\nconst m0 = chunkMeta[0].json;\nlet failed = m0.failed;\nlet capped = m0.capped;\nconst candidates = m0.candidates;\nconst keysScanned = m0.keys_scanned;\nconst noop = m0.noop;\n\nfunction isPseudo(iso) { const s = (iso || '').toLowerCase(); return s === 'pst' || s.indexOf('pseudo') >= 0; }\n\nconst byLang = {};\nconst allKeys = {};\nconst editors = {};\nlet detailKeys = 0;\nif (!noop) {\n  for (const it of $input.all()) {\n    const j = it.json || {};\n    if (j.statusCode !== 200) { failed = true; continue; }\n    for (const k of ((j.body || {}).keys || [])) {\n      detailKeys++;\n      if (k.is_archived) { continue; }\n      for (const t of (k.translations || [])) {\n        const ts = t.modified_at_timestamp || 0;\n        if (ts < since) { continue; }\n        if (t.is_untranslated) { continue; }\n        const iso = String(t.language_iso || '').toLowerCase();\n        if (iso === base) { continue; }\n        if (isPseudo(iso)) { continue; }\n        const em = String(t.modified_by_email || ('id:' + t.modified_by)).toLowerCase();\n        if (excl.indexOf(em) >= 0) { continue; }\n        if (!byLang[iso]) { byLang[iso] = {}; }\n        byLang[iso][k.key_id] = 1;\n        allKeys[k.key_id] = 1;\n        editors[em] = (editors[em] || 0) + 1;\n      }\n    }\n  }\n}\n\nconst counts = {};\nfor (const l of Object.keys(byLang)) { counts[l] = Object.keys(byLang[l]).length; }\n\nreturn [{ json: {\n  project_name: meta.project_name,\n  project_id: meta.project_id,\n  keys_total: meta.keys_total,\n  base_lang: base,\n  keys_scanned: keysScanned,\n  candidates: candidates,\n  detail_keys: detailKeys,\n  filter_ok: (detailKeys <= candidates),\n  counts: counts,\n  distinct_keys_edited: Object.keys(allKeys).length,\n  editors: editors,\n  failed: failed,\n  capped: capped\n}}];\n"
+        }
+      }
+    ],
+    "connections": {
+      "Project Input": {
+        "main": [
+          [
+            {
+              "node": "Fetch Key Page 1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Key Page 1": {
+        "main": [
+          [
+            {
+              "node": "Build Key Pages",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Key Pages": {
+        "main": [
+          [
+            {
+              "node": "Fetch Key Pages",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Key Pages": {
+        "main": [
+          [
+            {
+              "node": "Find Changed Keys",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Find Changed Keys": {
+        "main": [
+          [
+            {
+              "node": "Fetch Changed Key Details",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Changed Key Details": {
+        "main": [
+          [
+            {
+              "node": "Aggregate Project Edits",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Maria Sica (via MCP)",
+    "name": "Key-level prefilter scan",
+    "description": "Created with 7 nodes: Project Input, Fetch Key Page 1, Build Key Pages, Fetch Key Pages, Find Changed Keys and 2 more",
+    "autosaved": false,
+    "createdAt": "2026-08-25T07:16:33.287Z",
+    "updatedAt": "2026-08-25T07:16:33.287Z",
+    "workflowPublishHistory": [
+      {
+        "id": 1547,
+        "workflowId": "HfTBYlXz1eGDdFO2",
+        "versionId": "5aa6447f-600d-44f2-9939-5a4376c593e6",
+        "event": "activated",
+        "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
+        "createdAt": "2026-08-25T08:36:07.771Z"
+      }
+    ]
+  }
+}
