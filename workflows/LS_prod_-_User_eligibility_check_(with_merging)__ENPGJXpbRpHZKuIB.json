@@ -1,0 +1,1640 @@
+{
+  "id": "ENPGJXpbRpHZKuIB",
+  "name": "LS prod - User eligibility check (with merging)",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-25T13:14:32.804Z",
+  "updatedAt": "2026-08-25T14:02:07.266Z",
+  "isArchived": false,
+  "versionId": "851e6a3f-e14f-4f62-b43c-3571e1f54f8e",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "de0cb4b2-371a-407d-b970-cb77722b455a",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        496,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ec-pk",
+              "name": "project_key",
+              "value": "lovestyle_prod",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "ff83e31f-34ab-488b-af9b-b13a41e34e60",
+      "name": "Set project_key",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        720,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "IRxwFN8iBhHLFQxQ",
+          "cachedResultName": "cs_project_config"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "project_key",
+              "keyValue": "={{ $(\"Set project_key\").first().json.project_key }}"
+            }
+          ]
+        }
+      },
+      "id": "06dc3e01-fd99-4613-bd67-c6597309adf7",
+      "name": "Get Project Config",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        944,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $('When Executed by Another Workflow').all();"
+      },
+      "id": "89676919-4639-4577-b2c3-e859002786ed",
+      "name": "Restore trigger data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1168,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $(\"Restore trigger data\").first().json.body[\"ticket.id\"] }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {}
+      },
+      "id": "4753ff0a-1058-48cf-ab42-d8a06a2f0ca9",
+      "name": "Get ticket status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1392,
+        672
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "zendeskApi": {
+          "id": "GAJckAtNBWv1L38R",
+          "name": "LoveStyle prod Zendesk account"
+        }
+      },
+      "notes": "Live re-read. Also supplies created_at and status of the current ticket to the active ticket guard."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ec-ns",
+              "leftValue": "={{ $json.ticket.status }}",
+              "rightValue": "solved",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "ec-nc",
+              "leftValue": "={{ $json.ticket.status }}",
+              "rightValue": "closed",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "fc6968d8-312f-4964-a30b-f63e7f61fcff",
+      "name": "Ticket not solved or closed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1616,
+        672
+      ],
+      "notes": "True (continue): new, open, pending, hold. False (stop): solved, closed."
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "VKJxPTkYWhZaXFqW",
+          "cachedResultName": "cs_email_blocklist"
+        },
+        "returnAll": true
+      },
+      "id": "34830422-1465-4b61-888f-b81c92e691aa",
+      "name": "Get Email Blocklist",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        2048,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const email = String($('Restore trigger data').first()?.json?.body?.['ticket.requester.email'] ?? '').trim().toLowerCase();\n\nconst rows = $input.all();\n\nlet matched = null;\nif (email) {\n  for (const r of rows) {\n    const row = r.json || {};\n    const isActive = !(row.active === false || row.active === 0 || row.active === 'false' || row.active === '0' || row.active === 'no');\n    if (!isActive) continue;\n    const needle = String(row.match_value ?? '').trim().toLowerCase();\n    if (!needle) continue;\n    if (email.includes(needle)) { matched = row; break; }\n  }\n}\n\nreturn [{\n  json: {\n    email,\n    blocked: matched !== null,\n    matched_value: matched ? matched.match_value : null,\n    matched_reason: (matched && matched.reason != null) ? matched.reason : null\n  }\n}];"
+      },
+      "id": "66dd6c6b-c8c4-47d5-aa96-6f4729074e1d",
+      "name": "Filter Blocked Emails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2272,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ec-blk",
+              "leftValue": "={{ $json.blocked }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "5b636ec4-7aee-49b9-bc82-d62c599d3b95",
+      "name": "Is Blocked?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2496,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ec-be-r",
+              "name": "fail_reason",
+              "value": "blocked_email",
+              "type": "string"
+            },
+            {
+              "id": "ec-be-n",
+              "name": "note_body",
+              "value": "=Note: The requester {{ $(\"Restore trigger data\").first().json.body[\"ticket.requester.email\"] }} is on the automation blocklist because: {{ $json.matched_reason ? $json.matched_reason : \"no reason provided\" }}. If this requester should not be blocked, please report it to the Operations Department.\n\nAutomation was skipped - please handle this ticket manually.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0a682b6a-517e-46c8-94b7-e104681aaa9c",
+      "name": "Note: Blocked email",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        5440,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 4,
+        "path": "01891bfb-af67-4f61-9245-b876ee3e6879"
+      },
+      "id": "4640d8d5-bce2-4fb6-9a46-295d707286c4",
+      "name": "Wait1",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3456,
+        1184
+      ],
+      "webhookId": "01891bfb-af67-4f61-9245-b876ee3e6879"
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/users/search.json\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "=email:{{ $(\"Restore trigger data\").first().json.body[\"ticket.requester.email\"] }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2054dead-fd1b-4e31-96c0-6d058274abb7",
+      "name": "Zendesk: Find Requester by Email1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3680,
+        1184
+      ],
+      "credentials": {
+        "zendeskApi": {
+          "id": "GAJckAtNBWv1L38R",
+          "name": "LoveStyle prod Zendesk account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ec-uf",
+              "leftValue": "={{ ($json.users || []).length > 0 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "49b70055-8499-4c91-b50a-e52b31c1148e",
+      "name": "User found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3904,
+        1184
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/users/\" + $json.users[0].id + \"/tickets/requested.json\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "sort_by",
+              "value": "created_at"
+            },
+            {
+              "name": "sort_order",
+              "value": "asc"
+            },
+            {
+              "name": "per_page",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "paginationMode": "responseContainsNextURL",
+              "nextURL": "={{ $response.body.next_page }}",
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body.next_page }}",
+              "limitPagesFetched": true,
+              "maxRequests": 5
+            }
+          }
+        }
+      },
+      "id": "7934b5ed-d298-48c8-a50a-699e8a148a44",
+      "name": "Zendesk: Get Requester Tickets (live)1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4112,
+        1168
+      ],
+      "credentials": {
+        "zendeskApi": {
+          "id": "GAJckAtNBWv1L38R",
+          "name": "LoveStyle prod Zendesk account"
+        }
+      },
+      "notes": "Sorted created_at ASC so the oldest ticket (the keeper) is on page 1. Paginated, capped at 5 pages."
+    },
+    {
+      "parameters": {
+        "jsCode": "const ACTIVE = new Set(['new', 'open', 'pending', 'hold']);\n\nconst trigger = $('Restore trigger data').first().json;\nconst cfg = $('Get Project Config').first().json;\n\nconst currentId = String(trigger.body['ticket.id']);\n\nconst flag = cfg.dedupe_merge_enabled;\nconst dedupeEnabled = (flag === true || flag === 1 || flag === 'true' || flag === '1' || flag === 'yes');\n\nconst tickets = $input.all().flatMap(i => (i.json && i.json.tickets) ? i.json.tickets : []);\n\nconst active = tickets.filter(t => ACTIVE.has(String(t.status).toLowerCase()));\n\nconst currentTicket = $('Get ticket status').first().json.ticket;\nif (currentTicket && ACTIVE.has(String(currentTicket.status).toLowerCase()) && !active.some(t => String(t.id) === currentId)) {\n  active.push({ id: currentTicket.id, status: currentTicket.status, created_at: currentTicket.created_at });\n}\n\nactive.sort((a, b) => {\n  const ta = Date.parse(a.created_at);\n  const tb = Date.parse(b.created_at);\n  if (ta !== tb) return ta - tb;\n  return Number(a.id) - Number(b.id);\n});\n\nconst keeper = active.length ? active[0] : null;\nconst isKeeper = keeper ? String(keeper.id) === currentId : true;\nconst others = active.filter(t => String(t.id) !== currentId).map(t => t.id);\n\nreturn [{\n  json: {\n    dedupe_enabled: dedupeEnabled,\n    is_keeper: isKeeper,\n    current_ticket_id: Number(currentId),\n    keeper_ticket_id: keeper ? Number(keeper.id) : Number(currentId),\n    active_ticket_count: active.length,\n    active_ticket_ids: active.map(t => t.id),\n    other_active_ticket_ids: others,\n    other_active_count: others.length\n  }\n}];"
+      },
+      "id": "badc1da5-3eee-41eb-8e90-91382ee98fde",
+      "name": "Evaluate active ticket guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4400,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ec-keeper",
+              "leftValue": "={{ $json.is_keeper }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "45df9c5d-6a90-4be9-ab6d-7153013e4b0e",
+      "name": "Is this the keeper?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4640,
+        1168
+      ],
+      "notes": "True = oldest active ticket, automation proceeds. False = duplicate, merge it away."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ec-cfc",
+              "leftValue": "={{ $(\"Restore trigger data\").first().json.body[\"ticket.ticket_field_\" + $(\"Get Project Config\").first().json.ticket_field_contact_form_classification_id] }}",
+              "rightValue": "cancellation",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e8e04fe4-bd52-4027-aa61-467c0fc54358",
+      "name": "Is contact form cancellation",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        5136,
+        1056
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ec-cf-r",
+              "name": "fail_reason",
+              "value": "contact_form_cancellation",
+              "type": "string"
+            },
+            {
+              "id": "ec-cf-n",
+              "name": "note_body",
+              "value": "=Note: This ticket (#{{ $(\"Restore trigger data\").first().json.body[\"ticket.id\"] }}) was submitted through the contact form as a cancellation request. Automation was skipped.\n\nPlease handle this ticket manually.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7c5a25da-e353-48dc-808d-60996a4cfe4b",
+      "name": "Note: Contact form cancellation",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        5440,
+        848
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "07ca07eb-d21a-433e-85b7-2a730b9cf8d9",
+      "name": "Proceed (eligible)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        5760,
+        1056
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ec-p",
+              "name": "proceedWithAutomation",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1d28e675-ac18-4e85-8c18-1893effa3c5d",
+      "name": "Proceed",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        6240,
+        1056
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ec-dedupe",
+              "leftValue": "={{ $json.dedupe_enabled }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8e0f7514-5b4a-4243-be65-2496ae2ab050",
+      "name": "Dedupe merge enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4896,
+        1424
+      ],
+      "notes": "cs_project_config.dedupe_merge_enabled. Empty or false = OFF (opt-in). OFF keeps the old behaviour: internal note, set to open, manual handling."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ec-hp-pk",
+              "name": "project_key",
+              "value": "={{ $(\"Set project_key\").first().json.project_key }}",
+              "type": "string"
+            },
+            {
+              "id": "ec-hp-k",
+              "name": "keeper_ticket_id",
+              "value": "={{ $(\"Evaluate active ticket guard\").first().json.keeper_ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "ec-hp-l",
+              "name": "loser_ticket_id",
+              "value": "={{ $(\"Evaluate active ticket guard\").first().json.current_ticket_id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "db345366-f489-45cf-afd3-d414eba15f26",
+      "name": "Build handler payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        5136,
+        1424
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "8QNhrdRI5lVF3mxR",
+          "cachedResultName": "LS prod - Duplicate ticket handler"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "id": "4aa97b53-7eac-41bb-b177-1538e3f5ecfb",
+      "name": "Call: CS - Duplicate ticket handler",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        5376,
+        1424
+      ],
+      "notes": "Fire and forget - waitForSubWorkflow is OFF on purpose."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ec-sil-p",
+              "name": "proceedWithAutomation",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "id": "ec-sil-r",
+              "name": "fail_reason",
+              "value": "duplicate_merged_into_keeper",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "befe6158-6774-459c-8b06-374fb4b2abae",
+      "name": "Do not proceed (silent)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        5648,
+        1424
+      ],
+      "notes": "No internal note, no status change. The handler closes this ticket via merge."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ec-ma-r",
+              "name": "fail_reason",
+              "value": "multiple_active_tickets",
+              "type": "string"
+            },
+            {
+              "id": "ec-ma-n",
+              "name": "note_body",
+              "value": "=Note: This requester ({{ $(\"Restore trigger data\").first().json.body[\"ticket.requester.email\"] }}) has {{ $(\"Evaluate active ticket guard\").first().json.other_active_count }} other active ticket(s): {{ $(\"Evaluate active ticket guard\").first().json.other_active_ticket_ids.join(\", \") }}. The oldest one (#{{ $(\"Evaluate active ticket guard\").first().json.keeper_ticket_id }}) is the one being worked. Automation was skipped to avoid duplicate handling.\n\nPlease handle this ticket manually.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fa9f171d-0f22-4d31-9d4c-ee0dc26e3888",
+      "name": "Note: Multiple active tickets",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        5136,
+        1648
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ec-rl",
+              "leftValue": "={{ $runIndex < 3 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "29fd7e6c-c805-411f-bcf5-4986276760ea",
+      "name": "Retries left?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3904,
+        1408
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ec-unf-r",
+              "name": "fail_reason",
+              "value": "not_found",
+              "type": "string"
+            },
+            {
+              "id": "ec-unf-n",
+              "name": "note_body",
+              "value": "=Note: The requester {{ $(\"Restore trigger data\").first().json.body[\"ticket.requester.email\"] }} was not found in Zendesk.\n\nAutomation was skipped - please handle this ticket manually.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1018531-1cfe-41be-b461-e3d6f39f5c8d",
+      "name": "Note: User not found",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4144,
+        1424
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ec-as-r",
+              "name": "fail_reason",
+              "value": "already_solved_or_closed",
+              "type": "string"
+            },
+            {
+              "id": "ec-as-n",
+              "name": "note_body",
+              "value": "=Note: Ticket #{{ $(\"Restore trigger data\").first().json.body[\"ticket.id\"] }} is already in status {{ $json.ticket.status }}, so the automation had already finished with it. This run was almost certainly a duplicate or replayed Zendesk webhook. Automation was skipped and no reply was sent. No agent action needed.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5c929703-7fb9-4365-93ec-8b1a64f81f0b",
+      "name": "Note: Ticket already solved or closed",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1952,
+        880
+      ],
+      "notes": "Recorded for the execution log only - deliberately not written to Zendesk."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ec-dnp2",
+              "name": "proceedWithAutomation",
+              "value": false,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0089560d-52d7-466b-b118-1dda7993f620",
+      "name": "Do not proceed2",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2176,
+        880
+      ],
+      "notes": "Same output shape as Do not proceed1 so the calling workflow needs no change."
+    },
+    {
+      "parameters": {},
+      "id": "6348c35f-de48-4b7d-a2ee-787107969211",
+      "name": "Do not proceed",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        5760,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $(\"Restore trigger data\").first().json.body[\"ticket.id\"] }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ticket.comment.public",
+              "value": "false"
+            },
+            {
+              "name": "ticket.comment.body",
+              "value": "=User eligibility failed:\nFail reason: {{ $json.fail_reason }}\nNote: {{ $json.note_body }}\n\nPlease handle this request manually."
+            },
+            {
+              "name": "ticket.custom_status_id",
+              "value": "={{ $(\"Get Project Config\").first().json.ticket_custom_status_open_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f2844e76-4930-482a-8f62-c0476fb850fd",
+      "name": "Reply to internally and set status to open3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        6032,
+        800
+      ],
+      "retryOnFail": true,
+      "credentials": {
+        "zendeskApi": {
+          "id": "GAJckAtNBWv1L38R",
+          "name": "LoveStyle prod Zendesk account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ec-dnp1",
+              "name": "proceedWithAutomation",
+              "value": false,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "422de931-49ec-48b9-8eb3-9369ff3dbe85",
+      "name": "Do not proceed1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        6240,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 0) Check the ticket is not already solved or closed\n\nRuns first, and on purpose does NOT post an internal note or reopen the ticket.\n\nWhy the guard: on 2026-07-23 Zendesk redelivered a ticket-created webhook 8h37m late. The automation re-ran on the original first email, found the refundable charges already consumed, and emailed the customer a refund rejection after having already granted the refund.\n\nWhy no internal note here: the shared Do not proceed path sets the ticket back to open. On a solved ticket that would re-queue it for agents and could re-fire the 2nd-message trigger.",
+        "height": 300,
+        "width": 460,
+        "color": 3
+      },
+      "id": "0fdf5829-1038-490d-95f2-caabf8e85e4a",
+      "name": "Sticky Note 893030b8",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2496,
+        1184
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 1) Check for blocked emails",
+        "height": 120,
+        "width": 420,
+        "color": 7
+      },
+      "id": "9379732a-0b11-442e-b140-2a1552c38d45",
+      "name": "Sticky Note 03d1b848",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2032,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 2) One active ticket per requester\n\nActive = new, open, pending, hold. Solved and closed do NOT block - a returning customer with only resolved history is eligible for automation.\n\nCustom statuses (e.g. In Progress) report under their base status, so no config column is needed.\n\n**Keeper** = oldest active ticket (created_at asc). It proceeds.\n**Loser** = any other active ticket. It merges itself into the keeper and returns false, silently.\n\nOnly the loser acts on itself - the keeper never touches its siblings. That removes the race where two concurrent executions close each other.",
+        "height": 260,
+        "width": 430,
+        "color": 4
+      },
+      "id": "c91041a0-52aa-4a30-bcb4-84b04402dd40",
+      "name": "Sticky Note 3d6668b0",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3936,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 3) Check for contact form cancellations",
+        "height": 120,
+        "width": 230,
+        "color": 7
+      },
+      "id": "9096995e-07ae-4dbd-82bf-46a9c3a5209d",
+      "name": "Sticky Note e80fa8d5",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        4992,
+        912
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# Do not proceed (loud)\nBlocked email / user not found / contact form cancellation / dedup disabled.\nInternal note + set to open + manual handling.",
+        "height": 200,
+        "width": 300,
+        "color": 7
+      },
+      "id": "3ad6461b-ca9e-4ab5-8666-e25433ff5680",
+      "name": "Sticky Note 80cc5308",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        5760,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# Proceed\nAll checks passed. Wire the main automation after this node.",
+        "width": 300,
+        "color": 4
+      },
+      "id": "d6642c6d-6011-403d-a072-8280d2bb6957",
+      "name": "Sticky Note 9609d3b4",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        5760,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# Do not proceed (silent)\nThis ticket is a duplicate. No note, no status change - the handler merges it into the keeper, which closes it.\n\nReturn shape is identical (proceedWithAutomation: false), so the calling workflow needs no change.",
+        "height": 220,
+        "width": 340,
+        "color": 6
+      },
+      "id": "7bdc3fef-9191-424f-95cf-bd61472e4015",
+      "name": "Sticky Note adbc239d",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        5600,
+        1568
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "cachedResultName": "cs_email_autosolve",
+          "mode": "list",
+          "value": "akdSwJgEUUpbgHrE"
+        },
+        "returnAll": true
+      },
+      "id": "c1449aa8-170f-4aa4-a264-c4a39ab235cc",
+      "name": "Get Auto-solve Emails",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        2720,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const email = String($('Restore trigger data').first()?.json?.body?.['ticket.requester.email'] ?? '').trim().toLowerCase();\n\nconst rows = $input.all();\n\nlet matched = null;\nif (email) {\n  for (const r of rows) {\n    const row = r.json || {};\n    const isActive = !(row.active === false || row.active === 0 || row.active === 'false' || row.active === '0' || row.active === 'no');\n    if (!isActive) continue;\n    const needle = String(row.match_value ?? '').trim().toLowerCase();\n    if (!needle) continue;\n    if (email.includes(needle)) { matched = row; break; }\n  }\n}\n\nreturn [{\n  json: {\n    email,\n    autosolve: matched !== null,\n    matched_value: matched ? matched.match_value : null,\n    matched_reason: (matched && matched.reason != null) ? matched.reason : null\n  }\n}];"
+      },
+      "id": "4d1c0618-d699-4029-b709-003113ce22a6",
+      "name": "Filter Auto-solve Emails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2944,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "ec-autosolve",
+              "leftValue": "={{ $json.autosolve }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "id": "d4773edc-53e8-4b39-92d6-20a0e6fb3cad",
+      "name": "Is Auto-solve?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3168,
+        672
+      ],
+      "notes": "True = requester email is on the auto-solve list. Solve silently, no customer-facing reply."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ec-as-reason",
+              "name": "fail_reason",
+              "type": "string",
+              "value": "autosolve_email"
+            },
+            {
+              "id": "ec-as-note",
+              "name": "note_body",
+              "type": "string",
+              "value": "=Note: The requester {{ $('Restore trigger data').first().json.body['ticket.requester.email'] }} has been identified as an auto-solve email{{ $json.matched_reason ? \" because: \" + $json.matched_reason : \"\" }}. This ticket was solved automatically. No reply was sent to the customer and no agent action is needed."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b149d0e7-3a48-4f34-82f2-b01b68dc8054",
+      "name": "Note: Auto-solve email",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3392,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $('Restore trigger data').first().json.body['ticket.id'] }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ticket.comment.public",
+              "value": "false"
+            },
+            {
+              "name": "ticket.comment.body",
+              "value": "={{ $json.note_body }}"
+            },
+            {
+              "name": "ticket.status",
+              "value": "solved"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "af11efb8-7915-45f0-8d14-e2a4f0918291",
+      "name": "Zendesk: Solve silently",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        3616,
+        496
+      ],
+      "credentials": {
+        "zendeskApi": {
+          "id": "GAJckAtNBWv1L38R",
+          "name": "LoveStyle prod Zendesk account"
+        }
+      },
+      "notes": "Private internal note + status solved. No public comment, so the customer is never notified."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ec-asf-p",
+              "name": "proceedWithAutomation",
+              "type": "boolean",
+              "value": false
+            },
+            {
+              "id": "ec-asf-r",
+              "name": "fail_reason",
+              "type": "string",
+              "value": "autosolve_email"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2df8d36e-d81b-43e7-b836-ed08a2019314",
+      "name": "Do not proceed (auto-solved)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3840,
+        496
+      ],
+      "notes": "Same return shape as the other terminals - the calling workflow needs no change."
+    },
+    {
+      "parameters": {
+        "content": "## 1b) Auto-solve emails\n\nSame matching logic as the blocklist (substring, case-insensitive, `active` respected), against **cs_email_autosolve**.\n\nOn a match the ticket is solved immediately with a private internal note and **no public comment**, so the customer is never notified.\n\nRuns AFTER the blocklist on purpose: if an address ends up on both lists, blocklist wins and a human looks at it.\n\nThe table is global and starts empty, so this branch is inert until a row is added - no per-brand config flag needed.",
+        "height": 320,
+        "width": 420,
+        "color": 5
+      },
+      "id": "648d6d20-e47e-4d68-b607-06d87f1ff042",
+      "name": "Sticky Autosolve",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2704,
+        208
+      ]
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Set project_key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set project_key": {
+      "main": [
+        [
+          {
+            "node": "Get Project Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Project Config": {
+      "main": [
+        [
+          {
+            "node": "Restore trigger data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore trigger data": {
+      "main": [
+        [
+          {
+            "node": "Get ticket status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get ticket status": {
+      "main": [
+        [
+          {
+            "node": "Ticket not solved or closed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ticket not solved or closed?": {
+      "main": [
+        [
+          {
+            "node": "Get Email Blocklist",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Note: Ticket already solved or closed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Email Blocklist": {
+      "main": [
+        [
+          {
+            "node": "Filter Blocked Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Blocked Emails": {
+      "main": [
+        [
+          {
+            "node": "Is Blocked?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Blocked?": {
+      "main": [
+        [
+          {
+            "node": "Note: Blocked email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Auto-solve Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Note: Blocked email": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait1": {
+      "main": [
+        [
+          {
+            "node": "Zendesk: Find Requester by Email1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk: Find Requester by Email1": {
+      "main": [
+        [
+          {
+            "node": "User found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "User found?": {
+      "main": [
+        [
+          {
+            "node": "Zendesk: Get Requester Tickets (live)1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Retries left?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk: Get Requester Tickets (live)1": {
+      "main": [
+        [
+          {
+            "node": "Evaluate active ticket guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate active ticket guard": {
+      "main": [
+        [
+          {
+            "node": "Is this the keeper?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is this the keeper?": {
+      "main": [
+        [
+          {
+            "node": "Is contact form cancellation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Dedupe merge enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is contact form cancellation": {
+      "main": [
+        [
+          {
+            "node": "Note: Contact form cancellation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Proceed (eligible)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Note: Contact form cancellation": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Proceed (eligible)": {
+      "main": [
+        [
+          {
+            "node": "Proceed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedupe merge enabled?": {
+      "main": [
+        [
+          {
+            "node": "Build handler payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Note: Multiple active tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build handler payload": {
+      "main": [
+        [
+          {
+            "node": "Call: CS - Duplicate ticket handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call: CS - Duplicate ticket handler": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed (silent)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Note: Multiple active tickets": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retries left?": {
+      "main": [
+        [
+          {
+            "node": "Wait1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Note: User not found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Note: User not found": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Note: Ticket already solved or closed": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Do not proceed": {
+      "main": [
+        [
+          {
+            "node": "Reply to internally and set status to open3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply to internally and set status to open3": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Auto-solve Emails": {
+      "main": [
+        [
+          {
+            "node": "Filter Auto-solve Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Auto-solve Emails": {
+      "main": [
+        [
+          {
+            "node": "Is Auto-solve?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Auto-solve?": {
+      "main": [
+        [
+          {
+            "node": "Note: Auto-solve email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Note: Auto-solve email": {
+      "main": [
+        [
+          {
+            "node": "Zendesk: Solve silently",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk: Solve silently": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed (auto-solved)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "BY3PNiyJJJ9EMdEi",
+    "callerPolicy": "workflowsFromSameOwner",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "pinData": {},
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "ENPGJXpbRpHZKuIB",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "updatedAt": "2025-09-16T08:57:49.000Z"
+      },
+      "createdAt": "2026-08-25T13:14:32.806Z",
+      "updatedAt": "2026-08-25T13:14:32.806Z"
+    }
+  ],
+  "activeVersion": null
+}
