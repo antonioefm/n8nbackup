@@ -3,12 +3,12 @@
   "name": "Lokalise Nightly QA Report to #i18n-team",
   "description": "Every night at 02:00 (Europe/Madrid): counts Lokalise QA issues per project for inconsistent placeholders and inconsistent HTML, and posts a per-project count report to the private #i18n-team Slack channel.",
   "active": true,
-  "activeVersionId": "ff4bf755-24b5-4540-b0af-2beefd09203e",
+  "activeVersionId": "59a2e44c-7b4a-48f9-8eed-bafbcaaf13f8",
   "createdAt": "2026-08-19T11:52:14.313Z",
-  "updatedAt": "2026-08-19T16:30:18.784Z",
+  "updatedAt": "2026-08-25T11:58:20.832Z",
   "isArchived": false,
-  "versionId": "ff4bf755-24b5-4540-b0af-2beefd09203e",
-  "versionCounter": 9,
+  "versionId": "59a2e44c-7b4a-48f9-8eed-bafbcaaf13f8",
+  "versionCounter": 14,
   "sourceWorkflowId": null,
   "triggerCount": 1,
   "nodes": [
@@ -122,12 +122,12 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const LABELS = ['Placeholders', 'HTML', 'Double space (translations)', 'Double space (EN source)'];\nconst reqs = $('Build QA Requests').all();\nconst res = $input.all();\nconst rows = {};\nconst order = [];\nconst failed = [];\nconst truncated = [];\nlet controlStatus = null;\n\nfunction isPseudo(iso) {\n  const s = (iso || '').toLowerCase();\n  return s === 'pst' || s.indexOf('pseudo') >= 0;\n}\n\nfor (let i = 0; i < res.length; i++) {\n  const pi = res[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const metaItem = reqs[idx] || reqs[i];\n  if (!metaItem) { continue; }\n  const meta = metaItem.json;\n\n  const r = res[i].json || {};\n  const hdr = r.headers || {};\n\n  if (meta.qa_label === '__CONTROL__') { controlStatus = r.statusCode; continue; }\n\n  const raw = hdr['x-pagination-total-count'];\n  let total = null;\n  if (r.statusCode === 200 && raw !== undefined && raw !== null) {\n    const n = parseInt(raw, 10);\n    if (!isNaN(n)) { total = n; }\n  }\n  if (total === null) { failed.push(meta.project_name + ' / ' + meta.qa_label); }\n\n  const keys = (r.body && r.body.keys) ? r.body.keys : [];\n  if (total !== null && total > keys.length) { truncated.push(meta.project_name + ' / ' + meta.qa_label); }\n\n  if (!rows[meta.project_name]) { rows[meta.project_name] = {}; order.push(meta.project_name); }\n\n  if (meta.qa_label === 'Double space') {\n    let srcCount = 0;\n    let tgtCount = 0;\n    for (const k of keys) {\n      if (k.is_archived) { continue; }\n      let inSrc = false;\n      let inTgt = false;\n      for (const tr of (k.translations || [])) {\n        const v = tr.translation;\n        if (typeof v !== 'string') { continue; }\n        if (!/ {2,}/.test(v)) { continue; }\n        const iso = (tr.language_iso || '').toLowerCase();\n        if (iso === meta.base_lang) { inSrc = true; }\n        else if (!isPseudo(iso)) { inTgt = true; }\n      }\n      if (inSrc) { srcCount++; }\n      if (inTgt) { tgtCount++; }\n    }\n    rows[meta.project_name]['Double space (translations)'] = (total === null) ? null : tgtCount;\n    rows[meta.project_name]['Double space (EN source)'] = (total === null) ? null : srcCount;\n  } else {\n    let active = 0;\n    for (const k of keys) { if (!k.is_archived) { active++; } }\n    rows[meta.project_name][meta.qa_label] = (total === null) ? null : active;\n  }\n}\n\nconst totals = {};\nfor (const l of LABELS) { totals[l] = 0; }\nconst flagged = [];\nfor (const name of order) {\n  const r = rows[name];\n  let sum = 0;\n  for (const l of LABELS) {\n    const v = r[l];\n    if (typeof v === 'number') { sum += v; totals[l] += v; }\n  }\n  if (sum > 0) { flagged.push({ name: name, r: r, sum: sum }); }\n}\nflagged.sort(function (a, b) {\n  return a.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase().localeCompare(b.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase());\n});\n\nconst totalParts = [];\nfor (const l of LABELS) { totalParts.push(l + ': ' + totals[l]); }\n\nlet text = '*Lokalise nightly QA check* — ' + order.length + ' projects scanned\\n';\ntext += '_Keys flagged per check, across all target languages. Archived keys and the pseudo-language excluded. EN source counted separately._\\n\\n';\ntext += '*Totals*\\n';\nfor (const l of LABELS) { text += '• ' + l + ': ' + totals[l] + '\\n'; }\ntext += '\\n';\n\nif (flagged.length === 0) {\n  text += ':white_check_mark: No issues found in any project.\\n';\n} else {\n  text += '*Projects with issues (' + flagged.length + ' of ' + order.length + ')*\\n';\n  for (const f of flagged) {\n    const parts = [];\n    for (const l of LABELS) {\n      const v = f.r[l];\n      if (typeof v === 'number' && v > 0) { parts.push(l + ': ' + v); }\n    }\n    text += '• *' + f.name + '* — ' + parts.join('  ·  ') + '\\n';\n  }\n  text += '\\n:white_check_mark: ' + (order.length - flagged.length) + ' project(s) clean.\\n';\n}\n\nif (failed.length > 0) { text += '\\n:warning: could not read: ' + failed.join(', '); }\nif (truncated.length > 0) { text += '\\n:warning: over 500 flagged keys, count is a floor: ' + truncated.join(', '); }\nif (controlStatus !== 400) { text += '\\n:rotating_light: control probe returned ' + controlStatus + ' instead of 400 — the QA filter may not be applied, treat these numbers as unverified.'; }\n\nif (text.length > 3800) { text = text.slice(0, 3740) + '\\n… truncated, see full run in n8n.'; }\n\nreturn [{ json: { report: text, project_count: order.length, flagged_count: flagged.length, totals: totals, failures: failed.length, truncated: truncated.length, control_status: controlStatus } }];\n"
+        "jsCode": "const LABELS = ['Placeholders', 'HTML', 'Double space (translations)', 'Double space (EN source)'];\nconst BASE = 'https://app.lokalise.com/project/';\nconst reqs = $('Build QA Requests').all();\nconst res = $input.all();\nconst rows = {};\nconst projIds = {};\nconst order = [];\nconst failed = [];\nconst truncated = [];\nlet controlStatus = null;\n\nfunction isPseudo(iso) {\n  const s = (iso || '').toLowerCase();\n  return s === 'pst' || s.indexOf('pseudo') >= 0;\n}\n\nfunction link(name) {\n  const id = projIds[name];\n  const label = String(name).replace(/[<>|]/g, ' ').trim();\n  if (!id) { return '*' + label + '*'; }\n  return '<' + BASE + id + '/|' + label + '>';\n}\n\nfor (let i = 0; i < res.length; i++) {\n  const pi = res[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const metaItem = reqs[idx] || reqs[i];\n  if (!metaItem) { continue; }\n  const meta = metaItem.json;\n\n  const r = res[i].json || {};\n  const hdr = r.headers || {};\n\n  if (meta.qa_label === '__CONTROL__') { controlStatus = r.statusCode; continue; }\n\n  const raw = hdr['x-pagination-total-count'];\n  let total = null;\n  if (r.statusCode === 200 && raw !== undefined && raw !== null) {\n    const n = parseInt(raw, 10);\n    if (!isNaN(n)) { total = n; }\n  }\n  if (total === null) { failed.push(meta.project_name + ' / ' + meta.qa_label); }\n\n  const keys = (r.body && r.body.keys) ? r.body.keys : [];\n  if (total !== null && total > keys.length) { truncated.push(meta.project_name + ' / ' + meta.qa_label); }\n\n  if (!rows[meta.project_name]) { rows[meta.project_name] = {}; order.push(meta.project_name); }\n  projIds[meta.project_name] = meta.project_id;\n\n  if (meta.qa_label === 'Double space') {\n    let srcCount = 0;\n    let tgtCount = 0;\n    for (const k of keys) {\n      if (k.is_archived) { continue; }\n      let inSrc = false;\n      let inTgt = false;\n      for (const tr of (k.translations || [])) {\n        const v = tr.translation;\n        if (typeof v !== 'string') { continue; }\n        if (!/ {2,}/.test(v)) { continue; }\n        const iso = (tr.language_iso || '').toLowerCase();\n        if (iso === meta.base_lang) { inSrc = true; }\n        else if (!isPseudo(iso)) { inTgt = true; }\n      }\n      if (inSrc) { srcCount++; }\n      if (inTgt) { tgtCount++; }\n    }\n    rows[meta.project_name]['Double space (translations)'] = (total === null) ? null : tgtCount;\n    rows[meta.project_name]['Double space (EN source)'] = (total === null) ? null : srcCount;\n  } else {\n    let active = 0;\n    for (const k of keys) { if (!k.is_archived) { active++; } }\n    rows[meta.project_name][meta.qa_label] = (total === null) ? null : active;\n  }\n}\n\nconst totals = {};\nfor (const l of LABELS) { totals[l] = 0; }\nconst flagged = [];\nfor (const name of order) {\n  const r = rows[name];\n  let sum = 0;\n  for (const l of LABELS) {\n    const v = r[l];\n    if (typeof v === 'number') { sum += v; totals[l] += v; }\n  }\n  if (sum > 0) { flagged.push({ name: name, r: r, sum: sum }); }\n}\nflagged.sort(function (a, b) {\n  return a.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase().localeCompare(b.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase());\n});\n\nlet summary = '*Lokalise nightly QA check* — ' + order.length + ' projects scanned\\n\\n';\nsummary += '*Totals*\\n';\nfor (const l of LABELS) { summary += '• ' + l + ': ' + totals[l] + '\\n'; }\nsummary += '\\n';\nif (flagged.length === 0) {\n  summary += ':white_check_mark: No issues found in any project.\\n';\n} else {\n  summary += '*' + flagged.length + ' of ' + order.length + ' projects have issues* — per-project breakdown in thread.\\n';\n  summary += ':white_check_mark: ' + (order.length - flagged.length) + ' project(s) clean.\\n';\n}\nif (failed.length > 0) { summary += '\\n:warning: could not read: ' + failed.join(', '); }\nif (truncated.length > 0) { summary += '\\n:warning: over 500 flagged keys, count is a floor: ' + truncated.join(', '); }\nif (controlStatus !== 400) { summary += '\\n:rotating_light: control probe returned ' + controlStatus + ' instead of 400 — the QA filter may not be applied, treat these numbers as unverified.'; }\n\nconst lines = [];\nfor (const f of flagged) {\n  let block = link(f.name);\n  for (const l of LABELS) {\n    const v = f.r[l];\n    if (typeof v === 'number' && v > 0) { block += '\\n    • ' + l + ': ' + v; }\n  }\n  lines.push(block);\n}\n\nconst LIMIT = 3500;\nconst HEAD_ROOM = 90;\nconst BUDGET = LIMIT - HEAD_ROOM;\nconst SEP = 2;\n\nconst safeLines = [];\nfor (const ln of lines) {\n  safeLines.push(ln.length <= BUDGET ? ln : ln.slice(0, BUDGET - 2) + '…');\n}\n\nfunction groupBy(target) {\n  const gs = [];\n  let g = [];\n  let gLen = 0;\n  for (const ln of safeLines) {\n    const add = ln.length + SEP;\n    if (gLen > 0 && (gLen + add > target || gLen + add > BUDGET)) {\n      gs.push(g);\n      g = [];\n      gLen = 0;\n    }\n    g.push(ln);\n    gLen += add;\n  }\n  if (g.length > 0) { gs.push(g); }\n  return gs;\n}\n\n// Minimum number of messages this can fit into, then the smallest per-message\n// target that still fits into that many. Binary search, so it cannot run away:\n// shrinking the target can only ever increase the group count, never decrease it.\nconst minChunks = groupBy(BUDGET).length;\nlet lo = 1;\nfor (const ln of safeLines) { if (ln.length + SEP > lo) { lo = ln.length + SEP; } }\nlet hi = BUDGET;\nlet best = BUDGET;\nwhile (lo <= hi) {\n  const mid = Math.floor((lo + hi) / 2);\n  if (groupBy(mid).length <= minChunks) { best = mid; hi = mid - 1; }\n  else { lo = mid + 1; }\n}\nconst groups = groupBy(best);\n\nconst chunks = [];\nfor (let gi = 0; gi < groups.length; gi++) {\n  const head = (gi === 0)\n    ? '*Projects with issues*\\n\\n'\n    : '*Projects with issues (cont. ' + (gi + 1) + ' of ' + groups.length + ')*\\n\\n';\n  chunks.push(head + groups[gi].join('\\n\\n') + '\\n');\n}\n\nreturn [{ json: {\n  summary: summary,\n  chunks: chunks,\n  chunk_count: chunks.length,\n  project_count: order.length,\n  flagged_count: flagged.length,\n  totals: totals,\n  failures: failed.length,\n  truncated: truncated.length,\n  control_status: controlStatus\n}}];\n"
       }
     },
     {
       "id": "66dd5287-add7-469a-84d4-a7f039000805",
-      "name": "Post Report to i18n-team",
+      "name": "Post Summary",
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.7,
       "position": [
@@ -146,7 +146,7 @@
           "cachedResultName": "i18n-team"
         },
         "messageType": "text",
-        "text": "={{ $json.report }}",
+        "text": "={{ $json.summary }}",
         "otherOptions": {
           "mrkdwn": true,
           "includeLinkToWorkflow": false,
@@ -178,6 +178,63 @@
         "width": 1180,
         "height": 200
       }
+    },
+    {
+      "id": "7d4c0af4-3514-439f-98df-61fd855ab68c",
+      "name": "Split Detail Chunks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const built = $('Build Slack Report').first().json;\nconst posted = $('Post Summary').first().json;\nconst ts = posted.ts || (posted.message && posted.message.ts) || null;\nconst out = [];\nfor (const c of (built.chunks || [])) {\n  out.push({ json: { text: c, thread_ts: ts } });\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "38d39360-30e5-4288-8ed0-d71a0c566ef7",
+      "name": "Post Detail Thread",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "authentication": "accessToken",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C094NS33FN0",
+          "cachedResultName": "i18n-team"
+        },
+        "messageType": "text",
+        "text": "={{ $json.text }}",
+        "otherOptions": {
+          "mrkdwn": true,
+          "includeLinkToWorkflow": false,
+          "unfurl_links": false,
+          "unfurl_media": false,
+          "thread_ts": {
+            "replyValues": {
+              "thread_ts": "={{ $json.thread_ts }}",
+              "reply_broadcast": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "webhookId": "8cd47ab2-2f22-4cce-b209-b7f7bc3e7d54"
     }
   ],
   "connections": {
@@ -229,7 +286,29 @@
       "main": [
         [
           {
-            "node": "Post Report to i18n-team",
+            "node": "Post Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Summary": {
+      "main": [
+        [
+          {
+            "node": "Split Detail Chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Detail Chunks": {
+      "main": [
+        [
+          {
+            "node": "Post Detail Thread",
             "type": "main",
             "index": 0
           }
@@ -285,7 +364,7 @@
     }
   ],
   "activeVersion": {
-    "versionId": "ff4bf755-24b5-4540-b0af-2beefd09203e",
+    "versionId": "59a2e44c-7b4a-48f9-8eed-bafbcaaf13f8",
     "workflowId": "Sbu38L5fKQnjnGUf",
     "nodes": [
       {
@@ -398,12 +477,12 @@
         ],
         "parameters": {
           "mode": "runOnceForAllItems",
-          "jsCode": "const LABELS = ['Placeholders', 'HTML', 'Double space (translations)', 'Double space (EN source)'];\nconst reqs = $('Build QA Requests').all();\nconst res = $input.all();\nconst rows = {};\nconst order = [];\nconst failed = [];\nconst truncated = [];\nlet controlStatus = null;\n\nfunction isPseudo(iso) {\n  const s = (iso || '').toLowerCase();\n  return s === 'pst' || s.indexOf('pseudo') >= 0;\n}\n\nfor (let i = 0; i < res.length; i++) {\n  const pi = res[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const metaItem = reqs[idx] || reqs[i];\n  if (!metaItem) { continue; }\n  const meta = metaItem.json;\n\n  const r = res[i].json || {};\n  const hdr = r.headers || {};\n\n  if (meta.qa_label === '__CONTROL__') { controlStatus = r.statusCode; continue; }\n\n  const raw = hdr['x-pagination-total-count'];\n  let total = null;\n  if (r.statusCode === 200 && raw !== undefined && raw !== null) {\n    const n = parseInt(raw, 10);\n    if (!isNaN(n)) { total = n; }\n  }\n  if (total === null) { failed.push(meta.project_name + ' / ' + meta.qa_label); }\n\n  const keys = (r.body && r.body.keys) ? r.body.keys : [];\n  if (total !== null && total > keys.length) { truncated.push(meta.project_name + ' / ' + meta.qa_label); }\n\n  if (!rows[meta.project_name]) { rows[meta.project_name] = {}; order.push(meta.project_name); }\n\n  if (meta.qa_label === 'Double space') {\n    let srcCount = 0;\n    let tgtCount = 0;\n    for (const k of keys) {\n      if (k.is_archived) { continue; }\n      let inSrc = false;\n      let inTgt = false;\n      for (const tr of (k.translations || [])) {\n        const v = tr.translation;\n        if (typeof v !== 'string') { continue; }\n        if (!/ {2,}/.test(v)) { continue; }\n        const iso = (tr.language_iso || '').toLowerCase();\n        if (iso === meta.base_lang) { inSrc = true; }\n        else if (!isPseudo(iso)) { inTgt = true; }\n      }\n      if (inSrc) { srcCount++; }\n      if (inTgt) { tgtCount++; }\n    }\n    rows[meta.project_name]['Double space (translations)'] = (total === null) ? null : tgtCount;\n    rows[meta.project_name]['Double space (EN source)'] = (total === null) ? null : srcCount;\n  } else {\n    let active = 0;\n    for (const k of keys) { if (!k.is_archived) { active++; } }\n    rows[meta.project_name][meta.qa_label] = (total === null) ? null : active;\n  }\n}\n\nconst totals = {};\nfor (const l of LABELS) { totals[l] = 0; }\nconst flagged = [];\nfor (const name of order) {\n  const r = rows[name];\n  let sum = 0;\n  for (const l of LABELS) {\n    const v = r[l];\n    if (typeof v === 'number') { sum += v; totals[l] += v; }\n  }\n  if (sum > 0) { flagged.push({ name: name, r: r, sum: sum }); }\n}\nflagged.sort(function (a, b) {\n  return a.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase().localeCompare(b.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase());\n});\n\nconst totalParts = [];\nfor (const l of LABELS) { totalParts.push(l + ': ' + totals[l]); }\n\nlet text = '*Lokalise nightly QA check* — ' + order.length + ' projects scanned\\n';\ntext += '_Keys flagged per check, across all target languages. Archived keys and the pseudo-language excluded. EN source counted separately._\\n\\n';\ntext += '*Totals*\\n';\nfor (const l of LABELS) { text += '• ' + l + ': ' + totals[l] + '\\n'; }\ntext += '\\n';\n\nif (flagged.length === 0) {\n  text += ':white_check_mark: No issues found in any project.\\n';\n} else {\n  text += '*Projects with issues (' + flagged.length + ' of ' + order.length + ')*\\n';\n  for (const f of flagged) {\n    const parts = [];\n    for (const l of LABELS) {\n      const v = f.r[l];\n      if (typeof v === 'number' && v > 0) { parts.push(l + ': ' + v); }\n    }\n    text += '• *' + f.name + '* — ' + parts.join('  ·  ') + '\\n';\n  }\n  text += '\\n:white_check_mark: ' + (order.length - flagged.length) + ' project(s) clean.\\n';\n}\n\nif (failed.length > 0) { text += '\\n:warning: could not read: ' + failed.join(', '); }\nif (truncated.length > 0) { text += '\\n:warning: over 500 flagged keys, count is a floor: ' + truncated.join(', '); }\nif (controlStatus !== 400) { text += '\\n:rotating_light: control probe returned ' + controlStatus + ' instead of 400 — the QA filter may not be applied, treat these numbers as unverified.'; }\n\nif (text.length > 3800) { text = text.slice(0, 3740) + '\\n… truncated, see full run in n8n.'; }\n\nreturn [{ json: { report: text, project_count: order.length, flagged_count: flagged.length, totals: totals, failures: failed.length, truncated: truncated.length, control_status: controlStatus } }];\n"
+          "jsCode": "const LABELS = ['Placeholders', 'HTML', 'Double space (translations)', 'Double space (EN source)'];\nconst BASE = 'https://app.lokalise.com/project/';\nconst reqs = $('Build QA Requests').all();\nconst res = $input.all();\nconst rows = {};\nconst projIds = {};\nconst order = [];\nconst failed = [];\nconst truncated = [];\nlet controlStatus = null;\n\nfunction isPseudo(iso) {\n  const s = (iso || '').toLowerCase();\n  return s === 'pst' || s.indexOf('pseudo') >= 0;\n}\n\nfunction link(name) {\n  const id = projIds[name];\n  const label = String(name).replace(/[<>|]/g, ' ').trim();\n  if (!id) { return '*' + label + '*'; }\n  return '<' + BASE + id + '/|' + label + '>';\n}\n\nfor (let i = 0; i < res.length; i++) {\n  const pi = res[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const metaItem = reqs[idx] || reqs[i];\n  if (!metaItem) { continue; }\n  const meta = metaItem.json;\n\n  const r = res[i].json || {};\n  const hdr = r.headers || {};\n\n  if (meta.qa_label === '__CONTROL__') { controlStatus = r.statusCode; continue; }\n\n  const raw = hdr['x-pagination-total-count'];\n  let total = null;\n  if (r.statusCode === 200 && raw !== undefined && raw !== null) {\n    const n = parseInt(raw, 10);\n    if (!isNaN(n)) { total = n; }\n  }\n  if (total === null) { failed.push(meta.project_name + ' / ' + meta.qa_label); }\n\n  const keys = (r.body && r.body.keys) ? r.body.keys : [];\n  if (total !== null && total > keys.length) { truncated.push(meta.project_name + ' / ' + meta.qa_label); }\n\n  if (!rows[meta.project_name]) { rows[meta.project_name] = {}; order.push(meta.project_name); }\n  projIds[meta.project_name] = meta.project_id;\n\n  if (meta.qa_label === 'Double space') {\n    let srcCount = 0;\n    let tgtCount = 0;\n    for (const k of keys) {\n      if (k.is_archived) { continue; }\n      let inSrc = false;\n      let inTgt = false;\n      for (const tr of (k.translations || [])) {\n        const v = tr.translation;\n        if (typeof v !== 'string') { continue; }\n        if (!/ {2,}/.test(v)) { continue; }\n        const iso = (tr.language_iso || '').toLowerCase();\n        if (iso === meta.base_lang) { inSrc = true; }\n        else if (!isPseudo(iso)) { inTgt = true; }\n      }\n      if (inSrc) { srcCount++; }\n      if (inTgt) { tgtCount++; }\n    }\n    rows[meta.project_name]['Double space (translations)'] = (total === null) ? null : tgtCount;\n    rows[meta.project_name]['Double space (EN source)'] = (total === null) ? null : srcCount;\n  } else {\n    let active = 0;\n    for (const k of keys) { if (!k.is_archived) { active++; } }\n    rows[meta.project_name][meta.qa_label] = (total === null) ? null : active;\n  }\n}\n\nconst totals = {};\nfor (const l of LABELS) { totals[l] = 0; }\nconst flagged = [];\nfor (const name of order) {\n  const r = rows[name];\n  let sum = 0;\n  for (const l of LABELS) {\n    const v = r[l];\n    if (typeof v === 'number') { sum += v; totals[l] += v; }\n  }\n  if (sum > 0) { flagged.push({ name: name, r: r, sum: sum }); }\n}\nflagged.sort(function (a, b) {\n  return a.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase().localeCompare(b.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase());\n});\n\nlet summary = '*Lokalise nightly QA check* — ' + order.length + ' projects scanned\\n\\n';\nsummary += '*Totals*\\n';\nfor (const l of LABELS) { summary += '• ' + l + ': ' + totals[l] + '\\n'; }\nsummary += '\\n';\nif (flagged.length === 0) {\n  summary += ':white_check_mark: No issues found in any project.\\n';\n} else {\n  summary += '*' + flagged.length + ' of ' + order.length + ' projects have issues* — per-project breakdown in thread.\\n';\n  summary += ':white_check_mark: ' + (order.length - flagged.length) + ' project(s) clean.\\n';\n}\nif (failed.length > 0) { summary += '\\n:warning: could not read: ' + failed.join(', '); }\nif (truncated.length > 0) { summary += '\\n:warning: over 500 flagged keys, count is a floor: ' + truncated.join(', '); }\nif (controlStatus !== 400) { summary += '\\n:rotating_light: control probe returned ' + controlStatus + ' instead of 400 — the QA filter may not be applied, treat these numbers as unverified.'; }\n\nconst lines = [];\nfor (const f of flagged) {\n  let block = link(f.name);\n  for (const l of LABELS) {\n    const v = f.r[l];\n    if (typeof v === 'number' && v > 0) { block += '\\n    • ' + l + ': ' + v; }\n  }\n  lines.push(block);\n}\n\nconst LIMIT = 3500;\nconst HEAD_ROOM = 90;\nconst BUDGET = LIMIT - HEAD_ROOM;\nconst SEP = 2;\n\nconst safeLines = [];\nfor (const ln of lines) {\n  safeLines.push(ln.length <= BUDGET ? ln : ln.slice(0, BUDGET - 2) + '…');\n}\n\nfunction groupBy(target) {\n  const gs = [];\n  let g = [];\n  let gLen = 0;\n  for (const ln of safeLines) {\n    const add = ln.length + SEP;\n    if (gLen > 0 && (gLen + add > target || gLen + add > BUDGET)) {\n      gs.push(g);\n      g = [];\n      gLen = 0;\n    }\n    g.push(ln);\n    gLen += add;\n  }\n  if (g.length > 0) { gs.push(g); }\n  return gs;\n}\n\n// Minimum number of messages this can fit into, then the smallest per-message\n// target that still fits into that many. Binary search, so it cannot run away:\n// shrinking the target can only ever increase the group count, never decrease it.\nconst minChunks = groupBy(BUDGET).length;\nlet lo = 1;\nfor (const ln of safeLines) { if (ln.length + SEP > lo) { lo = ln.length + SEP; } }\nlet hi = BUDGET;\nlet best = BUDGET;\nwhile (lo <= hi) {\n  const mid = Math.floor((lo + hi) / 2);\n  if (groupBy(mid).length <= minChunks) { best = mid; hi = mid - 1; }\n  else { lo = mid + 1; }\n}\nconst groups = groupBy(best);\n\nconst chunks = [];\nfor (let gi = 0; gi < groups.length; gi++) {\n  const head = (gi === 0)\n    ? '*Projects with issues*\\n\\n'\n    : '*Projects with issues (cont. ' + (gi + 1) + ' of ' + groups.length + ')*\\n\\n';\n  chunks.push(head + groups[gi].join('\\n\\n') + '\\n');\n}\n\nreturn [{ json: {\n  summary: summary,\n  chunks: chunks,\n  chunk_count: chunks.length,\n  project_count: order.length,\n  flagged_count: flagged.length,\n  totals: totals,\n  failures: failed.length,\n  truncated: truncated.length,\n  control_status: controlStatus\n}}];\n"
         }
       },
       {
         "id": "66dd5287-add7-469a-84d4-a7f039000805",
-        "name": "Post Report to i18n-team",
+        "name": "Post Summary",
         "type": "n8n-nodes-base.slack",
         "typeVersion": 2.7,
         "position": [
@@ -422,7 +501,7 @@
             "cachedResultName": "i18n-team"
           },
           "messageType": "text",
-          "text": "={{ $json.report }}",
+          "text": "={{ $json.summary }}",
           "otherOptions": {
             "mrkdwn": true,
             "includeLinkToWorkflow": false,
@@ -454,6 +533,63 @@
           "width": 1180,
           "height": 200
         }
+      },
+      {
+        "id": "7d4c0af4-3514-439f-98df-61fd855ab68c",
+        "name": "Split Detail Chunks",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1320,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const built = $('Build Slack Report').first().json;\nconst posted = $('Post Summary').first().json;\nconst ts = posted.ts || (posted.message && posted.message.ts) || null;\nconst out = [];\nfor (const c of (built.chunks || [])) {\n  out.push({ json: { text: c, thread_ts: ts } });\n}\nreturn out;\n"
+        }
+      },
+      {
+        "id": "38d39360-30e5-4288-8ed0-d71a0c566ef7",
+        "name": "Post Detail Thread",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.7,
+        "position": [
+          1540,
+          0
+        ],
+        "parameters": {
+          "resource": "message",
+          "operation": "post",
+          "authentication": "accessToken",
+          "select": "channel",
+          "channelId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "C094NS33FN0",
+            "cachedResultName": "i18n-team"
+          },
+          "messageType": "text",
+          "text": "={{ $json.text }}",
+          "otherOptions": {
+            "mrkdwn": true,
+            "includeLinkToWorkflow": false,
+            "unfurl_links": false,
+            "unfurl_media": false,
+            "thread_ts": {
+              "replyValues": {
+                "thread_ts": "={{ $json.thread_ts }}",
+                "reply_broadcast": false
+              }
+            }
+          }
+        },
+        "credentials": {
+          "slackApi": {
+            "id": "CXa5wwj5tndNAnHG",
+            "name": "i18n assignment bot"
+          }
+        },
+        "webhookId": "8cd47ab2-2f22-4cce-b209-b7f7bc3e7d54"
       }
     ],
     "connections": {
@@ -505,7 +641,29 @@
         "main": [
           [
             {
-              "node": "Post Report to i18n-team",
+              "node": "Post Summary",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Post Summary": {
+        "main": [
+          [
+            {
+              "node": "Split Detail Chunks",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Split Detail Chunks": {
+        "main": [
+          [
+            {
+              "node": "Post Detail Thread",
               "type": "main",
               "index": 0
             }
@@ -515,19 +673,19 @@
     },
     "nodeGroups": [],
     "authors": "Maria Sica (via MCP)",
-    "name": "Update canvas note for EN source split",
-    "description": "Updated nodes: Sticky Note b9219a72",
+    "name": "Fix chunk runaway; drop scope line and per-project header count",
+    "description": "Chunking: the previous retry loop shrank the target each pass, which produced more groups and shrank it again, ending with one message per project. Replaced with a binary search for the smallest per-message target that still fits the minimum number of messages, plus a hard clamp on any single oversized block. Formatting: scope/caveat subtitle removed, each check on its own indented line under the linked project name, project blocks kept atomic, issue count kept in the summary but removed from the detail header.",
     "autosaved": false,
-    "createdAt": "2026-08-19T16:30:18.785Z",
-    "updatedAt": "2026-08-19T16:30:18.785Z",
+    "createdAt": "2026-08-25T11:58:20.833Z",
+    "updatedAt": "2026-08-25T11:58:20.833Z",
     "workflowPublishHistory": [
       {
-        "id": 1487,
+        "id": 1579,
         "workflowId": "Sbu38L5fKQnjnGUf",
-        "versionId": "ff4bf755-24b5-4540-b0af-2beefd09203e",
+        "versionId": "59a2e44c-7b4a-48f9-8eed-bafbcaaf13f8",
         "event": "activated",
         "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
-        "createdAt": "2026-08-19T16:30:55.110Z"
+        "createdAt": "2026-08-25T11:58:26.369Z"
       }
     ]
   }
