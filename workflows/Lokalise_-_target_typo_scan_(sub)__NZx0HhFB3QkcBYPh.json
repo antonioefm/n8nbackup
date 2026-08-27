@@ -1,0 +1,274 @@
+{
+  "id": "NZx0HhFB3QkcBYPh",
+  "name": "Lokalise - target typo scan (sub)",
+  "description": "Sub-workflow called by the nightly Lokalise QA report. Scans every non-HTML Lokalise project for high-confidence typos in TARGET languages only, returns a Slack-ready message with per-project/per-language counts plus a full detail row set.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-26T13:19:02.462Z",
+  "updatedAt": "2026-08-26T13:29:15.231Z",
+  "isArchived": false,
+  "versionId": "bfe3a3c2-596b-4faf-b6c3-4d2f2ebcfbed",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "ba32c6d6-2f27-4fb6-a069-e8cf1cc0b1e7",
+      "name": "Called By Nightly QA",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "21659a67-a29a-455f-a6b9-d60fed2b044c",
+      "name": "Run Manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "42f3ae78-a08b-4d0c-acc7-99c04ce21418",
+      "name": "Fetch Lokalise Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=500&page=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "2eccc643-755a-4622-b9a8-2d95c6a30861",
+      "name": "Build Count Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const out = [];\nconst skipped = [];\nlet first = true;\nfor (const it of items) {\n  for (const p of (it.json.projects || [])) {\n    if (/html/i.test(p.name || '')) { skipped.push(p.name); continue; }\n    out.push({ json: {\n      project_id: p.project_id,\n      project_name: p.name,\n      base_lang: (p.base_language_iso || 'en').toLowerCase(),\n      qa_type: 'spelling_and_grammar',\n      qa_label: 'Typos'\n    }});\n    if (first) {\n      out.push({ json: {\n        project_id: p.project_id,\n        project_name: p.name,\n        base_lang: 'en',\n        qa_type: '__control_invalid__',\n        qa_label: '__CONTROL__'\n      }});\n      first = false;\n    }\n  }\n}\nfor (const o of out) { o.json.skipped_html = skipped; }\nreturn out;\n"
+      }
+    },
+    {
+      "id": "70ebfd71-b80f-486e-867e-444a90df8d96",
+      "name": "Fetch Flagged Counts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        680,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?filter_qa_issues={{ $json.qa_type }}&limit=1&page=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "4cd0ac91-2992-40bc-b4be-dda88f26b937",
+      "name": "Build Page Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const MAX_PAGES = 30;\nconst PER = 500;\nconst reqs = $('Build Count Requests').all();\nconst res = $input.all();\nconst out = [];\nconst failed = [];\nconst capped = [];\nlet controlStatus = null;\nlet scanned = 0;\nlet skippedHtml = [];\n\nfor (let i = 0; i < res.length; i++) {\n  const pi = res[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const metaItem = reqs[idx] || reqs[i];\n  if (!metaItem) { continue; }\n  const meta = metaItem.json;\n  if (meta.skipped_html && meta.skipped_html.length > skippedHtml.length) { skippedHtml = meta.skipped_html; }\n\n  const r = res[i].json || {};\n  const hdr = r.headers || {};\n  if (meta.qa_label === '__CONTROL__') { controlStatus = r.statusCode; continue; }\n\n  scanned++;\n  const raw = hdr['x-pagination-total-count'];\n  let total = null;\n  if (r.statusCode === 200 && raw !== undefined && raw !== null) {\n    const n = parseInt(raw, 10);\n    if (!isNaN(n)) { total = n; }\n  }\n  if (total === null) { failed.push(meta.project_name); continue; }\n  if (total === 0) { continue; }\n\n  let pages = Math.ceil(total / PER);\n  if (pages > MAX_PAGES) { pages = MAX_PAGES; capped.push(meta.project_name); }\n  for (let p = 1; p <= pages; p++) {\n    out.push({ json: {\n      project_id: meta.project_id,\n      project_name: meta.project_name,\n      base_lang: meta.base_lang,\n      page: p,\n      pages: pages,\n      flagged_total: total\n    }});\n  }\n}\n\nfor (const o of out) {\n  o.json.scanned = scanned;\n  o.json.failed = failed;\n  o.json.capped = capped;\n  o.json.control_status = controlStatus;\n  o.json.skipped_html = skippedHtml;\n}\nif (out.length === 0) {\n  out.push({ json: { project_id: null, project_name: null, base_lang: 'en', page: 0, pages: 0, flagged_total: 0, scanned: scanned, failed: failed, capped: capped, control_status: controlStatus, skipped_html: skippedHtml } });\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "28d6fbd3-f8f9-4ff4-81ef-b4ce8ab79dc9",
+      "name": "Scan Page",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        },
+        "workflowId": {
+          "__rl": true,
+          "cachedResultName": "Lokalise - typo scan page (sub)",
+          "mode": "id",
+          "value": "VrNXv6lkd2kWWLiH"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "92c827bb-1812-4176-8357-6ac6ea70a9bc",
+      "name": "Build Typo Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const pageMeta = $('Build Page Requests').all();\nconst meta0 = (pageMeta[0] || { json: {} }).json;\nconst res = $input.all();\nconst rows = [];\nconst seen = {};\nconst readFail = [];\nlet keysExamined = 0;\n\nfor (const it of res) {\n  const j = it.json || {};\n  if (!j.project_id) { continue; }\n  if (!j.ok) { readFail.push(String(j.project) + ' p' + String(j.page)); continue; }\n  keysExamined += (j.keys_examined || 0);\n  for (const r of (j.rows || [])) {\n    const sig = r.project_id + '#' + r.key_id + '#' + r.lang + '#' + r.rule + '#' + r.token;\n    if (seen[sig]) { continue; }\n    seen[sig] = 1;\n    rows.push(r);\n  }\n}\n\nconst byProject = {};\nconst projIds = {};\nconst byRule = {};\nconst byLang = {};\nfor (const row of rows) {\n  if (!byProject[row.project]) { byProject[row.project] = {}; }\n  if (!byProject[row.project][row.lang]) { byProject[row.project][row.lang] = 0; }\n  byProject[row.project][row.lang]++;\n  projIds[row.project] = row.project_id;\n  byRule[row.rule] = (byRule[row.rule] || 0) + 1;\n  byLang[row.lang] = (byLang[row.lang] || 0) + 1;\n}\n\nconst names = Object.keys(byProject);\nnames.sort(function (a, b) { return a.replace(/^[^A-Za-z0-9]+/, '').toLowerCase().localeCompare(b.replace(/^[^A-Za-z0-9]+/, '').toLowerCase()); });\n\nconst failed = (meta0.failed || []).concat(readFail);\nconst capped = meta0.capped || [];\nconst controlStatus = meta0.control_status;\n\nlet msg = '*Lokalise nightly QA — typos in target languages*\\n\\n';\nif (names.length === 0) {\n  msg += ':white_check_mark: No high-confidence typos found.\\n';\n} else {\n  msg += '*Total:* ' + rows.length + ' in ' + names.length + ' project(s)\\n\\n';\n  for (const n of names) {\n    const label = String(n).replace(/[<>|]/g, ' ').trim();\n    msg += '<https://app.lokalise.com/project/' + projIds[n] + '/|' + label + '>\\n';\n    const isos = Object.keys(byProject[n]);\n    isos.sort();\n    for (const iso of isos) { msg += '    • ' + iso + ': ' + byProject[n][iso] + '\\n'; }\n    msg += '\\n';\n  }\n}\nif (failed.length > 0) { msg += '\\n:warning: could not read: ' + failed.join(', '); }\nif (capped.length > 0) { msg += '\\n:warning: page cap reached, count is a floor: ' + capped.join(', '); }\nif (controlStatus !== 400) { msg += '\\n:rotating_light: control probe returned ' + controlStatus + ' instead of 400 — treat these numbers as unverified.'; }\nif (msg.length > 3800) { msg = msg.slice(0, 3760) + '\\n… truncated'; }\n\nreturn [{ json: {\n  typo_message: msg,\n  typo_total: rows.length,\n  projects_with_typos: names.length,\n  projects_scanned: meta0.scanned || 0,\n  keys_examined: keysExamined,\n  by_project: byProject,\n  by_lang: byLang,\n  by_rule: byRule,\n  skipped_html: meta0.skipped_html || [],\n  failed: failed,\n  capped: capped,\n  control_status: controlStatus,\n  rows: rows\n}}];\n",
+        "mode": "runOnceForAllItems"
+      }
+    }
+  ],
+  "connections": {
+    "Run Manually": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lokalise Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lokalise Projects": {
+      "main": [
+        [
+          {
+            "node": "Build Count Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Count Requests": {
+      "main": [
+        [
+          {
+            "node": "Fetch Flagged Counts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Flagged Counts": {
+      "main": [
+        [
+          {
+            "node": "Build Page Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Page Requests": {
+      "main": [
+        [
+          {
+            "node": "Scan Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scan Page": {
+      "main": [
+        [
+          {
+            "node": "Build Typo Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Madrid",
+    "executionTimeout": 900
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "NZx0HhFB3QkcBYPh",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-26T13:19:02.465Z",
+      "updatedAt": "2026-08-26T13:19:02.465Z"
+    }
+  ],
+  "activeVersion": null
+}
