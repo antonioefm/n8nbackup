@@ -1,0 +1,258 @@
+{
+  "id": "JamRBBdwla0rHzrG",
+  "name": "GitHub - which repos have locales-en.json",
+  "description": "Probe: lists every QR-CODE-App repo and reports which of them carry locales/en.json on their default branch, with the flattened key count.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-26T09:31:48.633Z",
+  "updatedAt": "2026-08-26T09:31:53.968Z",
+  "isArchived": false,
+  "versionId": "dbf2b3c4-9c71-4cf9-a378-11efdd05933d",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "b374e39d-7f00-413f-94ae-4a4542b960b3",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "f474f117-927c-4e27-9417-bbf4ad9682a2",
+      "name": "List Org Repos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.github.com/orgs/QR-CODE-App/repos?per_page=100&type=all",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "options": {}
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      }
+    },
+    {
+      "id": "09db9d28-5684-48cd-a555-18427ae29b90",
+      "name": "Repo Names",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return $input.all().map(function (i) { return { json: { repo: i.json.full_name, defaultBranch: i.json.default_branch } }; });"
+      }
+    },
+    {
+      "id": "7a089f2c-d729-40c3-b3ae-991f50019134",
+      "name": "Summarise Coverage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        -100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const rows = $input.all().map(function (i) { return i.json; });\nconst withFile = rows.filter(function (r) { return r.found; });\nconst withoutFile = rows.filter(function (r) { return !r.found; });\nreturn [{ json: {\n  checked: rows.length,\n  withEnJson: withFile.length,\n  repos: withFile.map(function (r) { return r.repo + ' (' + r.keys + ' keys)'; }),\n  missing: withoutFile.map(function (r) { return r.repo; }),\n} }];"
+      }
+    },
+    {
+      "id": "cf52666a-8cff-4469-b947-01a1637408d4",
+      "name": "Try locales/en.json",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        100
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/contents/locales/en.json?ref={{ $json.defaultBranch }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.raw+json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "fileText"
+            }
+          }
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      }
+    },
+    {
+      "id": "fd576a20-e3c7-42f9-8094-725ed01167e9",
+      "name": "Shape Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const TICK = String.fromCharCode(96);\nfunction flatten(value, prefix, out) {\n  const isPlainObject = value !== null && typeof value === 'object' && !Array.isArray(value);\n  if (isPlainObject) {\n    const names = Object.keys(value);\n    if (names.length === 0 && prefix) out.push(prefix);\n    for (const name of names) { flatten(value[name], prefix ? prefix + '::' + name : name, out); }\n  } else if (prefix) { out.push(prefix); }\n  return out;\n}\nconst repo = $('Loop Repos').item.json.repo;\nconst body = $json;\nlet keys = 0;\nlet found = false;\nif (body && typeof body.fileText === 'string' && body.fileText.trim() !== '') {\n  try { keys = flatten(JSON.parse(body.fileText), null, []).length; found = true; } catch (e) { found = false; }\n}\nreturn [{ json: { repo: repo, found: found, keys: keys } }];"
+      }
+    },
+    {
+      "id": "3c690608-2ba1-4a8f-be93-e2cdfc9ab6f7",
+      "name": "Loop Repos",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "List Org Repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Org Repos": {
+      "main": [
+        [
+          {
+            "node": "Repo Names",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Repo Names": {
+      "main": [
+        [
+          {
+            "node": "Loop Repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Try locales/en.json": {
+      "main": [
+        [
+          {
+            "node": "Shape Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape Result": {
+      "main": [
+        [
+          {
+            "node": "Loop Repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Repos": {
+      "main": [
+        [
+          {
+            "node": "Summarise Coverage",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Try locales/en.json",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "JamRBBdwla0rHzrG",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-26T09:31:48.636Z",
+      "updatedAt": "2026-08-26T09:31:48.636Z"
+    }
+  ],
+  "activeVersion": null
+}
