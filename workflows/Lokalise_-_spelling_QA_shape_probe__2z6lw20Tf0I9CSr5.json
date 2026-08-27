@@ -1,0 +1,164 @@
+{
+  "id": "2z6lw20Tf0I9CSr5",
+  "name": "Lokalise - spelling QA shape probe",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-26T13:08:32.566Z",
+  "updatedAt": "2026-08-26T13:08:32.566Z",
+  "isArchived": false,
+  "versionId": "c825034e-8cc3-49c8-b121-3f0227b3cfc5",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "85b67f26-460d-4a06-8675-87551534a20a",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "644e92ae-b8f9-43a9-9ee0-2aff30001ee3",
+      "name": "Build Probe Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const PID = '691331356a3b9a68428ab3.43540470';\nconst out = [];\nout.push({ json: { label: 'spelling_plain', url: 'https://api.lokalise.com/api2/projects/' + PID + '/keys?filter_qa_issues=spelling_and_grammar&limit=2&page=1' } });\nout.push({ json: { label: 'spelling_with_translations', url: 'https://api.lokalise.com/api2/projects/' + PID + '/keys?filter_qa_issues=spelling_and_grammar&limit=2&page=1&include_translations=1' } });\nout.push({ json: { label: 'spelling_langfilter_de', url: 'https://api.lokalise.com/api2/projects/' + PID + '/keys?filter_qa_issues=spelling_and_grammar&limit=1&page=1&filter_translation_lang_ids=597' } });\nout.push({ json: { label: 'control_invalid', url: 'https://api.lokalise.com/api2/projects/' + PID + '/keys?filter_qa_issues=__control_invalid__&limit=1&page=1' } });\nout.push({ json: { label: 'project_languages', url: 'https://api.lokalise.com/api2/projects/' + PID + '/languages?limit=100' } });\nreturn out;\n"
+      }
+    },
+    {
+      "id": "0ff2dd15-b206-44a6-9c13-6ed3cf031ffe",
+      "name": "Fetch Probe",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "ca69fc64-bf39-43ef-8744-6d81a85e7564",
+      "name": "Digest Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const reqs = $('Build Probe Requests').all();\nconst res = $input.all();\nconst out = [];\nfor (let i = 0; i < res.length; i++) {\n  const meta = (reqs[i] || { json: {} }).json;\n  const r = res[i].json || {};\n  const hdr = r.headers || {};\n  const body = r.body || {};\n  const rec = {\n    label: meta.label,\n    status: r.statusCode,\n    total: hdr['x-pagination-total-count'],\n    body_top_keys: Object.keys(body).join(','),\n    error: body.error ? JSON.stringify(body.error) : null\n  };\n  const keys = body.keys || [];\n  if (keys.length > 0) {\n    rec.key_fields = Object.keys(keys[0]).join(',');\n    rec.first_key_name = JSON.stringify(keys[0].key_name || null);\n    const trs = keys[0].translations || [];\n    rec.translation_count = trs.length;\n    if (trs.length > 0) {\n      rec.translation_fields = Object.keys(trs[0]).join(',');\n      rec.sample_translation = JSON.stringify(trs[0]).slice(0, 900);\n    }\n  }\n  const langs = body.languages || [];\n  if (langs.length > 0) {\n    rec.lang_fields = Object.keys(langs[0]).join(',');\n    const compact = [];\n    for (const L of langs) { compact.push(L.lang_iso + '=' + L.lang_id); }\n    rec.langs = compact.join(' ');\n  }\n  out.push({ json: rec });\n}\nreturn out;\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Build Probe Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Probe Requests": {
+      "main": [
+        [
+          {
+            "node": "Fetch Probe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Probe": {
+      "main": [
+        [
+          {
+            "node": "Digest Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "2z6lw20Tf0I9CSr5",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-26T13:08:32.571Z",
+      "updatedAt": "2026-08-26T13:08:32.571Z"
+    }
+  ],
+  "activeVersion": null
+}
