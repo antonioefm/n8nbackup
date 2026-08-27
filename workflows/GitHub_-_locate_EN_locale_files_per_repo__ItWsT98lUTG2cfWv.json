@@ -1,0 +1,251 @@
+{
+  "id": "ItWsT98lUTG2cfWv",
+  "name": "GitHub - locate EN locale files per repo",
+  "description": "Probe: for repos that lack locales/en.json, walks the git tree and reports any EN locale file paths and locale-looking directories, so the en.json watcher can be pointed at the right files.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-26T09:33:52.972Z",
+  "updatedAt": "2026-08-26T09:33:58.751Z",
+  "isArchived": false,
+  "versionId": "1bb758bf-7dfe-417f-a3a5-8d5b4b6ee930",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "d6ee89f0-2310-4026-bb91-85eb003f0de3",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "5bc166da-7f96-4ee2-9f6b-235ae8ab55f2",
+      "name": "List Org Repos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.github.com/orgs/QR-CODE-App/repos?per_page=100&type=all",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "options": {}
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      }
+    },
+    {
+      "id": "adaeea45-5c51-4a6d-a55d-004c47618809",
+      "name": "Pick Target Repos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const TARGETS = [\n  'qr-frontend',\n  'qr-api',\n  'qr-wordpress-new',\n  'realchecker-frontend',\n  'mobitrace-frontend',\n  'myimage-frontend',\n  'personality-app',\n  'resumewise-frontend',\n];\nreturn $input.all()\n  .filter(function (i) { return TARGETS.indexOf(i.json.name) !== -1; })\n  .map(function (i) { return { json: { repo: i.json.full_name, name: i.json.name, defaultBranch: i.json.default_branch } }; });"
+      }
+    },
+    {
+      "id": "4f258e7c-f69a-4c80-99ea-9a4db0e81d2c",
+      "name": "Collect",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        -100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return $input.all();"
+      }
+    },
+    {
+      "id": "5c07cb43-adf8-4ea1-95c8-b6daf93e686a",
+      "name": "Fetch Repo Tree",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        100
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/git/trees/{{ $json.defaultBranch }}?recursive=1",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      }
+    },
+    {
+      "id": "f95638e1-64b5-4ffb-8a57-b3ee9b591d6d",
+      "name": "Match Locale Paths",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const LOCALE_RE = /(locales?|i18n|translations?|lang|messages)/i;\nconst EN_RE = /(^|\\/)(en|en[-_](us|gb))\\.(json|ya?ml|ts|js)$/i;\n\nconst meta = $('Loop Repos').item.json;\nconst body = $json;\nconst tree = body && body.tree ? body.tree : [];\nconst truncated = body ? body.truncated === true : false;\n\nconst enFiles = [];\nconst localeDirs = {};\n\nfor (const entry of tree) {\n  if (entry.type !== 'blob') continue;\n  const p = entry.path;\n  if (EN_RE.test(p)) enFiles.push(p);\n  if (LOCALE_RE.test(p) && /\\.(json|ya?ml)$/i.test(p)) {\n    const dir = p.split('/').slice(0, -1).join('/');\n    localeDirs[dir] = (localeDirs[dir] || 0) + 1;\n  }\n}\n\nconst dirRows = Object.keys(localeDirs).map(function (d) { return d + ' (' + localeDirs[d] + ' files)'; });\n\nreturn [{ json: {\n  repo: meta.repo,\n  branch: meta.defaultBranch,\n  treeTruncated: truncated,\n  treeSize: tree.length,\n  enFiles: enFiles.slice(0, 15),\n  localeDirs: dirRows.slice(0, 15),\n  error: body && body.error ? (body.error.message || 'error') : null,\n} }];"
+      }
+    },
+    {
+      "id": "4c0ceae5-111a-4c89-b699-7c0a9ab4f793",
+      "name": "Loop Repos",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "List Org Repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Org Repos": {
+      "main": [
+        [
+          {
+            "node": "Pick Target Repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Target Repos": {
+      "main": [
+        [
+          {
+            "node": "Loop Repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Repo Tree": {
+      "main": [
+        [
+          {
+            "node": "Match Locale Paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match Locale Paths": {
+      "main": [
+        [
+          {
+            "node": "Loop Repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Repos": {
+      "main": [
+        [
+          {
+            "node": "Collect",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch Repo Tree",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "ItWsT98lUTG2cfWv",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-26T09:33:52.974Z",
+      "updatedAt": "2026-08-26T09:33:52.974Z"
+    }
+  ],
+  "activeVersion": null
+}
