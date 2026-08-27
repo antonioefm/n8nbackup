@@ -1,0 +1,629 @@
+{
+  "id": "D9gwuuHuMLbPg4va",
+  "name": "GitHub - New en.json keys to Slack",
+  "description": "On a GitHub push that touches locales/en.json in any QR-CODE-App repo (default branch), diffs the file before vs after the push and posts the newly added keys to #i18n-team. Silent when no key was added.",
+  "active": true,
+  "activeVersionId": "4d189239-2c0e-4fe7-934f-71845fde59d6",
+  "createdAt": "2026-08-26T09:18:52.551Z",
+  "updatedAt": "2026-08-26T10:51:05.322Z",
+  "isArchived": false,
+  "versionId": "4d189239-2c0e-4fe7-934f-71845fde59d6",
+  "versionCounter": 11,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "github-en-json-new-keys",
+        "options": {
+          "noResponseBody": true
+        }
+      },
+      "id": "49dc0ae6-0073-416f-9da3-40203962a681",
+      "name": "GitHub Push Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "dd928e86-f4c7-4d8f-a607-6dc5ddf009b5"
+    },
+    {
+      "parameters": {
+        "jsCode": "const LABELS = {\n  'aichat-frontend': 'Chat AI',\n  'aichat-backend': 'Chat AI (backend)',\n  'aichecker-frontend': 'AI Checker',\n  'aichecker-app': 'AI Checker (app)',\n  'realchecker-frontend': 'RealChecker',\n  'realchecker-backend': 'RealChecker (backend)',\n  'mobitrace-frontend': 'Mobitrace',\n  'myimage-frontend': 'My Image',\n  'personality-app': 'Personality',\n  'mywapp-frontend': 'WAPP',\n  'mywapp-backend': 'WAPP (backend)',\n  'pdfhelp-frontend': 'PDF Editor',\n  'pdfhelp-backend': 'PDF Editor (backend)',\n  'lovelanguage-frontend': 'Love Language',\n  'vinchecker-frontend': 'VIN Checker',\n  'resumewise-backend': 'ResumeWise (backend)',\n  'qr-frontend': 'My QR Code',\n  'qr-api': 'My QR Code (API)',\n};\n\nconst PROJECTS = {\n  'aichat-frontend': { name: 'Chat AI - frontend', id: '691331356a3b9a68428ab3.43540470' },\n  'aichat-backend': { name: 'Chat AI (emails)', id: '225008626a33e62b328c63.04676982' },\n  'realchecker-frontend': { name: 'Realchecker (FE)', id: '964775386a3ce03ecca883.03770715' },\n  'realchecker-backend': { name: 'Realchecker (BE)', id: '852017176a3ce11141ecd5.60405885' },\n  'mobitrace-frontend': { name: 'Mobitrace', id: '14240418673f52ae29a007.74392007' },\n  'myimage-frontend': { name: 'My Image', id: '3070657967b5854be32cb1.65162854' },\n  'personality-app': { name: 'Personality.co', id: '31393214664f295f94dd86.76792605' },\n  'mywapp-frontend': { name: 'WAPP', id: '4780438967fe077b4e6484.83742970' },\n  'mywapp-backend': { name: 'WAPP Backend (emails)', id: '1274536968b58980dc56a0.78363786' },\n  'pdfhelp-frontend': { name: 'PDF Editor', id: '1286096867dbf31146afc5.54950617' },\n  'pdfhelp-backend': { name: 'PDF Editor (BE- emails)', id: '6744586768821f2c3fe845.13636914' },\n  'lovelanguage-frontend': { name: 'Love Language - Static', id: '18228625673dd40ca5a631.46423883' },\n  'vinchecker-frontend': { name: 'VIN Checker', id: '2944050668d5010cbd95e8.36175908' },\n  'resumewise-backend': { name: 'ResumeWise - backend/emails', id: '9754058268381744ebf048.90929380' },\n  'qr-frontend': { name: 'My QR Code', id: '60625870676151e1da46d0.81913446' },\n};\n\nconst FILE_RE = /(^|\\/)en\\.json$/;\nconst EXTRA_BRANCHES = [];\n\nfunction stop(reason) {\n  console.log(reason);\n  return [];\n}\n\nconst ev = $input.first().json;\nconst body = ev.body || ev;\nconst headers = ev.headers || {};\nconst ghEvent = headers['x-github-event'] || headers['X-GitHub-Event'] || 'push';\n\nif (ghEvent === 'ping') return stop('ignored: GitHub ping');\nif (ghEvent !== 'push') return stop('ignored: not a push event (' + ghEvent + ')');\n\nconst repository = body.repository || {};\nconst repoFull = repository.full_name;\nif (!repoFull) return stop('ignored: payload carries no repository');\n\nconst defaultBranch = repository.default_branch || 'main';\nconst ref = body.ref || '';\nif (ref.indexOf('refs/heads/') !== 0) return stop('ignored: ref is not a branch (' + ref + ')');\nconst branch = ref.substring(11);\nconst allowedBranches = [defaultBranch].concat(EXTRA_BRANCHES);\nif (allowedBranches.indexOf(branch) === -1) return stop('ignored: branch ' + branch + ' is not watched for ' + repoFull);\n\nconst commits = body.commits || [];\nconst paths = [];\nfor (const c of commits) {\n  const files = (c.added || []).concat(c.modified || []);\n  for (const f of files) {\n    if (FILE_RE.test(f) && paths.indexOf(f) === -1) paths.push(f);\n  }\n}\nif (paths.length === 0) return stop('ignored: no commit in this push touched an en.json in ' + repoFull);\n\nconst head = body.head_commit || {};\nconst beforeSha = body.before || '';\nconst isFirstPush = /^0+$/.test(beforeSha);\nconst owner = repoFull.split('/')[0];\nconst repo = repoFull.split('/')[1];\nconst label = LABELS[repo] || repo;\nconst project = PROJECTS[repo] || null;\n\nreturn paths.map(function (p) {\n  return { json: {\n    owner: owner,\n    repo: repo,\n    repoFull: repoFull,\n    product: label,\n    lokaliseName: project ? project.name : '',\n    lokaliseUrl: project ? ('https://app.lokalise.com/project/' + project.id + '/?view=multi') : '',\n    path: p,\n    branch: branch,\n    beforeSha: isFirstPush ? '' : beforeSha,\n    afterSha: body.after || '',\n    shortSha: (body.after || '').substring(0, 7),\n    compareUrl: body.compare || '',\n    commitUrl: head.url || '',\n    commitMessage: (head.message || '').split(String.fromCharCode(10))[0],\n    author: (head.author && head.author.name) || (body.pusher && body.pusher.name) || 'unknown',\n  } };\n});"
+      },
+      "id": "877e39b7-d426-4cd4-80d4-acd0f438302d",
+      "name": "Normalize Push Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.github.com/repos/{{ $json.owner }}/{{ $json.repo }}/contents/{{ $json.path }}?ref={{ $json.afterSha }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.raw+json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "fileText"
+            }
+          }
+        }
+      },
+      "id": "66d71a57-b73a-48a3-8378-046efaaa3b68",
+      "name": "Fetch en.json (new)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.github.com/repos/{{ $('Normalize Push Event').item.json.owner }}/{{ $('Normalize Push Event').item.json.repo }}/contents/{{ $('Normalize Push Event').item.json.path }}?ref={{ $('Normalize Push Event').item.json.beforeSha }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.raw+json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "fileText"
+            }
+          }
+        }
+      },
+      "id": "73eceb92-d3c5-4587-98e7-abf9752559ad",
+      "name": "Fetch en.json (previous)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const MAX_LISTED = 30;\nconst TICK = String.fromCharCode(96);\nconst NL = String.fromCharCode(10);\n\nconst metas = $('Normalize Push Event').all();\nconst news = $('Fetch en.json (new)').all();\nconst olds = $('Fetch en.json (previous)').all();\nconst prs = $('Fetch PR For Commit').all();\n\nlet pr = null;\nfor (const it of prs) {\n  const j = it.json;\n  if (j && !j.error && j.number) { pr = j; break; }\n}\n\nfunction parseJson(text) {\n  if (typeof text !== 'string') return null;\n  if (text.trim() === '') return null;\n  try { return JSON.parse(text); } catch (e) { return null; }\n}\n\nfunction flatten(value, prefix, out) {\n  const isPlainObject = value !== null && typeof value === 'object' && !Array.isArray(value);\n  if (isPlainObject) {\n    const names = Object.keys(value);\n    if (names.length === 0 && prefix) out.push(prefix);\n    for (const name of names) {\n      flatten(value[name], prefix ? prefix + '::' + name : name, out);\n    }\n  } else if (prefix) {\n    out.push(prefix);\n  }\n  return out;\n}\n\nfunction prLineFor(meta) {\n  if (pr) {\n    const title = pr.title || '(no title)';\n    const who = pr.user && pr.user.login ? ' by ' + pr.user.login : '';\n    return NL + 'PR: <' + pr.html_url + '|#' + pr.number + ' ' + title + '>' + who;\n  }\n  const m = /#(\\d+)/.exec(meta.commitMessage || '');\n  if (m) {\n    const url = 'https://github.com/' + meta.repoFull + '/pull/' + m[1];\n    return NL + 'PR: <' + url + '|#' + m[1] + '>';\n  }\n  return NL + '_No pull request found for this commit - pushed directly._';\n}\n\nconst results = [];\n\nfor (let i = 0; i < metas.length; i++) {\n  const meta = metas[i].json;\n  const newItem = news[i] ? news[i].json : null;\n  const oldItem = olds[i] ? olds[i].json : null;\n\n  const afterJson = parseJson(newItem ? newItem.fileText : null);\n  if (afterJson === null) {\n    console.log('skipped ' + meta.repoFull + ' ' + meta.path + ': new version could not be read as JSON');\n    continue;\n  }\n\n  const beforeJson = parseJson(oldItem ? oldItem.fileText : null);\n  if (beforeJson === null) {\n    console.log('skipped ' + meta.repoFull + ' ' + meta.path + ': previous version unreadable, staying silent instead of reporting every key as new');\n    continue;\n  }\n\n  const afterKeys = flatten(afterJson, null, []);\n  const beforeKeys = flatten(beforeJson, null, []);\n  const beforeSet = new Set(beforeKeys);\n  const afterSet = new Set(afterKeys);\n  const added = afterKeys.filter(function (k) { return !beforeSet.has(k); });\n  const removed = beforeKeys.filter(function (k) { return !afterSet.has(k); });\n\n  if (added.length === 0) {\n    console.log('no new key in ' + meta.repoFull + ' ' + meta.path + ' (' + removed.length + ' removed, values may have changed)');\n    continue;\n  }\n\n  const shown = added.slice(0, MAX_LISTED);\n  const keyLines = shown.map(function (k) { return TICK + k + TICK; }).join(NL);\n  const moreLine = added.length > shown.length ? NL + '_... and ' + (added.length - shown.length) + ' more_' : '';\n  const removedLine = removed.length > 0 ? NL + ':warning: ' + removed.length + ' key(s) were also removed in this push.' : '';\n  const noun = added.length === 1 ? ' new key in ' : ' new keys in ';\n  const header = ':new: *' + meta.product + ' - ' + added.length + noun + meta.path + '*';\n  const link = meta.commitUrl ? meta.commitUrl : meta.compareUrl;\n  const context = TICK + meta.repoFull + TICK + ' | branch ' + TICK + meta.branch + TICK + ' | <' + link + '|' + meta.shortSha + '>';\n  const prLine = prLineFor(meta);\n  const lokaliseLine = meta.lokaliseUrl\n    ? NL + 'Lokalise: <' + meta.lokaliseUrl + '|' + meta.lokaliseName + '>'\n    : '';\n  const slackText = header + NL + context + prLine + lokaliseLine + NL + NL + keyLines + moreLine + removedLine;\n\n  results.push({ json: {\n    product: meta.product,\n    repoFull: meta.repoFull,\n    prNumber: pr ? pr.number : null,\n    prTitle: pr ? pr.title : null,\n    prUrl: pr ? pr.html_url : null,\n    lokaliseName: meta.lokaliseName,\n    lokaliseUrl: meta.lokaliseUrl,\n    branch: meta.branch,\n    path: meta.path,\n    afterSha: meta.afterSha,\n    addedCount: added.length,\n    removedCount: removed.length,\n    totalKeys: afterKeys.length,\n    added: added,\n    removed: removed,\n    slackText: slackText,\n  } });\n}\n\nreturn results;"
+      },
+      "id": "8b5af93c-52c0-4b50-a5fc-405e298cbe27",
+      "name": "Diff New Keys",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C0BSVQ1JKQ9",
+          "cachedResultName": "i18n-managment"
+        },
+        "text": "={{ $json.slackText }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false,
+          "mrkdwn": true,
+          "unfurl_links": false,
+          "unfurl_media": false
+        }
+      },
+      "id": "59f0844f-a3a3-4c38-b8c4-ca58a927e29d",
+      "name": "Post To i18n-managment",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1104,
+        0
+      ],
+      "webhookId": "738eb5c3-eca6-4a13-b01e-e7998a727799",
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "disabled": false
+    },
+    {
+      "parameters": {
+        "content": "## Works for every repo - no per-repo config\n\nAny push that touches a file named en.json, on that repo default branch, is reported. New keys are the difference between the file before and after the push, flattened to Lokalise :: notation.\n\n### Setup\n1. GitHub PAT - a classic token with scope repo, added in n8n as a *GitHub API* credential and attached to both Fetch en.json nodes. The existing OAuth GitHub credential does NOT work: QR-CODE-App blocks OAuth apps (403, verified 26 Aug 2026).\n2. ONE org-level webhook covers all repos: github.com/organizations/QR-CODE-App/settings/hooks - Payload URL = this workflow production webhook URL, content type application/json, event = Just the push event. Per-repo webhooks work too if org level is not possible.\n3. Optional: LABELS in Normalize Push Event maps a repo name to a pretty product name. Unmapped repos are reported under their repo name.\n\nSilent by design: pings, non-default branches, pushes that do not touch an en.json, and pushes that only change values produce no message. The reason is logged in the execution.",
+        "height": 200,
+        "width": 1400,
+        "color": 3
+      },
+      "id": "44a602b6-1b37-4684-b665-7b67e0c9a056",
+      "name": "Sticky Note bc2f521b",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -48,
+        -48
+      ]
+    },
+    {
+      "id": "3ea46645-9b9e-4ae2-8bf5-afd9e9b74549",
+      "name": "Fetch PR For Commit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        770,
+        160
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Normalize Push Event').item.json.owner }}/{{ $('Normalize Push Event').item.json.repo }}/commits/{{ $('Normalize Push Event').item.json.afterSha }}/pulls",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "executeOnce": true
+    }
+  ],
+  "connections": {
+    "GitHub Push Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Push Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Push Event": {
+      "main": [
+        [
+          {
+            "node": "Fetch en.json (new)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch en.json (new)": {
+      "main": [
+        [
+          {
+            "node": "Fetch en.json (previous)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Diff New Keys": {
+      "main": [
+        [
+          {
+            "node": "Post To i18n-managment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch en.json (previous)": {
+      "main": [
+        [
+          {
+            "node": "Fetch PR For Commit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch PR For Commit": {
+      "main": [
+        [
+          {
+            "node": "Diff New Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "pinData": {},
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "D9gwuuHuMLbPg4va",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-26T09:18:52.555Z",
+      "updatedAt": "2026-08-26T09:18:52.555Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "4d189239-2c0e-4fe7-934f-71845fde59d6",
+    "workflowId": "D9gwuuHuMLbPg4va",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "github-en-json-new-keys",
+          "options": {
+            "noResponseBody": true
+          }
+        },
+        "id": "49dc0ae6-0073-416f-9da3-40203962a681",
+        "name": "GitHub Push Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          0,
+          0
+        ],
+        "webhookId": "dd928e86-f4c7-4d8f-a607-6dc5ddf009b5"
+      },
+      {
+        "parameters": {
+          "jsCode": "const LABELS = {\n  'aichat-frontend': 'Chat AI',\n  'aichat-backend': 'Chat AI (backend)',\n  'aichecker-frontend': 'AI Checker',\n  'aichecker-app': 'AI Checker (app)',\n  'realchecker-frontend': 'RealChecker',\n  'realchecker-backend': 'RealChecker (backend)',\n  'mobitrace-frontend': 'Mobitrace',\n  'myimage-frontend': 'My Image',\n  'personality-app': 'Personality',\n  'mywapp-frontend': 'WAPP',\n  'mywapp-backend': 'WAPP (backend)',\n  'pdfhelp-frontend': 'PDF Editor',\n  'pdfhelp-backend': 'PDF Editor (backend)',\n  'lovelanguage-frontend': 'Love Language',\n  'vinchecker-frontend': 'VIN Checker',\n  'resumewise-backend': 'ResumeWise (backend)',\n  'qr-frontend': 'My QR Code',\n  'qr-api': 'My QR Code (API)',\n};\n\nconst PROJECTS = {\n  'aichat-frontend': { name: 'Chat AI - frontend', id: '691331356a3b9a68428ab3.43540470' },\n  'aichat-backend': { name: 'Chat AI (emails)', id: '225008626a33e62b328c63.04676982' },\n  'realchecker-frontend': { name: 'Realchecker (FE)', id: '964775386a3ce03ecca883.03770715' },\n  'realchecker-backend': { name: 'Realchecker (BE)', id: '852017176a3ce11141ecd5.60405885' },\n  'mobitrace-frontend': { name: 'Mobitrace', id: '14240418673f52ae29a007.74392007' },\n  'myimage-frontend': { name: 'My Image', id: '3070657967b5854be32cb1.65162854' },\n  'personality-app': { name: 'Personality.co', id: '31393214664f295f94dd86.76792605' },\n  'mywapp-frontend': { name: 'WAPP', id: '4780438967fe077b4e6484.83742970' },\n  'mywapp-backend': { name: 'WAPP Backend (emails)', id: '1274536968b58980dc56a0.78363786' },\n  'pdfhelp-frontend': { name: 'PDF Editor', id: '1286096867dbf31146afc5.54950617' },\n  'pdfhelp-backend': { name: 'PDF Editor (BE- emails)', id: '6744586768821f2c3fe845.13636914' },\n  'lovelanguage-frontend': { name: 'Love Language - Static', id: '18228625673dd40ca5a631.46423883' },\n  'vinchecker-frontend': { name: 'VIN Checker', id: '2944050668d5010cbd95e8.36175908' },\n  'resumewise-backend': { name: 'ResumeWise - backend/emails', id: '9754058268381744ebf048.90929380' },\n  'qr-frontend': { name: 'My QR Code', id: '60625870676151e1da46d0.81913446' },\n};\n\nconst FILE_RE = /(^|\\/)en\\.json$/;\nconst EXTRA_BRANCHES = [];\n\nfunction stop(reason) {\n  console.log(reason);\n  return [];\n}\n\nconst ev = $input.first().json;\nconst body = ev.body || ev;\nconst headers = ev.headers || {};\nconst ghEvent = headers['x-github-event'] || headers['X-GitHub-Event'] || 'push';\n\nif (ghEvent === 'ping') return stop('ignored: GitHub ping');\nif (ghEvent !== 'push') return stop('ignored: not a push event (' + ghEvent + ')');\n\nconst repository = body.repository || {};\nconst repoFull = repository.full_name;\nif (!repoFull) return stop('ignored: payload carries no repository');\n\nconst defaultBranch = repository.default_branch || 'main';\nconst ref = body.ref || '';\nif (ref.indexOf('refs/heads/') !== 0) return stop('ignored: ref is not a branch (' + ref + ')');\nconst branch = ref.substring(11);\nconst allowedBranches = [defaultBranch].concat(EXTRA_BRANCHES);\nif (allowedBranches.indexOf(branch) === -1) return stop('ignored: branch ' + branch + ' is not watched for ' + repoFull);\n\nconst commits = body.commits || [];\nconst paths = [];\nfor (const c of commits) {\n  const files = (c.added || []).concat(c.modified || []);\n  for (const f of files) {\n    if (FILE_RE.test(f) && paths.indexOf(f) === -1) paths.push(f);\n  }\n}\nif (paths.length === 0) return stop('ignored: no commit in this push touched an en.json in ' + repoFull);\n\nconst head = body.head_commit || {};\nconst beforeSha = body.before || '';\nconst isFirstPush = /^0+$/.test(beforeSha);\nconst owner = repoFull.split('/')[0];\nconst repo = repoFull.split('/')[1];\nconst label = LABELS[repo] || repo;\nconst project = PROJECTS[repo] || null;\n\nreturn paths.map(function (p) {\n  return { json: {\n    owner: owner,\n    repo: repo,\n    repoFull: repoFull,\n    product: label,\n    lokaliseName: project ? project.name : '',\n    lokaliseUrl: project ? ('https://app.lokalise.com/project/' + project.id + '/?view=multi') : '',\n    path: p,\n    branch: branch,\n    beforeSha: isFirstPush ? '' : beforeSha,\n    afterSha: body.after || '',\n    shortSha: (body.after || '').substring(0, 7),\n    compareUrl: body.compare || '',\n    commitUrl: head.url || '',\n    commitMessage: (head.message || '').split(String.fromCharCode(10))[0],\n    author: (head.author && head.author.name) || (body.pusher && body.pusher.name) || 'unknown',\n  } };\n});"
+        },
+        "id": "877e39b7-d426-4cd4-80d4-acd0f438302d",
+        "name": "Normalize Push Event",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          224,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "url": "=https://api.github.com/repos/{{ $json.owner }}/{{ $json.repo }}/contents/{{ $json.path }}?ref={{ $json.afterSha }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "githubApi",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/vnd.github.raw+json"
+              }
+            ]
+          },
+          "options": {
+            "response": {
+              "response": {
+                "responseFormat": "text",
+                "outputPropertyName": "fileText"
+              }
+            }
+          }
+        },
+        "id": "66d71a57-b73a-48a3-8378-046efaaa3b68",
+        "name": "Fetch en.json (new)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          448,
+          0
+        ],
+        "alwaysOutputData": true,
+        "credentials": {
+          "githubApi": {
+            "id": "mUh6urSdgDMQojf1",
+            "name": "GitHub account 2"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "url": "=https://api.github.com/repos/{{ $('Normalize Push Event').item.json.owner }}/{{ $('Normalize Push Event').item.json.repo }}/contents/{{ $('Normalize Push Event').item.json.path }}?ref={{ $('Normalize Push Event').item.json.beforeSha }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "githubApi",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/vnd.github.raw+json"
+              }
+            ]
+          },
+          "options": {
+            "response": {
+              "response": {
+                "responseFormat": "text",
+                "outputPropertyName": "fileText"
+              }
+            }
+          }
+        },
+        "id": "73eceb92-d3c5-4587-98e7-abf9752559ad",
+        "name": "Fetch en.json (previous)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          672,
+          0
+        ],
+        "alwaysOutputData": true,
+        "credentials": {
+          "githubApi": {
+            "id": "mUh6urSdgDMQojf1",
+            "name": "GitHub account 2"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const MAX_LISTED = 30;\nconst TICK = String.fromCharCode(96);\nconst NL = String.fromCharCode(10);\n\nconst metas = $('Normalize Push Event').all();\nconst news = $('Fetch en.json (new)').all();\nconst olds = $('Fetch en.json (previous)').all();\nconst prs = $('Fetch PR For Commit').all();\n\nlet pr = null;\nfor (const it of prs) {\n  const j = it.json;\n  if (j && !j.error && j.number) { pr = j; break; }\n}\n\nfunction parseJson(text) {\n  if (typeof text !== 'string') return null;\n  if (text.trim() === '') return null;\n  try { return JSON.parse(text); } catch (e) { return null; }\n}\n\nfunction flatten(value, prefix, out) {\n  const isPlainObject = value !== null && typeof value === 'object' && !Array.isArray(value);\n  if (isPlainObject) {\n    const names = Object.keys(value);\n    if (names.length === 0 && prefix) out.push(prefix);\n    for (const name of names) {\n      flatten(value[name], prefix ? prefix + '::' + name : name, out);\n    }\n  } else if (prefix) {\n    out.push(prefix);\n  }\n  return out;\n}\n\nfunction prLineFor(meta) {\n  if (pr) {\n    const title = pr.title || '(no title)';\n    const who = pr.user && pr.user.login ? ' by ' + pr.user.login : '';\n    return NL + 'PR: <' + pr.html_url + '|#' + pr.number + ' ' + title + '>' + who;\n  }\n  const m = /#(\\d+)/.exec(meta.commitMessage || '');\n  if (m) {\n    const url = 'https://github.com/' + meta.repoFull + '/pull/' + m[1];\n    return NL + 'PR: <' + url + '|#' + m[1] + '>';\n  }\n  return NL + '_No pull request found for this commit - pushed directly._';\n}\n\nconst results = [];\n\nfor (let i = 0; i < metas.length; i++) {\n  const meta = metas[i].json;\n  const newItem = news[i] ? news[i].json : null;\n  const oldItem = olds[i] ? olds[i].json : null;\n\n  const afterJson = parseJson(newItem ? newItem.fileText : null);\n  if (afterJson === null) {\n    console.log('skipped ' + meta.repoFull + ' ' + meta.path + ': new version could not be read as JSON');\n    continue;\n  }\n\n  const beforeJson = parseJson(oldItem ? oldItem.fileText : null);\n  if (beforeJson === null) {\n    console.log('skipped ' + meta.repoFull + ' ' + meta.path + ': previous version unreadable, staying silent instead of reporting every key as new');\n    continue;\n  }\n\n  const afterKeys = flatten(afterJson, null, []);\n  const beforeKeys = flatten(beforeJson, null, []);\n  const beforeSet = new Set(beforeKeys);\n  const afterSet = new Set(afterKeys);\n  const added = afterKeys.filter(function (k) { return !beforeSet.has(k); });\n  const removed = beforeKeys.filter(function (k) { return !afterSet.has(k); });\n\n  if (added.length === 0) {\n    console.log('no new key in ' + meta.repoFull + ' ' + meta.path + ' (' + removed.length + ' removed, values may have changed)');\n    continue;\n  }\n\n  const shown = added.slice(0, MAX_LISTED);\n  const keyLines = shown.map(function (k) { return TICK + k + TICK; }).join(NL);\n  const moreLine = added.length > shown.length ? NL + '_... and ' + (added.length - shown.length) + ' more_' : '';\n  const removedLine = removed.length > 0 ? NL + ':warning: ' + removed.length + ' key(s) were also removed in this push.' : '';\n  const noun = added.length === 1 ? ' new key in ' : ' new keys in ';\n  const header = ':new: *' + meta.product + ' - ' + added.length + noun + meta.path + '*';\n  const link = meta.commitUrl ? meta.commitUrl : meta.compareUrl;\n  const context = TICK + meta.repoFull + TICK + ' | branch ' + TICK + meta.branch + TICK + ' | <' + link + '|' + meta.shortSha + '>';\n  const prLine = prLineFor(meta);\n  const lokaliseLine = meta.lokaliseUrl\n    ? NL + 'Lokalise: <' + meta.lokaliseUrl + '|' + meta.lokaliseName + '>'\n    : '';\n  const slackText = header + NL + context + prLine + lokaliseLine + NL + NL + keyLines + moreLine + removedLine;\n\n  results.push({ json: {\n    product: meta.product,\n    repoFull: meta.repoFull,\n    prNumber: pr ? pr.number : null,\n    prTitle: pr ? pr.title : null,\n    prUrl: pr ? pr.html_url : null,\n    lokaliseName: meta.lokaliseName,\n    lokaliseUrl: meta.lokaliseUrl,\n    branch: meta.branch,\n    path: meta.path,\n    afterSha: meta.afterSha,\n    addedCount: added.length,\n    removedCount: removed.length,\n    totalKeys: afterKeys.length,\n    added: added,\n    removed: removed,\n    slackText: slackText,\n  } });\n}\n\nreturn results;"
+        },
+        "id": "8b5af93c-52c0-4b50-a5fc-405e298cbe27",
+        "name": "Diff New Keys",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          880,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "select": "channel",
+          "channelId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "C0BSVQ1JKQ9",
+            "cachedResultName": "i18n-managment"
+          },
+          "text": "={{ $json.slackText }}",
+          "otherOptions": {
+            "includeLinkToWorkflow": false,
+            "mrkdwn": true,
+            "unfurl_links": false,
+            "unfurl_media": false
+          }
+        },
+        "id": "59f0844f-a3a3-4c38-b8c4-ca58a927e29d",
+        "name": "Post To i18n-managment",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.3,
+        "position": [
+          1104,
+          0
+        ],
+        "webhookId": "738eb5c3-eca6-4a13-b01e-e7998a727799",
+        "credentials": {
+          "slackApi": {
+            "id": "CXa5wwj5tndNAnHG",
+            "name": "i18n assignment bot"
+          }
+        },
+        "disabled": false
+      },
+      {
+        "parameters": {
+          "content": "## Works for every repo - no per-repo config\n\nAny push that touches a file named en.json, on that repo default branch, is reported. New keys are the difference between the file before and after the push, flattened to Lokalise :: notation.\n\n### Setup\n1. GitHub PAT - a classic token with scope repo, added in n8n as a *GitHub API* credential and attached to both Fetch en.json nodes. The existing OAuth GitHub credential does NOT work: QR-CODE-App blocks OAuth apps (403, verified 26 Aug 2026).\n2. ONE org-level webhook covers all repos: github.com/organizations/QR-CODE-App/settings/hooks - Payload URL = this workflow production webhook URL, content type application/json, event = Just the push event. Per-repo webhooks work too if org level is not possible.\n3. Optional: LABELS in Normalize Push Event maps a repo name to a pretty product name. Unmapped repos are reported under their repo name.\n\nSilent by design: pings, non-default branches, pushes that do not touch an en.json, and pushes that only change values produce no message. The reason is logged in the execution.",
+          "height": 200,
+          "width": 1400,
+          "color": 3
+        },
+        "id": "44a602b6-1b37-4684-b665-7b67e0c9a056",
+        "name": "Sticky Note bc2f521b",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -48,
+          -48
+        ]
+      },
+      {
+        "id": "3ea46645-9b9e-4ae2-8bf5-afd9e9b74549",
+        "name": "Fetch PR For Commit",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          770,
+          160
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "=https://api.github.com/repos/{{ $('Normalize Push Event').item.json.owner }}/{{ $('Normalize Push Event').item.json.repo }}/commits/{{ $('Normalize Push Event').item.json.afterSha }}/pulls",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "githubApi",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/vnd.github+json"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "credentials": {
+          "githubApi": {
+            "id": "mUh6urSdgDMQojf1",
+            "name": "GitHub account 2"
+          }
+        },
+        "onError": "continueRegularOutput",
+        "alwaysOutputData": true,
+        "executeOnce": true
+      }
+    ],
+    "connections": {
+      "GitHub Push Webhook": {
+        "main": [
+          [
+            {
+              "node": "Normalize Push Event",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalize Push Event": {
+        "main": [
+          [
+            {
+              "node": "Fetch en.json (new)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch en.json (new)": {
+        "main": [
+          [
+            {
+              "node": "Fetch en.json (previous)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Diff New Keys": {
+        "main": [
+          [
+            {
+              "node": "Post To i18n-managment",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch en.json (previous)": {
+        "main": [
+          [
+            {
+              "node": "Fetch PR For Commit",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch PR For Commit": {
+        "main": [
+          [
+            {
+              "node": "Diff New Keys",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Maria Sica (via MCP)",
+    "name": "Post to #i18n-managment instead",
+    "description": "Target channel changed from #i18n-team (C094NS33FN0) to #i18n-managment (C0BSVQ1JKQ9) at Maria's request.",
+    "autosaved": false,
+    "createdAt": "2026-08-26T10:51:05.323Z",
+    "updatedAt": "2026-08-26T10:51:05.323Z",
+    "workflowPublishHistory": [
+      {
+        "id": 1604,
+        "workflowId": "D9gwuuHuMLbPg4va",
+        "versionId": "4d189239-2c0e-4fe7-934f-71845fde59d6",
+        "event": "activated",
+        "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
+        "createdAt": "2026-08-26T10:51:09.185Z"
+      }
+    ]
+  }
+}
