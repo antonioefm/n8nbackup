@@ -5,10 +5,10 @@
   "active": true,
   "activeVersionId": "59a2e44c-7b4a-48f9-8eed-bafbcaaf13f8",
   "createdAt": "2026-08-19T11:52:14.313Z",
-  "updatedAt": "2026-08-25T11:58:20.832Z",
+  "updatedAt": "2026-08-27T10:47:48.142Z",
   "isArchived": false,
-  "versionId": "59a2e44c-7b4a-48f9-8eed-bafbcaaf13f8",
-  "versionCounter": 14,
+  "versionId": "72303e5b-7fc6-403e-8992-0b38ae315a41",
+  "versionCounter": 18,
   "sourceWorkflowId": null,
   "triggerCount": 1,
   "nodes": [
@@ -122,7 +122,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const LABELS = ['Placeholders', 'HTML', 'Double space (translations)', 'Double space (EN source)'];\nconst BASE = 'https://app.lokalise.com/project/';\nconst reqs = $('Build QA Requests').all();\nconst res = $input.all();\nconst rows = {};\nconst projIds = {};\nconst order = [];\nconst failed = [];\nconst truncated = [];\nlet controlStatus = null;\n\nfunction isPseudo(iso) {\n  const s = (iso || '').toLowerCase();\n  return s === 'pst' || s.indexOf('pseudo') >= 0;\n}\n\nfunction link(name) {\n  const id = projIds[name];\n  const label = String(name).replace(/[<>|]/g, ' ').trim();\n  if (!id) { return '*' + label + '*'; }\n  return '<' + BASE + id + '/|' + label + '>';\n}\n\nfor (let i = 0; i < res.length; i++) {\n  const pi = res[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const metaItem = reqs[idx] || reqs[i];\n  if (!metaItem) { continue; }\n  const meta = metaItem.json;\n\n  const r = res[i].json || {};\n  const hdr = r.headers || {};\n\n  if (meta.qa_label === '__CONTROL__') { controlStatus = r.statusCode; continue; }\n\n  const raw = hdr['x-pagination-total-count'];\n  let total = null;\n  if (r.statusCode === 200 && raw !== undefined && raw !== null) {\n    const n = parseInt(raw, 10);\n    if (!isNaN(n)) { total = n; }\n  }\n  if (total === null) { failed.push(meta.project_name + ' / ' + meta.qa_label); }\n\n  const keys = (r.body && r.body.keys) ? r.body.keys : [];\n  if (total !== null && total > keys.length) { truncated.push(meta.project_name + ' / ' + meta.qa_label); }\n\n  if (!rows[meta.project_name]) { rows[meta.project_name] = {}; order.push(meta.project_name); }\n  projIds[meta.project_name] = meta.project_id;\n\n  if (meta.qa_label === 'Double space') {\n    let srcCount = 0;\n    let tgtCount = 0;\n    for (const k of keys) {\n      if (k.is_archived) { continue; }\n      let inSrc = false;\n      let inTgt = false;\n      for (const tr of (k.translations || [])) {\n        const v = tr.translation;\n        if (typeof v !== 'string') { continue; }\n        if (!/ {2,}/.test(v)) { continue; }\n        const iso = (tr.language_iso || '').toLowerCase();\n        if (iso === meta.base_lang) { inSrc = true; }\n        else if (!isPseudo(iso)) { inTgt = true; }\n      }\n      if (inSrc) { srcCount++; }\n      if (inTgt) { tgtCount++; }\n    }\n    rows[meta.project_name]['Double space (translations)'] = (total === null) ? null : tgtCount;\n    rows[meta.project_name]['Double space (EN source)'] = (total === null) ? null : srcCount;\n  } else {\n    let active = 0;\n    for (const k of keys) { if (!k.is_archived) { active++; } }\n    rows[meta.project_name][meta.qa_label] = (total === null) ? null : active;\n  }\n}\n\nconst totals = {};\nfor (const l of LABELS) { totals[l] = 0; }\nconst flagged = [];\nfor (const name of order) {\n  const r = rows[name];\n  let sum = 0;\n  for (const l of LABELS) {\n    const v = r[l];\n    if (typeof v === 'number') { sum += v; totals[l] += v; }\n  }\n  if (sum > 0) { flagged.push({ name: name, r: r, sum: sum }); }\n}\nflagged.sort(function (a, b) {\n  return a.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase().localeCompare(b.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase());\n});\n\nlet summary = '*Lokalise nightly QA check* — ' + order.length + ' projects scanned\\n\\n';\nsummary += '*Totals*\\n';\nfor (const l of LABELS) { summary += '• ' + l + ': ' + totals[l] + '\\n'; }\nsummary += '\\n';\nif (flagged.length === 0) {\n  summary += ':white_check_mark: No issues found in any project.\\n';\n} else {\n  summary += '*' + flagged.length + ' of ' + order.length + ' projects have issues* — per-project breakdown in thread.\\n';\n  summary += ':white_check_mark: ' + (order.length - flagged.length) + ' project(s) clean.\\n';\n}\nif (failed.length > 0) { summary += '\\n:warning: could not read: ' + failed.join(', '); }\nif (truncated.length > 0) { summary += '\\n:warning: over 500 flagged keys, count is a floor: ' + truncated.join(', '); }\nif (controlStatus !== 400) { summary += '\\n:rotating_light: control probe returned ' + controlStatus + ' instead of 400 — the QA filter may not be applied, treat these numbers as unverified.'; }\n\nconst lines = [];\nfor (const f of flagged) {\n  let block = link(f.name);\n  for (const l of LABELS) {\n    const v = f.r[l];\n    if (typeof v === 'number' && v > 0) { block += '\\n    • ' + l + ': ' + v; }\n  }\n  lines.push(block);\n}\n\nconst LIMIT = 3500;\nconst HEAD_ROOM = 90;\nconst BUDGET = LIMIT - HEAD_ROOM;\nconst SEP = 2;\n\nconst safeLines = [];\nfor (const ln of lines) {\n  safeLines.push(ln.length <= BUDGET ? ln : ln.slice(0, BUDGET - 2) + '…');\n}\n\nfunction groupBy(target) {\n  const gs = [];\n  let g = [];\n  let gLen = 0;\n  for (const ln of safeLines) {\n    const add = ln.length + SEP;\n    if (gLen > 0 && (gLen + add > target || gLen + add > BUDGET)) {\n      gs.push(g);\n      g = [];\n      gLen = 0;\n    }\n    g.push(ln);\n    gLen += add;\n  }\n  if (g.length > 0) { gs.push(g); }\n  return gs;\n}\n\n// Minimum number of messages this can fit into, then the smallest per-message\n// target that still fits into that many. Binary search, so it cannot run away:\n// shrinking the target can only ever increase the group count, never decrease it.\nconst minChunks = groupBy(BUDGET).length;\nlet lo = 1;\nfor (const ln of safeLines) { if (ln.length + SEP > lo) { lo = ln.length + SEP; } }\nlet hi = BUDGET;\nlet best = BUDGET;\nwhile (lo <= hi) {\n  const mid = Math.floor((lo + hi) / 2);\n  if (groupBy(mid).length <= minChunks) { best = mid; hi = mid - 1; }\n  else { lo = mid + 1; }\n}\nconst groups = groupBy(best);\n\nconst chunks = [];\nfor (let gi = 0; gi < groups.length; gi++) {\n  const head = (gi === 0)\n    ? '*Projects with issues*\\n\\n'\n    : '*Projects with issues (cont. ' + (gi + 1) + ' of ' + groups.length + ')*\\n\\n';\n  chunks.push(head + groups[gi].join('\\n\\n') + '\\n');\n}\n\nreturn [{ json: {\n  summary: summary,\n  chunks: chunks,\n  chunk_count: chunks.length,\n  project_count: order.length,\n  flagged_count: flagged.length,\n  totals: totals,\n  failures: failed.length,\n  truncated: truncated.length,\n  control_status: controlStatus\n}}];\n"
+        "jsCode": "const LABELS = ['Placeholders', 'HTML', 'Double space (translations)'];\nconst BASE = 'https://app.lokalise.com/project/';\nconst reqs = $('Build QA Requests').all();\nconst res = $input.all();\nconst rows = {};\nconst projIds = {};\nconst order = [];\nconst failed = [];\nconst truncated = [];\nlet controlStatus = null;\n\n// Pseudo-locales excluded account-wide (Maria 2026-08-27): 'pst', and 'ps'\n// which VIN Checker uses for pseudo-localised text, not Pashto.\nconst PSEUDO = ['ps', 'pst'];\nfunction isPseudo(iso) {\n  const s = String(iso || '').toLowerCase();\n  return PSEUDO.indexOf(s) !== -1 || s.indexOf('pseudo') !== -1;\n}\n\nfunction link(name) {\n  const id = projIds[name];\n  const label = String(name).replace(/[<>|]/g, ' ').trim();\n  if (!id) { return '*' + label + '*'; }\n  return '<' + BASE + id + '/|' + label + '>';\n}\n\nfor (let i = 0; i < res.length; i++) {\n  const pi = res[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const metaItem = reqs[idx] || reqs[i];\n  if (!metaItem) { continue; }\n  const meta = metaItem.json;\n\n  const r = res[i].json || {};\n  const hdr = r.headers || {};\n\n  if (meta.qa_label === '__CONTROL__') { controlStatus = r.statusCode; continue; }\n\n  const raw = hdr['x-pagination-total-count'];\n  let total = null;\n  if (r.statusCode === 200 && raw !== undefined && raw !== null) {\n    const n = parseInt(raw, 10);\n    if (!isNaN(n)) { total = n; }\n  }\n  if (total === null) { failed.push(meta.project_name + ' / ' + meta.qa_label); }\n\n  const keys = (r.body && r.body.keys) ? r.body.keys : [];\n  if (total !== null && total > keys.length) { truncated.push(meta.project_name + ' / ' + meta.qa_label); }\n\n  if (!rows[meta.project_name]) { rows[meta.project_name] = {}; order.push(meta.project_name); }\n  projIds[meta.project_name] = meta.project_id;\n\n  if (meta.qa_label === 'Double space') {\n    // Target languages only. EN source double spaces are no longer reported\n    // (Maria 2026-08-27) - they come from the repo, get overwritten on the next\n    // import, and belong to the dev teams rather than the language leads.\n    let tgtCount = 0;\n    for (const k of keys) {\n      if (k.is_archived) { continue; }\n      let inTgt = false;\n      for (const tr of (k.translations || [])) {\n        const v = tr.translation;\n        if (typeof v !== 'string') { continue; }\n        if (!/ {2,}/.test(v)) { continue; }\n        const iso = String(tr.language_iso || '').toLowerCase();\n        if (iso === meta.base_lang) { continue; }\n        if (isPseudo(iso)) { continue; }\n        inTgt = true;\n      }\n      if (inTgt) { tgtCount++; }\n    }\n    rows[meta.project_name]['Double space (translations)'] = (total === null) ? null : tgtCount;\n  } else {\n    let active = 0;\n    for (const k of keys) { if (!k.is_archived) { active++; } }\n    rows[meta.project_name][meta.qa_label] = (total === null) ? null : active;\n  }\n}\n\nconst totals = {};\nfor (const l of LABELS) { totals[l] = 0; }\nconst flagged = [];\nfor (const name of order) {\n  const r = rows[name];\n  let sum = 0;\n  for (const l of LABELS) {\n    const v = r[l];\n    if (typeof v === 'number') { sum += v; totals[l] += v; }\n  }\n  if (sum > 0) { flagged.push({ name: name, r: r, sum: sum }); }\n}\nflagged.sort(function (a, b) {\n  return a.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase().localeCompare(b.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase());\n});\n\nlet summary = '*Lokalise nightly QA check* — ' + order.length + ' projects scanned\\n\\n';\nsummary += '*Totals*\\n';\nfor (const l of LABELS) { summary += '• ' + l + ': ' + totals[l] + '\\n'; }\nsummary += '\\n';\nif (flagged.length === 0) {\n  summary += ':white_check_mark: No issues found in any project.\\n';\n} else {\n  summary += '*' + flagged.length + ' of ' + order.length + ' projects have issues* — per-project breakdown in thread.\\n';\n  summary += ':white_check_mark: ' + (order.length - flagged.length) + ' project(s) clean.\\n';\n}\nif (failed.length > 0) { summary += '\\n:warning: could not read: ' + failed.join(', '); }\nif (truncated.length > 0) { summary += '\\n:warning: over 500 flagged keys, count is a floor: ' + truncated.join(', '); }\nif (controlStatus !== 400) { summary += '\\n:rotating_light: control probe returned ' + controlStatus + ' instead of 400 — the QA filter may not be applied, treat these numbers as unverified.'; }\n\nconst lines = [];\nfor (const f of flagged) {\n  let block = link(f.name);\n  for (const l of LABELS) {\n    const v = f.r[l];\n    if (typeof v === 'number' && v > 0) { block += '\\n    • ' + l + ': ' + v; }\n  }\n  lines.push(block);\n}\n\nconst LIMIT = 3500;\nconst HEAD_ROOM = 90;\nconst BUDGET = LIMIT - HEAD_ROOM;\nconst SEP = 2;\n\nconst safeLines = [];\nfor (const ln of lines) {\n  safeLines.push(ln.length <= BUDGET ? ln : ln.slice(0, BUDGET - 2) + '…');\n}\n\nfunction groupBy(target) {\n  const gs = [];\n  let g = [];\n  let gLen = 0;\n  for (const ln of safeLines) {\n    const add = ln.length + SEP;\n    if (gLen > 0 && (gLen + add > target || gLen + add > BUDGET)) {\n      gs.push(g);\n      g = [];\n      gLen = 0;\n    }\n    g.push(ln);\n    gLen += add;\n  }\n  if (g.length > 0) { gs.push(g); }\n  return gs;\n}\n\n// Minimum number of messages this can fit into, then the smallest per-message\n// target that still fits into that many. Binary search, so it cannot run away:\n// shrinking the target can only ever increase the group count, never decrease it.\nconst minChunks = groupBy(BUDGET).length;\nlet lo = 1;\nfor (const ln of safeLines) { if (ln.length + SEP > lo) { lo = ln.length + SEP; } }\nlet hi = BUDGET;\nlet best = BUDGET;\nwhile (lo <= hi) {\n  const mid = Math.floor((lo + hi) / 2);\n  if (groupBy(mid).length <= minChunks) { best = mid; hi = mid - 1; }\n  else { lo = mid + 1; }\n}\nconst groups = groupBy(best);\n\nconst chunks = [];\nfor (let gi = 0; gi < groups.length; gi++) {\n  const head = (gi === 0)\n    ? '*Projects with issues*\\n\\n'\n    : '*Projects with issues (cont. ' + (gi + 1) + ' of ' + groups.length + ')*\\n\\n';\n  chunks.push(head + groups[gi].join('\\n\\n') + '\\n');\n}\n\nreturn [{ json: {\n  summary: summary,\n  chunks: chunks,\n  chunk_count: chunks.length,\n  project_count: order.length,\n  flagged_count: flagged.length,\n  totals: totals,\n  failures: failed.length,\n  truncated: truncated.length,\n  control_status: controlStatus\n}}];\n"
       }
     },
     {
@@ -161,7 +161,8 @@
         }
       },
       "executeOnce": true,
-      "webhookId": "cd490134-5e1e-43fb-b514-613e17b7efdd"
+      "webhookId": "cd490134-5e1e-43fb-b514-613e17b7efdd",
+      "disabled": false
     },
     {
       "id": "506e9bb2-9898-4d40-b360-7f504494793d",
@@ -173,7 +174,7 @@
         -50
       ],
       "parameters": {
-        "content": "## Nightly Lokalise QA check\nRuns at 02:00 Europe/Madrid. **One** Slack summary message to #i18n-team, alphabetical, clean projects suppressed but counted.\n\n**Four entries:** Placeholders, HTML, Double space (translations), Double space (EN source). Double space is split by comparing each translation's `language_iso` against the project's `base_language_iso` — EN source issues belong to the dev teams (they come from the repo and get overwritten on next import), translation issues belong to the language leads. Pseudo-language (`pst`) is excluded from translation counts since its strings are auto-mangled.\n\nScope is deliberately these checks only. Brackets, numbers and email checks are intentionally excluded.\n\n**Archived keys are excluded client-side.** `filter_qa_issues` silently IGNORES `filter_archived` (exclude/include/only all return the same count), so the `x-pagination-total-count` header includes archived keys and does NOT match the Lokalise UI. The workflow fetches keys with limit=500 and counts `is_archived == false`. Do not revert to reading the header.\n\n`include_translations=1` is added ONLY to the double_space request — the other checks don't need the text and it keeps the payload down.\n\nA control request with a deliberately invalid filter value runs once per execution; Lokalise returns 400 for it, proving the QA filter is actually applied and the zeros are real. Throttled to ~4.5 req/s under the Lokalise 10 req/s limit.",
+        "content": "## Nightly Lokalise QA check\nRuns at 02:00 Europe/Madrid. **One** Slack summary message to #i18n-team, alphabetical, clean projects suppressed but counted. A second, separate message covers typos and brand names (see the green note).\n\n**Three entries:** Placeholders, HTML, Double space (translations).\n\n**Double space is TARGET LANGUAGES ONLY.** The `Double space (EN source)` entry was removed 2026-08-27 (Maria): source double spaces come from the repo, get overwritten on the next import, and belong to the dev teams rather than the language leads. Reporting them nightly to #i18n-team was noise for the linguists. The split is done by comparing each translation's `language_iso` against the project's `base_language_iso`.\n\n**Pseudo-locales `pst` AND `ps` are excluded** - VIN Checker uses `ps` for pseudo-localised text, not Pashto (Maria 2026-08-27).\n\nScope is deliberately these checks only. Brackets, numbers and email checks are intentionally excluded.\n\n**Archived keys are excluded client-side.** `filter_qa_issues` silently IGNORES `filter_archived` (exclude/include/only all return the same count), so the `x-pagination-total-count` header includes archived keys and does NOT match the Lokalise UI. The workflow fetches keys with limit=500 and counts `is_archived == false`. Do not revert to reading the header.\n\n`include_translations=1` is added ONLY to the double_space request - the other checks don't need the text and it keeps the payload down.\n\nA control request with a deliberately invalid filter value runs once per execution; Lokalise returns 400 for it, proving the QA filter is actually applied and the zeros are real. Throttled to ~4.5 req/s under the Lokalise 10 req/s limit.",
         "color": 4,
         "width": 1180,
         "height": 200
@@ -234,7 +235,88 @@
           "name": "i18n assignment bot"
         }
       },
-      "webhookId": "8cd47ab2-2f22-4cce-b209-b7f7bc3e7d54"
+      "webhookId": "8cd47ab2-2f22-4cce-b209-b7f7bc3e7d54",
+      "disabled": false
+    },
+    {
+      "id": "8c1a2f4d-b018-4828-bfb9-ce55552419ed",
+      "name": "Run Typo + Brand Scan",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1760,
+        0
+      ],
+      "parameters": {
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        },
+        "workflowId": {
+          "__rl": true,
+          "cachedResultName": "Lokalise - target typo scan (sub)",
+          "mode": "id",
+          "value": "NZx0HhFB3QkcBYPh"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "executeOnce": true,
+      "disabled": false
+    },
+    {
+      "id": "62751871-9b1c-4ef6-9ce2-5f6c700e68f5",
+      "name": "Post Typo Report",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        1980,
+        0
+      ],
+      "parameters": {
+        "authentication": "accessToken",
+        "channelId": {
+          "__rl": true,
+          "cachedResultName": "i18n-team",
+          "mode": "id",
+          "value": "C094NS33FN0"
+        },
+        "messageType": "text",
+        "operation": "post",
+        "otherOptions": {
+          "includeLinkToWorkflow": false,
+          "mrkdwn": true,
+          "unfurl_links": false,
+          "unfurl_media": false
+        },
+        "resource": "message",
+        "select": "channel",
+        "text": "={{ $json.typo_message }}"
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "executeOnce": true,
+      "webhookId": "4084a84e-9ce5-4a5e-a092-960f69fee640",
+      "disabled": false
+    },
+    {
+      "id": "df42c808-e3a8-4e49-a22a-96242b569015",
+      "name": "Sticky Note Typos",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        120
+      ],
+      "parameters": {
+        "color": 3,
+        "content": "## Second message: typos + brand names in targets\nAfter the placeholder/HTML/double-space report and its thread, the nightly run calls **Lokalise - target typo scan (sub)** (`NZx0HhFB3QkcBYPh`) and posts its result as a **separate** message to #i18n-team, showing project name and count per language.\n\n**Scope:** TARGET languages only (source and pseudo `pst` excluded). **HTML projects are excluded by name** (`/html/i`) - 5 of them today. Gated on Lokalise's own `spelling_and_grammar` filter, so it is a subset of what that UI filter shows; real typos its dictionary misses will not appear here.\n\n**\"High ranked\" is computed here, not by Lokalise.** `filter_qa_issues` returns flagged KEYS with no per-language attribution and no severity - `filter_translation_lang_ids` is silently ignored on it. So both the per-language split and the ranking are derived client-side in the page sub-workflow.\n\n**Five rules, tuned for precision over recall:** `repeated_word` (per-language stoplists, since French `vous vous` and German `die die` are correct), `triple_letter` (consonant triples skipped for compounding languages, vowel triples for Tagalog/Romanian), `mixed_script` (Latin/Cyrillic/Greek homoglyphs - zero false positives so far), `brand_misspelled` and `brand_case` (from the 17 non-translatable glossary terms). Untuned, the same rules produced 2995 findings, ~95% of them legitimate grammar; tuned, 112.\n\n**Known trade-off:** brand errors confined to the last 2 characters are NOT reported, because a case ending (Czech `App Storu`, Finnish `QRcreaten`) cannot be told from a final-letter typo without morphology.\n\n**Memory:** fetching 22k flagged keys with translations in one execution OOMs. Each 500-key page is fetched and reduced to findings in its own sub-execution. Do not inline it back.",
+        "height": 460,
+        "width": 620
+      }
     }
   ],
   "connections": {
@@ -309,6 +391,28 @@
         [
           {
             "node": "Post Detail Thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Detail Thread": {
+      "main": [
+        [
+          {
+            "node": "Run Typo + Brand Scan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Typo + Brand Scan": {
+      "main": [
+        [
+          {
+            "node": "Post Typo Report",
             "type": "main",
             "index": 0
           }
