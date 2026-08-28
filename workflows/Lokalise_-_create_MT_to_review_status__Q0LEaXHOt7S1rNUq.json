@@ -1,0 +1,171 @@
+{
+  "id": "Q0LEaXHOt7S1rNUq",
+  "name": "Lokalise - create MT_to_review status",
+  "description": "Creates a MT_to_review custom translation status in the eight Lokalise projects that lack one, so the Thai style fixes can be flagged consistently. Reports per-project HTTP results including 409s where custom statuses are disabled at project level.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-27T14:42:37.284Z",
+  "updatedAt": "2026-08-27T14:42:42.761Z",
+  "isArchived": false,
+  "versionId": "4db890b2-fb70-4d7e-92d4-2bfd354a0733",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "5dde047a-5ff2-44ab-8640-61b7e0428f61",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "21fe3e63-bd51-4b11-a913-c2c29464b075",
+      "name": "Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Creates a MT_to_review custom translation status in the projects that have\n// none, so the 471 Thai style fixes can be flagged for Natcha consistently.\n//\n// Checked 2026-08-27 via GET /projects/{id}/custom_translation_statuses.\n// Projects NOT in this list already have a usable status and are left alone:\n//   Personality.co           29251  MT_to_review\n//   QRcreate                 25875  MT_to_review\n//   My QR Code               25140  MT_to_review\n//   Realchecker (FE)         29175  MT_TO_REVIEW   (different case, same intent)\n//   PDF Editor (BE- emails)  29306  MT_TO_REVIEW   (different case, same intent)\n// Reusing those avoids creating near-duplicate statuses in the same project.\n//\n// Note: custom statuses must be enabled per project (Settings -> Translation).\n// Where the feature is off, Lokalise answers 409, not 403.\nconst TITLE = 'MT_to_review';\nconst COLOR = '#ff9f1a';   // matches the existing MT_to_review statuses\n\nconst TARGETS = [\n  ['7497898368b56f1d07ee46.54496723', 'MyImage - html/legal pages', 69],\n  ['901014606819db6d0bc999.26230201', 'Mobitrace - html/legal pages', 60],\n  ['18564477693fc9bba4cec8.54789459', 'My QR Code html', 32],\n  ['46919453689d5d729a1e70.59972091', 'PDF Editor - html/legal pages', 21],\n  ['9933660066825e9a8005c8.58526829', 'Personality - Members area content', 2],\n  ['9274956467e3e224807498.79791832', 'Mobitrace - backend/emails', 2],\n  ['3070657967b5854be32cb1.65162854', 'My Image', 4],\n  ['1286096867dbf31146afc5.54950617', 'PDF Editor', 1]\n];\n\nreturn TARGETS.map(function (t) {\n  return { json: {\n    project_id: t[0], project_name: t[1], fixes_pending: t[2],\n    title: TITLE, color: COLOR,\n    url: 'https://api.lokalise.com/api2/projects/' + t[0] + '/custom_translation_statuses',\n    payload: { title: TITLE, color: COLOR }\n  } };\n});\n"
+      }
+    },
+    {
+      "id": "0eab0674-d090-4cd4-a5bb-a791f42a5b57",
+      "name": "Create status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1500
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "7e6d7a1d-730c-4808-9d55-22685b51fba2",
+      "name": "Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// neverError is on here so a 409 (feature disabled) is reported rather than\n// aborting the other projects. Every response is inspected explicitly.\nconst plan = $('Plan').all().map(function (x) { return x.json; });\nconst items = $input.all();\n\nconst results = [];\nlet created = 0, failed = 0;\n\nfor (let i = 0; i < items.length; i++) {\n  const r = items[i].json || {};\n  const cfg = plan[i] || {};\n  const status = r.statusCode;\n  const body = (r.body !== undefined) ? r.body : r;\n  const st = (body && body.custom_translation_status) || null;\n\n  const ok = status === 200 || status === 201;\n  if (ok && st && st.status_id) created++; else failed++;\n\n  results.push({\n    project: cfg.project_name || cfg.project_id,\n    project_id: cfg.project_id,\n    fixes_pending: cfg.fixes_pending,\n    http_status: status,\n    status_id: st ? st.status_id : null,\n    title: st ? st.title : null,\n    error: ok ? null : (typeof body === 'string' ? body.slice(0, 300) : JSON.stringify(body).slice(0, 300))\n  });\n}\n\nconst blocked = results.filter(function (x) { return !x.status_id; });\n\nreturn [{ json: {\n  attempted: results.length, created: created, failed: failed,\n  strings_unblocked: results.filter(function (x) { return x.status_id; })\n    .reduce(function (a, x) { return a + (x.fixes_pending || 0); }, 0),\n  strings_still_blocked: blocked.reduce(function (a, x) { return a + (x.fixes_pending || 0); }, 0),\n  blocked_projects: blocked,\n  status_map: results.filter(function (x) { return x.status_id; })\n    .map(function (x) { return { project_id: x.project_id, project: x.project, status_id: x.status_id }; }),\n  results: results } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan": {
+      "main": [
+        [
+          {
+            "node": "Create status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create status": {
+      "main": [
+        [
+          {
+            "node": "Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "Q0LEaXHOt7S1rNUq",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-27T14:42:37.289Z",
+      "updatedAt": "2026-08-27T14:42:37.289Z"
+    }
+  ],
+  "activeVersion": null
+}
