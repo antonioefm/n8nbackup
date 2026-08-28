@@ -1,0 +1,319 @@
+{
+  "id": "LKYC6l8fgfQqGicb",
+  "name": "Lokalise Thai glossary - write",
+  "description": "Writes attested Thai renderings into the Lokalise shared glossary. Reads fresh before writing, takes a per-term snapshot of all languages, refuses to overwrite any Thai that is already populated, then re-reads independently to confirm the Thai landed and ",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-27T14:18:24.690Z",
+  "updatedAt": "2026-08-27T14:40:41.468Z",
+  "isArchived": false,
+  "versionId": "4f4b1986-3be5-4489-a13c-99be1a7d5194",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "c2e0b71d-ba93-4f26-ad52-00a6b22bed17",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a12a0243-46ed-4362-a01d-384562f83a49",
+      "name": "Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Corrects four existing Thai glossary entries. These are OVERWRITES, not fills,\n// so each carries the exact value it expects to find; the build node refuses to\n// write if live state has drifted from that.\n//\n// Evidence: in the 7,262-string human-attested Thai corpus, each current entry\n// was followed in 0% of occurrences. The entries are over-specified or simply\n// the wrong word, so following them would produce wrong Thai.\nconst GLOSS_PID = '46552447679363c70f7ef8.58193285';\nconst TH_LANG_ID = 753;\n\nconst CORRECTIONS = [\n  // id, term, expected current Thai, corrected Thai, evidence\n  [7173914, 'Report', 'รายงานปัญหา', 'รายงาน',   '0 of 123 used the glossary form; 121 used รายงาน. Entry means \"report a problem\".'],\n  [7176115, 'About',  'เกี่ยวกับเรา', 'เกี่ยวกับ', '0 of 59 used the glossary form; 26 used เกี่ยวกับ. Entry means \"about us\"; a separate About us term exists.'],\n  [7173862, 'Next',   'ต่อไป',       'ถัดไป',     '0 of 13 used ต่อไป; 7 used ถัดไป.'],\n  [7173660, 'Back',   'ย้อนกลับ',     'กลับ',      '0 of 7 used ย้อนกลับ; 4 used กลับ. ย้อนกลับ reads as \"revert\".']\n];\n\nreturn [{ json: {\n  write_mode: 'correct',\n  project_id: GLOSS_PID,\n  th_lang_id: TH_LANG_ID,\n  terms: CORRECTIONS.map(function (c) {\n    return { id: c[0], term: c[1], expect_current: c[2], thai: c[3], evidence: c[4] };\n  }),\n  read_url: 'https://api.lokalise.com/api2/projects/' + GLOSS_PID\n    + '/glossary-terms?limit=500&pagination=cursor'\n} }];\n"
+      }
+    },
+    {
+      "id": "1a5840ad-16a5-4ee0-94c2-f7e363dae093",
+      "name": "Read before",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.read_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": false,
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": false
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20,
+              "requestInterval": 700
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "242f3924-8f3b-46fa-b2bf-45d0e994d0e6",
+      "name": "Snapshot and payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const plan = $('Plan').first().json;\nconst TH = Number(plan.th_lang_id);\n\n// Fresh read. Snapshot comes from current state, never a cached file.\nconst live = {};\nfor (const p of $input.all()) {\n  const r = p.json || {};\n  const b = (r.body !== undefined) ? r.body : r;\n  for (const t of (b.data || b.glossary_terms || [])) { live[String(t.id)] = t; }\n}\n\nconst snapshot = [];\nconst payload = [];\nconst refused = [];\n\nfor (const want of plan.terms) {\n  const t = live[String(want.id)];\n  if (!t) { refused.push({ id: want.id, term: want.term, reason: 'term id not present in live glossary' }); continue; }\n  if (String(t.term).trim() !== String(want.term).trim()) {\n    refused.push({ id: want.id, expected: want.term, actual: t.term,\n      reason: 'term text does not match the id - refusing to write' });\n    continue;\n  }\n  const trs = t.translations || [];\n  const th = trs.filter(function (x) { return Number(x.langId) === TH; });\n  const current = th.length ? String(th[0].translation || '').trim() : '';\n\n  if (want.expect_current !== undefined && want.expect_current !== null) {\n    // Overwrite mode: only proceed if live state is exactly what was reviewed.\n    if (current !== String(want.expect_current).trim()) {\n      refused.push({ id: want.id, term: want.term,\n        reason: 'live Thai differs from the value this correction was approved against - refusing to overwrite',\n        expected_current: want.expect_current, actual_current: current });\n      continue;\n    }\n  } else {\n    // Fill mode: never clobber an existing value.\n    if (current !== '') {\n      refused.push({ id: want.id, term: want.term, reason: 'Thai already populated - refusing to overwrite', current: current });\n      continue;\n    }\n  }\n\n  snapshot.push({ id: t.id, term: t.term, th_before: current, th_after_intended: want.thai,\n    evidence: want.evidence || '',\n    languages_before: trs.length,\n    nonempty_before: trs.filter(function (x) { return String(x.translation || '').trim() !== ''; }).length,\n    all_before: trs.map(function (x) { return { langId: Number(x.langId),\n      translation: x.translation || '', description: x.description || '' }; }) });\n\n  payload.push({ id: t.id, translations: [{ langId: TH, translation: want.thai, description: '' }] });\n}\n\nreturn [{ json: {\n  write_mode: plan.write_mode, project_id: plan.project_id,\n  glossary_terms_live: Object.keys(live).length,\n  requested: plan.terms.length, writable: payload.length,\n  refused: refused, snapshot: snapshot, payload: { terms: payload },\n  put_url: 'https://api.lokalise.com/api2/projects/' + plan.project_id + '/glossary-terms',\n  read_url: plan.read_url } }];\n"
+      }
+    },
+    {
+      "id": "fd0b6380-c81b-496b-b8d9-91ae9a7f9dd8",
+      "name": "PUT glossary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $json.put_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "258febe8-3ac7-4ed3-8402-33a7542790be",
+      "name": "Read after",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $(\"Snapshot and payload\").first().json.read_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": false,
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": false
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20,
+              "requestInterval": 700
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "7e6826f8-b775-41b0-9c2b-cada32fa35d7",
+      "name": "Verify",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Independent re-read. Confirms Thai now holds the corrected value and that no\n// other language changed. Also reads the errors array inside the 200 response -\n// the earlier Thai write passed its status check while silently rejecting a term.\nconst build = $('Snapshot and payload').first().json;\nconst put = $('PUT glossary').first().json;\nconst TH = 753;\n\nconst putBody = (put && put.body !== undefined) ? put.body : (put || {});\nconst apiErrors = (putBody && putBody.errors) || [];\nconst meta = (putBody && putBody.meta) || {};\n\nconst live = {};\nfor (const p of $input.all()) {\n  const r = p.json || {};\n  const b = (r.body !== undefined) ? r.body : r;\n  for (const t of (b.data || b.glossary_terms || [])) { live[String(t.id)] = t; }\n}\n\nfunction tr(t, id) {\n  const hit = (t.translations || []).filter(function (x) { return Number(x.langId) === id; });\n  return hit.length ? String(hit[0].translation || '') : '';\n}\n\nconst results = [];\nlet ok = 0, bad = 0, collateral = 0;\n\nfor (const snap of build.snapshot) {\n  const t = live[String(snap.id)];\n  const after = t ? tr(t, TH).trim() : '';\n  const lost = [];\n  if (t) {\n    for (const before of snap.all_before) {\n      const lid = Number(before.langId);\n      if (lid === TH) continue;\n      if (String(before.translation || '').trim() === '') continue;\n      if (tr(t, lid).trim() !== String(before.translation).trim()) {\n        lost.push({ langId: lid, before: before.translation, after: tr(t, lid) });\n      }\n    }\n  }\n  const good = after === String(snap.th_after_intended).trim();\n  if (good) ok++; else bad++;\n  if (lost.length) collateral++;\n  results.push({ id: snap.id, term: snap.term,\n    th_before: snap.th_before, th_after: after, intended: snap.th_after_intended,\n    corrected: good, other_languages_damaged: lost.length, damage: lost.slice(0, 5),\n    evidence: snap.evidence });\n}\n\nconst verdict = (apiErrors.length > 0) ? 'API RETURNED ERRORS - see api_errors'\n  : (collateral > 0) ? 'COLLATERAL DAMAGE - restore from snapshot'\n  : (bad > 0) ? 'Some corrections did not land'\n  : 'CLEAN - all corrections applied, no other language touched';\n\nreturn [{ json: { verdict: verdict,\n  http_status: put ? put.statusCode : null,\n  meta_updated: meta.updated !== undefined ? meta.updated : null,\n  api_error_count: apiErrors.length, api_errors: apiErrors.slice(0, 20),\n  attempted: build.snapshot.length, corrected_ok: ok, failed: bad,\n  terms_with_collateral_damage: collateral,\n  refused: build.refused, results: results } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan": {
+      "main": [
+        [
+          {
+            "node": "Read before",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read before": {
+      "main": [
+        [
+          {
+            "node": "Snapshot and payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Snapshot and payload": {
+      "main": [
+        [
+          {
+            "node": "PUT glossary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PUT glossary": {
+      "main": [
+        [
+          {
+            "node": "Read after",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read after": {
+      "main": [
+        [
+          {
+            "node": "Verify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "LKYC6l8fgfQqGicb",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-27T14:18:24.693Z",
+      "updatedAt": "2026-08-27T14:18:24.693Z"
+    }
+  ],
+  "activeVersion": null
+}
