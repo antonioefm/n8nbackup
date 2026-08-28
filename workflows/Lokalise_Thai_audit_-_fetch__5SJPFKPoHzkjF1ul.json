@@ -1,0 +1,187 @@
+{
+  "id": "5SJPFKPoHzkjF1ul",
+  "name": "Lokalise Thai audit - fetch",
+  "description": "Dedicated (non-shared) fetch workflow for the Thai LQA/style-guide job. Reads th + en across the 20 Lokalise projects that have a Thai locale, tallies every editor identity that has touched th, and returns full text for the editor identities under investi",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-27T07:31:27.249Z",
+  "updatedAt": "2026-08-27T14:38:47.598Z",
+  "isArchived": false,
+  "versionId": "04c551a8-aed2-4130-b912-3e92f37e2401",
+  "versionCounter": 8,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "f6579194-5c7e-4d08-ac21-5bad66c6240d",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "4c2e1424-e7b6-4e6d-9ec2-b63ef3ebb213",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// MODE: 'keys' | 'glossary' | 'mt' | 'evidence' | 'languages' | 'statuses'\nconst MODE = 'statuses';\n\nconst BASE = 'https://api.lokalise.com/api2';\nconst GLOSS_PID = '46552447679363c70f7ef8.58193285';\n\n// The 13 projects that the 471 auto-fix strings live in.\nconst FIX_PROJECTS = [\n  ['31393214664f295f94dd86.76792605','Personality.co'],\n  ['7497898368b56f1d07ee46.54496723','MyImage - html/legal pages'],\n  ['901014606819db6d0bc999.26230201','Mobitrace - html/legal pages'],\n  ['18564477693fc9bba4cec8.54789459','My QR Code html'],\n  ['46919453689d5d729a1e70.59972091','PDF Editor - html/legal pages'],\n  ['491848986923fad6dc2f85.42477363','QRcreate'],\n  ['964775386a3ce03ecca883.03770715','Realchecker (FE)'],\n  ['6744586768821f2c3fe845.13636914','PDF Editor (BE- emails)'],\n  ['3070657967b5854be32cb1.65162854','My Image'],\n  ['9933660066825e9a8005c8.58526829','Personality - Members area content'],\n  ['9274956467e3e224807498.79791832','Mobitrace - backend/emails'],\n  ['60625870676151e1da46d0.81913446','My QR Code'],\n  ['1286096867dbf31146afc5.54950617','PDF Editor']\n];\n\nif (MODE === 'statuses') {\n  return FIX_PROJECTS.map(function (p) {\n    return { json: { mode: 'statuses', project_id: p[0], project_name: p[1],\n      url: BASE + '/projects/' + p[0] + '/custom_translation_statuses?limit=100' } };\n  });\n}\n\nif (MODE === 'languages') {\n  return [{ json: { mode: 'languages', project_id: GLOSS_PID,\n    project_name: 'Multiproject/shared - GLOSSARY',\n    url: BASE + '/projects/' + GLOSS_PID + '/languages?limit=500&pagination=cursor' } }];\n}\n\nif (MODE === 'glossary') {\n  return [{ json: { mode: 'glossary', target: 'th',\n    project_id: GLOSS_PID, project_name: 'Multiproject/shared - GLOSSARY',\n    url: BASE + '/projects/' + GLOSS_PID + '/glossary-terms?limit=500&pagination=cursor' } }];\n}\n\nreturn [{ json: { mode: MODE, note: 'other modes unchanged' } }];\n"
+      }
+    },
+    {
+      "id": "e067189f-9ae1-4631-bbad-dae12c437f48",
+      "name": "Fetch Lokalise",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": false,
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2500
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": false
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 200,
+              "requestInterval": 700
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "bf729138-e07d-4e4a-ad0d-3e2c1123c716",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const pages = $input.all();\nconst cfgAll = $('Config').all().map(function (x) { return x.json; });\nconst cfg = cfgAll[0] || {};\nconst mode = cfg.mode || 'keys';\nconst NAMES = {};\ncfgAll.forEach(function (c) { if (c.project_id) NAMES[c.project_id] = c.project_name || c.project_id; });\n\nconst errors = [];\nconst bodies = [];\npages.forEach(function (p) {\n  const r = p.json || {};\n  if (r.error !== undefined && r.body === undefined) {\n    errors.push({ kind: 'item_error', detail: String(JSON.stringify(r.error)).slice(0, 400) });\n    return;\n  }\n  const st = r.statusCode;\n  const b = (r.body !== undefined) ? r.body : r;\n  if (st !== undefined && st !== 200) {\n    errors.push({ kind: 'http', status: st, body: (typeof b === 'string' ? b : JSON.stringify(b)).slice(0, 400) });\n    return;\n  }\n  bodies.push(b);\n});\n\nif (mode === 'statuses') {\n  const out = [];\n  bodies.forEach(function (b) {\n    const pid = String(b.project_id || '');\n    const list = b.custom_translation_statuses || [];\n    out.push({ project: NAMES[pid] || pid, project_id: pid,\n      count: list.length,\n      statuses: list.map(function (s) { return { id: s.status_id, title: s.title, color: s.color }; }),\n      has_mt_to_review: list.some(function (s) { return String(s.title).trim() === 'MT_to_review'; }),\n      mt_to_review_id: (list.filter(function (s) { return String(s.title).trim() === 'MT_to_review'; })[0] || {}).status_id || null });\n  });\n  return [{ json: { mode: 'statuses', pages: pages.length, errors: errors,\n    projects: out.length,\n    missing_mt_to_review: out.filter(function (x) { return !x.has_mt_to_review; }).map(function (x) { return x.project; }),\n    detail: out } }];\n}\n\nif (mode === 'languages') {\n  const out = [];\n  bodies.forEach(function (b) {\n    (b.languages || []).forEach(function (l) { out.push({ id: l.lang_id, iso: l.lang_iso, name: l.lang_name }); });\n  });\n  out.sort(function (a, b) { return a.id - b.id; });\n  return [{ json: { mode: 'languages', pages: pages.length, errors: errors, count: out.length, languages: out } }];\n}\n\nif (mode === 'glossary') {\n  const terms = [];\n  bodies.forEach(function (b) {\n    (b.data || b.glossary_terms || []).forEach(function (t) {\n      const tr = {};\n      (t.translations || []).forEach(function (x) {\n        tr[x.langId || x.lang_id] = { t: x.translation || '', d: x.description || '' };\n      });\n      terms.push({ id: t.id, term: t.term || '', desc: t.description || '',\n        translatable: t.translatable, forbidden: t.forbidden,\n        tags: (t.tags || []).join('|'), translations: tr });\n    });\n  });\n  return [{ json: { mode: 'glossary', pages: pages.length, errors: errors, count: terms.length, terms: terms } }];\n}\n\nreturn [{ json: { mode: mode, errors: errors, note: 'no shaper for this mode' } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lokalise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lokalise": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "5SJPFKPoHzkjF1ul",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-27T07:31:27.251Z",
+      "updatedAt": "2026-08-27T07:31:27.251Z"
+    }
+  ],
+  "activeVersion": null
+}
