@@ -1,0 +1,201 @@
+{
+  "id": "6QwG0kbtHXhhHqMJ",
+  "name": "Lokalise Thai - apply style fixes",
+  "description": "Re-derives the deterministic Thai style-guide fixes from live Lokalise state and builds per-project PUT payloads that set the corrected text plus MT_to_review where the project allows it. DRY_RUN reports the rule histogram for parity checking before any w",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-27T14:45:03.809Z",
+  "updatedAt": "2026-08-27T14:57:12.265Z",
+  "isArchived": false,
+  "versionId": "0d3949c5-671b-4654-bf8e-0a0d00b7fa77",
+  "versionCounter": 4,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "974d966e-4c5f-4a1e-877a-c8a595f9c43f",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "e13b6ff5-fd73-42d6-9fbd-e264bc4641a2",
+      "name": "Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// VERIFICATION RUN. DRY_RUN true, so nothing is written. Re-derives fixes from\n// live state after both write passes: any string that still needs a fix means a\n// write did not land. Expected result: 0 remaining fixes.\nconst DRY_RUN = true;\n\nconst PROJECTS = [\n  ['31393214664f295f94dd86.76792605', 'Personality.co',                     29251],\n  ['7497898368b56f1d07ee46.54496723', 'MyImage - html/legal pages',          null],\n  ['901014606819db6d0bc999.26230201', 'Mobitrace - html/legal pages',        null],\n  ['18564477693fc9bba4cec8.54789459', 'My QR Code html',                     null],\n  ['46919453689d5d729a1e70.59972091', 'PDF Editor - html/legal pages',       null],\n  ['491848986923fad6dc2f85.42477363', 'QRcreate',                           25875],\n  ['964775386a3ce03ecca883.03770715', 'Realchecker (FE)',                   29175],\n  ['6744586768821f2c3fe845.13636914', 'PDF Editor (BE- emails)',            29306],\n  ['3070657967b5854be32cb1.65162854', 'My Image',                           29359],\n  ['9933660066825e9a8005c8.58526829', 'Personality - Members area content',  null],\n  ['9274956467e3e224807498.79791832', 'Mobitrace - backend/emails',          null],\n  ['60625870676151e1da46d0.81913446', 'My QR Code',                         25140],\n  ['1286096867dbf31146afc5.54950617', 'PDF Editor',                        29360]\n];\n\nconst qs = 'include_translations=1&disable_references=1&limit=500&pagination=cursor'\n  + '&filter_translation_lang_ids=640,753';\n\nreturn PROJECTS.map(function (p) {\n  return { json: {\n    dry_run: DRY_RUN,\n    project_id: p[0], project_name: p[1], status_id: p[2],\n    url: 'https://api.lokalise.com/api2/projects/' + p[0] + '/keys?' + qs\n  } };\n});\n"
+      }
+    },
+    {
+      "id": "f2dea33d-9511-4969-a7e8-2bbf555c081e",
+      "name": "Fetch Lokalise",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": false,
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2500
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": false
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 200,
+              "requestInterval": 700
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "6077d163-222b-4816-be68-f02976a373c5",
+      "name": "Derive fixes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const cfgAll = $('Plan').all().map(function (x) { return x.json; });\nconst DRY = cfgAll[0].dry_run;\nconst META = {};\ncfgAll.forEach(function (c) { META[c.project_id] = c; });\n\nconst errors = [];\nconst bodies = [];\nfor (const p of $input.all()) {\n  const r = p.json || {};\n  if (r.error !== undefined && r.body === undefined && r.keys === undefined) {\n    errors.push({ kind: 'item_error', detail: String(JSON.stringify(r.error)).slice(0, 300) });\n    continue;\n  }\n  const st = r.statusCode;\n  const b = (r.body !== undefined) ? r.body : r;\n  if (st !== undefined && st !== 200) {\n    errors.push({ kind: 'http', status: st, body: JSON.stringify(b).slice(0, 300) });\n    continue;\n  }\n  bodies.push(b);\n}\n\nconst TH = '\\u0E00-\\u0E7F';\nconst THC = new RegExp('[' + TH + ']');\nconst QPART = ['หรือไม่','อย่างไร','เท่าใด','เท่าไร','ไหม','อะไร','ทำไม','เมื่อใด','ที่ไหน','ใคร','กี่'];\nconst LOAN = [['โพรไฟล์','โปรไฟล์','loan-profile'],['อีเมล์','อีเมล','loan-email'],\n  ['อัพโหลด','อัปโหลด','loan-upload'],['ลิงค์','ลิงก์','loan-link'],\n  ['เวปไซต์','เว็บไซต์','loan-website'],['คุ้กกี้','คุกกี้','loan-cookie'],\n  ['โปรโมชั่น','โปรโมชัน','loan-promotion']];\n\nfunction applyRules(th) {\n  const fixes = [];\n  let out = th;\n  if (out.indexOf('\\u00a0') >= 0) { out = out.split('\\u00a0').join(' '); fixes.push('ws-nbsp'); }\n  if (out.indexOf('\\u200b') >= 0) { out = out.split('\\u200b').join(''); fixes.push('ws-zwsp'); }\n  if (out.indexOf('\\u2011') >= 0) { out = out.split('\\u2011').join('-'); fixes.push('ws-nbhyphen'); }\n  for (const L of LOAN) {\n    if (out.indexOf(L[0]) >= 0) { out = out.split(L[0]).join(L[1]); fixes.push(L[2]); }\n  }\n  let n = out.replace(/QR\\s*โค้ด/g, 'คิวอาร์โค้ด').replace(/รหัส\\s*QR/g, 'คิวอาร์โค้ด');\n  if (n !== out) { out = n; fixes.push('term-qrcode'); }\n  if (/[\\u0E50-\\u0E59]/.test(out)) {\n    out = out.replace(/[\\u0E50-\\u0E59]/g, function (c) { return String(c.charCodeAt(0) - 0x0E50); });\n    fixes.push('num-thaidigits');\n  }\n  if (/[\\u201c\\u201d]/.test(out)) { out = out.replace(/[\\u201c\\u201d]/g, '\"'); fixes.push('punct-quotes'); }\n  if (out.indexOf('\\u2026') >= 0) { out = out.split('\\u2026').join('...'); fixes.push('punct-ellipsis'); }\n  if (out.indexOf('กรุณา') >= 0) { out = out.split('กรุณา').join('โปรด'); fixes.push('tone-please'); }\n  const thanRe = new RegExp('(?<![' + TH + '])ท่าน', 'g');\n  if (thanRe.test(out) && out.indexOf('ผู้ท่าน') < 0) {\n    out = out.replace(new RegExp('(?<![' + TH + '])ท่าน', 'g'), 'คุณ');\n    fixes.push('tone-2ndperson');\n  }\n  n = out.replace(new RegExp('([' + TH + '])([A-Za-z0-9])', 'g'), '$1 $2')\n         .replace(new RegExp('([A-Za-z0-9])([' + TH + '])', 'g'), '$1 $2');\n  if (n !== out) { out = n; fixes.push('space-script'); }\n  n = out.replace(new RegExp('ๆ(?=[' + TH + '])', 'g'), 'ๆ ');\n  if (n !== out) { out = n; fixes.push('space-yamok'); }\n  n = out.replace(/\\sๆ/g, 'ๆ');\n  if (n !== out) { out = n; fixes.push('space-yamok-before'); }\n  n = out.replace(/ {2,}/g, ' ').trim();\n  if (n !== out) { out = n; fixes.push('ws-collapse'); }\n  if (/[^.]\\.$/.test(out) && THC.test(out)) {\n    out = out.replace(/\\.$/, '').replace(/\\s+$/, '');\n    fixes.push('punct-nofinalstop');\n  }\n  if (out.charAt(out.length - 1) === '?') {\n    let hasQ = false;\n    for (const q of QPART) { if (out.indexOf(q) >= 0) { hasQ = true; break; } }\n    if (hasQ) {\n      out = out.replace(/\\?+$/, '').replace(/\\s+$/, '');\n      fixes.push('punct-noquestionmark');\n    } else {\n      fixes.push('FLAG-question-no-particle');\n    }\n  }\n  return { out: out, fixes: fixes };\n}\n\nconst MTACC = { 'support@lokali.se': 1, 'support@lokalise.co': 1 };\nconst groups = {};\nconst histogram = {};\nlet scanned = 0, candidates = 0, changed = 0, flagged = 0;\n\nfor (const b of bodies) {\n  const pid = String(b.project_id || '');\n  const meta = META[pid] || {};\n  if (!groups[pid]) groups[pid] = { project_id: pid, project: meta.project_name || pid,\n    status_id: meta.status_id, keys: [] };\n  for (const k of (b.keys || [])) {\n    if (k.is_archived === true) continue;\n    if (k.is_plural === true) continue;   // JSON blobs, excluded from text rules\n    let tgt = null;\n    for (const t of (k.translations || [])) { if (t.language_iso === 'th') tgt = t; }\n    if (!tgt) continue;\n    const v = tgt.translation;\n    const txt = (typeof v === 'string') ? v : JSON.stringify(v);\n    if (!txt || !String(txt).trim()) continue;\n    scanned++;\n    if (tgt.is_reviewed) continue;\n    const who = tgt.modified_by_email || '';\n    const stats = (tgt.custom_translation_statuses || []).map(function (x) { return x.title; });\n    const sigStatus = stats.indexOf('MT_to_review') >= 0;\n    const sigBot = !!MTACC[who] || tgt.modified_by === 1 || tgt.modified_by === 2;\n    const sigUnv = !!tgt.is_unverified || !!tgt.is_fuzzy;\n    if (!(sigStatus || sigBot || sigUnv)) continue;\n    candidates++;\n\n    const res = applyRules(txt);\n    const real = res.fixes.filter(function (f) { return f.indexOf('FLAG') !== 0; });\n    for (const f of res.fixes) { histogram[f] = (histogram[f] || 0) + 1; }\n    if (res.fixes.some(function (f) { return f.indexOf('FLAG') === 0; })) flagged++;\n    if (real.length === 0 || res.out === txt) continue;\n    changed++;\n\n    groups[pid].keys.push({ key_id: k.key_id, translation_id: tgt.translation_id,\n      key: (k.key_name || {}).web || (k.key_name || {}).other || '',\n      old: txt, neu: res.out, rules: real.join('|') });\n  }\n}\n\nconst out = [];\nfor (const pid of Object.keys(groups)) {\n  const g = groups[pid];\n  if (!g.keys.length) continue;\n  out.push({ json: {\n    dry_run: DRY,\n    project_id: pid, project: g.project, status_id: g.status_id,\n    fix_count: g.keys.length,\n    snapshot: g.keys.map(function (x) { return { key_id: x.key_id, translation_id: x.translation_id,\n      key: x.key, original: x.old, intended: x.neu, rules: x.rules }; }),\n    payload: { keys: g.keys.map(function (x) {\n      const tr = { language_iso: 'th', translation: x.neu };\n      if (g.status_id) { tr.custom_translation_status_ids = [g.status_id]; }\n      return { key_id: x.key_id, translations: [tr] };\n    }) },\n    put_url: 'https://api.lokalise.com/api2/projects/' + pid + '/keys',\n    summary: { scanned: scanned, candidates: candidates, changed: changed,\n      flagged: flagged, histogram: histogram, fetch_errors: errors,\n      projects_with_fixes: Object.keys(groups).filter(function (p) { return groups[p].keys.length; }).length }\n  } });\n}\n\nreturn out;\n"
+      }
+    },
+    {
+      "id": "58c907ff-6fab-4cfc-aa60-f93188e83934",
+      "name": "Verify write",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// PUT /keys returns 200 with a per-key errors array, exactly like the glossary\n// endpoint. The status code alone is not evidence of success, so the array is\n// read explicitly and every project is accounted for.\nconst derived = $('Derive fixes').all().map(function (x) { return x.json; });\nconst items = $input.all();\n\nconst perProject = [];\nlet attempted = 0, updated = 0, apiErrors = 0;\n\nfor (let i = 0; i < items.length; i++) {\n  const r = items[i].json || {};\n  const src = derived[i] || {};\n  const body = (r.body !== undefined) ? r.body : r;\n  const errs = (body && body.errors) || [];\n  const keys = (body && body.keys) || [];\n\n  attempted += src.fix_count || 0;\n  updated += keys.length;\n  apiErrors += errs.length;\n\n  perProject.push({\n    project: src.project,\n    project_id: src.project_id,\n    status_id: src.status_id,\n    status_applied: src.status_id ? 'yes' : 'no - custom statuses disabled in this project',\n    fixes_sent: src.fix_count || 0,\n    http_status: r.statusCode,\n    keys_returned: keys.length,\n    api_error_count: errs.length,\n    api_errors: errs.slice(0, 5)\n  });\n}\n\nconst clean = apiErrors === 0 && perProject.every(function (p) { return p.http_status === 200; });\n\nreturn [{ json: {\n  verdict: clean\n    ? 'Writes accepted with no API errors - confirm with an independent re-read'\n    : 'API ERRORS PRESENT - inspect per_project before trusting anything',\n  projects: perProject.length,\n  fixes_attempted: attempted,\n  keys_returned_total: updated,\n  api_error_total: apiErrors,\n  strings_with_status: perProject.filter(function (p) { return p.status_id; })\n    .reduce(function (a, p) { return a + p.fixes_sent; }, 0),\n  strings_without_status: perProject.filter(function (p) { return !p.status_id; })\n    .reduce(function (a, p) { return a + p.fixes_sent; }, 0),\n  per_project: perProject } }];\n",
+        "mode": "runOnceForAllItems"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lokalise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lokalise": {
+      "main": [
+        [
+          {
+            "node": "Derive fixes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "6QwG0kbtHXhhHqMJ",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-27T14:45:03.812Z",
+      "updatedAt": "2026-08-27T14:45:03.812Z"
+    }
+  ],
+  "activeVersion": null
+}
