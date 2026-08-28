@@ -1,0 +1,274 @@
+{
+  "id": "fEV8eKGk8Yv3znbK",
+  "name": "Lokalise - double space change set (read-only)",
+  "description": "READ-ONLY. Builds the exact double-space change set: target languages only, HTML projects and pseudo-locales excluded, and any string containing markup, entities, newlines, NBSP or placeholder characters rejected. Each collapse is verified to change only ",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-27T10:22:54.005Z",
+  "updatedAt": "2026-08-27T10:22:54.005Z",
+  "isArchived": false,
+  "versionId": "42fba6af-d74e-4ff6-95d8-7912086113b1",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "d13a33b9-161e-4c67-b50e-7b8cdd557595",
+      "name": "Build Change Set",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "8d438e74-df1b-4d3e-820f-ab01ddce5da9",
+      "name": "Fetch Lokalise Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=500&page=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "021f7c48-2d28-4e6f-82af-16be8a830562",
+      "name": "Build Count Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const out = [];\nconst skippedHtml = [];\nlet first = true;\nfor (const it of items) {\n  for (const p of (it.json.projects || [])) {\n    if (/html/i.test(p.name || '')) { skippedHtml.push(p.name); continue; }\n    out.push({ json: {\n      project_id: p.project_id,\n      project_name: p.name,\n      base_lang: (p.base_language_iso || 'en').toLowerCase(),\n      qa_type: 'double_space',\n      qa_label: 'DoubleSpace'\n    }});\n    if (first) {\n      out.push({ json: {\n        project_id: p.project_id,\n        project_name: p.name,\n        base_lang: 'en',\n        qa_type: '__control_invalid__',\n        qa_label: '__CONTROL__'\n      }});\n      first = false;\n    }\n  }\n}\nfor (const o of out) { o.json.skipped_html = skippedHtml; }\nreturn out;\n"
+      }
+    },
+    {
+      "id": "7386196a-fc3b-48f8-a4d7-c2158dd8f02e",
+      "name": "Fetch Flagged Counts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?filter_qa_issues={{ $json.qa_type }}&limit=1&page=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "d44ea55a-8b3e-460b-9f25-753eafce872b",
+      "name": "Build Page Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const PER = 500;\nconst MAX_PAGES = 20;\nconst reqs = $('Build Count Requests').all();\nconst res = $input.all();\nconst out = [];\nconst failed = [];\nconst capped = [];\nlet controlStatus = null;\nlet scanned = 0;\nlet skippedHtml = [];\n\nfor (let i = 0; i < res.length; i++) {\n  const pi = res[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const metaItem = reqs[idx] || reqs[i];\n  if (!metaItem) { continue; }\n  const meta = metaItem.json;\n  if (meta.skipped_html && meta.skipped_html.length > skippedHtml.length) { skippedHtml = meta.skipped_html; }\n\n  const r = res[i].json || {};\n  const hdr = r.headers || {};\n  if (meta.qa_label === '__CONTROL__') { controlStatus = r.statusCode; continue; }\n\n  scanned++;\n  const raw = hdr['x-pagination-total-count'];\n  let total = null;\n  if (r.statusCode === 200 && raw !== undefined && raw !== null) {\n    const n = parseInt(raw, 10);\n    if (!isNaN(n)) { total = n; }\n  }\n  if (total === null) { failed.push(meta.project_name); continue; }\n  if (total === 0) { continue; }\n\n  let pages = Math.ceil(total / PER);\n  if (pages > MAX_PAGES) { pages = MAX_PAGES; capped.push(meta.project_name); }\n  for (let p = 1; p <= pages; p++) {\n    out.push({ json: {\n      project_id: meta.project_id,\n      project_name: meta.project_name,\n      base_lang: meta.base_lang,\n      page: p\n    }});\n  }\n}\n\nfor (const o of out) {\n  o.json.scanned = scanned;\n  o.json.failed = failed;\n  o.json.capped = capped;\n  o.json.control_status = controlStatus;\n  o.json.skipped_html = skippedHtml;\n}\nif (out.length === 0) {\n  out.push({ json: { project_id: null, project_name: null, base_lang: 'en', page: 0, scanned: scanned, failed: failed, capped: capped, control_status: controlStatus, skipped_html: skippedHtml } });\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "871f2055-f028-43fb-922c-e963adaaa641",
+      "name": "Fetch Key Pages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?filter_qa_issues=double_space&limit=500&page={{ $json.page }}&include_translations=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "3f12c853-0da5-4df8-b5f2-24096b4ff1b5",
+      "name": "Build Safe Change Set",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Pseudo-locales excluded account-wide (Maria 2026-08-27).\nconst PSEUDO = ['ps', 'pst'];\nfunction isPseudo(iso) {\n  const s = String(iso || '').toLowerCase();\n  return PSEUDO.indexOf(s) !== -1 || s.indexOf('pseudo') !== -1;\n}\n\n// Tightened from the 2026-08-19 version, which let [%1$s:trialDays] through\n// because it only looked for the literal [%s: form. Any placeholder-ish\n// character now disqualifies the string outright.\nfunction reject(s) {\n  if (typeof s !== 'string' || s === '') { return 'empty'; }\n  if (!/ {2,}/.test(s)) { return 'no_double_space'; }\n  if (/[\\u00A0\\u202F\\u2009\\u200A\\u2007\\u2060\\uFEFF]/.test(s)) { return 'nbsp_or_thin_space'; }\n  if (/[<>&]/.test(s)) { return 'markup_or_entity'; }\n  if (/[\\n\\r\\t\\v\\f]/.test(s)) { return 'real_newline_or_tab'; }\n  if (/\\\\[nrtvf]/.test(s)) { return 'escaped_newline'; }\n  if (/^\\s|\\s$/.test(s)) { return 'edge_whitespace'; }\n  if (/[%{}\\[\\]]/.test(s)) { return 'placeholder_char'; }\n  if (s.indexOf('$t(') >= 0) { return 'i18n_call'; }\n  return null;\n}\n\n// A collapse is only allowed to change spaces. Proven per string, not assumed.\nfunction verify(before, after) {\n  if (after === before) { return 'no_change'; }\n  if (/ {2,}/.test(after)) { return 'still_has_double'; }\n  if (before.replace(/ /g, '') !== after.replace(/ /g, '')) { return 'changed_non_space'; }\n  if (before.length <= after.length) { return 'did_not_shrink'; }\n  return null;\n}\n\nconst reqs = $('Build Page Requests').all();\nconst res = $input.all();\nconst meta0 = (reqs[0] || { json: {} }).json;\nconst seenKey = {};\nconst readFail = [];\nconst rows = [];\nconst rejected = {};\nlet keysExamined = 0;\nlet verifyFailures = 0;\n\nfunction bump(o, k) { o[k] = (o[k] || 0) + 1; }\n\nfor (let i = 0; i < res.length; i++) {\n  const pi = res[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const metaItem = reqs[idx] || reqs[i];\n  if (!metaItem) { continue; }\n  const meta = metaItem.json;\n  if (!meta.project_id) { continue; }\n\n  const r = res[i].json || {};\n  if (r.statusCode !== 200) { readFail.push(meta.project_name + ' p' + meta.page); continue; }\n  const keys = (r.body && r.body.keys) ? r.body.keys : [];\n\n  for (const k of keys) {\n    if (k.is_archived) { continue; }\n    const dk = meta.project_id + '#' + k.key_id;\n    if (seenKey[dk]) { continue; }\n    seenKey[dk] = 1;\n    keysExamined++;\n\n    for (const tr of (k.translations || [])) {\n      const before = tr.translation;\n      if (typeof before !== 'string') { bump(rejected, 'plural_object'); continue; }\n      const iso = String(tr.language_iso || '').toLowerCase();\n      if (isPseudo(iso)) { bump(rejected, 'pseudo_locale'); continue; }\n      if (iso === meta.base_lang) { bump(rejected, 'source_language'); continue; }\n\n      const why = reject(before);\n      if (why) { bump(rejected, why); continue; }\n\n      const after = before.replace(/ {2,}/g, ' ');\n      const bad = verify(before, after);\n      if (bad) { bump(rejected, 'verify_' + bad); verifyFailures++; continue; }\n\n      let kn = k.key_name;\n      if (kn && typeof kn === 'object') { kn = kn.web || kn.other || kn.ios || kn.android || String(k.key_id); }\n\n      rows.push({\n        project: meta.project_name,\n        project_id: meta.project_id,\n        key: String(kn),\n        key_id: k.key_id,\n        translation_id: tr.translation_id,\n        lang: iso,\n        is_reviewed: tr.is_reviewed ? 1 : 0,\n        runs: (before.match(/ {2,}/g) || []).length,\n        spaces_removed: before.length - after.length,\n        before: before,\n        after: after\n      });\n    }\n  }\n}\n\nconst byProject = {};\nfor (const row of rows) {\n  if (!byProject[row.project]) { byProject[row.project] = { total: 0, unreviewed: 0, reviewed: 0 }; }\n  byProject[row.project].total++;\n  if (row.is_reviewed) { byProject[row.project].reviewed++; } else { byProject[row.project].unreviewed++; }\n}\n\nreturn [{ json: {\n  projects_scanned: meta0.scanned || 0,\n  keys_examined: keysExamined,\n  change_set_size: rows.length,\n  unreviewed: rows.filter(function (x) { return !x.is_reviewed; }).length,\n  reviewed: rows.filter(function (x) { return x.is_reviewed; }).length,\n  rejected: rejected,\n  verify_failures: verifyFailures,\n  by_project: byProject,\n  skipped_html: meta0.skipped_html || [],\n  failed: (meta0.failed || []).concat(readFail),\n  capped: meta0.capped || [],\n  control_status: meta0.control_status,\n  rows: rows\n}}];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Build Change Set": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lokalise Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lokalise Projects": {
+      "main": [
+        [
+          {
+            "node": "Build Count Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Count Requests": {
+      "main": [
+        [
+          {
+            "node": "Fetch Flagged Counts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Flagged Counts": {
+      "main": [
+        [
+          {
+            "node": "Build Page Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Page Requests": {
+      "main": [
+        [
+          {
+            "node": "Fetch Key Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Key Pages": {
+      "main": [
+        [
+          {
+            "node": "Build Safe Change Set",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "fEV8eKGk8Yv3znbK",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-27T10:22:54.008Z",
+      "updatedAt": "2026-08-27T10:22:54.008Z"
+    }
+  ],
+  "activeVersion": null
+}
