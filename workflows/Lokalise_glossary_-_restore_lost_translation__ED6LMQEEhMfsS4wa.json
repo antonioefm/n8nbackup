@@ -1,0 +1,229 @@
+{
+  "id": "ED6LMQEEhMfsS4wa",
+  "name": "Lokalise glossary - restore lost translation",
+  "description": "Restores the Norwegian glossary translation lost during the Thai Tier A write, using the value captured in that run's pre-write snapshot, then re-reads to confirm both the restored value and the Thai entry are present.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-27T14:22:12.289Z",
+  "updatedAt": "2026-08-27T14:22:17.470Z",
+  "isArchived": false,
+  "versionId": "cf0e9739-7d43-4536-a9d3-7f43f6521c90",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "a4fb5576-979b-4539-9f9a-d4e84dcbf8a8",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "361b5e91-0b5c-4e8a-8ade-e385e9d57fb2",
+      "name": "Plan restore",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Restores a glossary translation that was lost during the Thai write in\n// execution 556140. Value comes from the pre-write snapshot taken in that same\n// execution, not from any older read.\nconst GLOSS_PID = '46552447679363c70f7ef8.58193285';\n\nconst RESTORE = [\n  { id: 7176096, term: 'Update payment details', langId: 759, lang: 'nb (Norwegian)',\n    translation: 'Oppdater betalingsinformasjon' }\n];\n\nreturn [{ json: {\n  project_id: GLOSS_PID,\n  restore: RESTORE,\n  payload: { terms: RESTORE.map(function (r) {\n    return { id: r.id, translations: [{ langId: r.langId, translation: r.translation, description: '' }] };\n  }) },\n  put_url: 'https://api.lokalise.com/api2/projects/' + GLOSS_PID + '/glossary-terms',\n  read_url: 'https://api.lokalise.com/api2/projects/' + GLOSS_PID\n    + '/glossary-terms?limit=500&pagination=cursor'\n} }];\n"
+      }
+    },
+    {
+      "id": "c3187780-6bf6-4c0a-aa52-d8075739f9ff",
+      "name": "PUT restore",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $json.put_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "00d4b09b-469e-496d-bfba-3cdb44b209b9",
+      "name": "Read after",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $(\"Plan restore\").first().json.read_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": false,
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": false
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20,
+              "requestInterval": 700
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "428221f1-b419-4ede-98c5-83438055073d",
+      "name": "Verify restore",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const plan = $('Plan restore').first().json;\nconst live = {};\nfor (const p of $input.all()) {\n  const r = p.json || {};\n  const b = (r.body !== undefined) ? r.body : r;\n  for (const t of (b.data || b.glossary_terms || [])) { live[String(t.id)] = t; }\n}\n\nconst out = [];\nfor (const want of plan.restore) {\n  const t = live[String(want.id)];\n  const trs = (t && t.translations) || [];\n  const hit = trs.filter(function (x) { return Number(x.langId) === Number(want.langId); });\n  const now = hit.length ? String(hit[0].translation || '') : '';\n  const th = trs.filter(function (x) { return Number(x.langId) === 753; });\n  out.push({ id: want.id, term: want.term, lang: want.lang,\n    expected: want.translation, actual: now,\n    restored: now.trim() === String(want.translation).trim(),\n    thai_still_present: th.length ? String(th[0].translation || '') : '',\n    languages: trs.length,\n    nonempty: trs.filter(function (x) { return String(x.translation || '').trim() !== ''; }).length });\n}\n\nreturn [{ json: { all_restored: out.every(function (x) { return x.restored; }), results: out } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Plan restore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan restore": {
+      "main": [
+        [
+          {
+            "node": "PUT restore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PUT restore": {
+      "main": [
+        [
+          {
+            "node": "Read after",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read after": {
+      "main": [
+        [
+          {
+            "node": "Verify restore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "ED6LMQEEhMfsS4wa",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-27T14:22:12.292Z",
+      "updatedAt": "2026-08-27T14:22:12.292Z"
+    }
+  ],
+  "activeVersion": null
+}
