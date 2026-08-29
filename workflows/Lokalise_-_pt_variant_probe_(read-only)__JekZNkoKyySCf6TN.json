@@ -1,0 +1,197 @@
+{
+  "id": "JekZNkoKyySCf6TN",
+  "name": "Lokalise - pt variant probe (read-only)",
+  "description": "READ-ONLY. Lists every Lokalise project and reports which Portuguese variants (pt, pt_BR, pt_PT, pt_old) each one carries, with language ids. Used to decide whether a pt_BR glossary column is possible.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-28T13:58:10.834Z",
+  "updatedAt": "2026-08-28T13:58:10.834Z",
+  "isArchived": false,
+  "versionId": "2872aa44-ba48-4ae0-9692-b4d808daf385",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "9d3cbdb3-1a95-44f5-8bd0-67b8fa03d559",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "2b4db152-8dfa-4c66-834b-6d596704b80a",
+      "name": "Fetch Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=500&page=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "c91939ac-2222-4c9a-b932-f88dacb5e92e",
+      "name": "List Projects",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const out = [];\nfor (const it of items) {\n  for (const p of (it.json.projects || [])) {\n    out.push({ json: { project_id: p.project_id, project_name: p.name, base: p.base_language_iso || '' } });\n  }\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "06e9b346-4c94-49cb-a5eb-0267b84eb9d6",
+      "name": "Fetch Languages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/languages?limit=200",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "0709d524-554c-42ce-965d-4b6d94df0c80",
+      "name": "Find PT Variants",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const reqs = $('List Projects').all();\nconst res = $input.all();\nconst rows = [];\nconst failed = [];\nconst variantTally = {};\nfor (let i = 0; i < res.length; i++) {\n  const pi = res[i].pairedItem;\n  let idx = i;\n  if (pi && typeof pi === 'object' && typeof pi.item === 'number') { idx = pi.item; }\n  else if (typeof pi === 'number') { idx = pi; }\n  const meta = (reqs[idx] || reqs[i]).json;\n  const body = res[i].json;\n  const arr = (body && body.languages) ? body.languages : null;\n  if (!arr) { failed.push(meta.project_name); continue; }\n  const pts = [];\n  for (const L of arr) {\n    const iso = (L.lang_iso || '');\n    if (iso.toLowerCase().indexOf('pt') === 0) {\n      pts.push({ iso: iso, id: L.lang_id, name: L.lang_name });\n      variantTally[iso] = (variantTally[iso] || 0) + 1;\n    }\n  }\n  rows.push({ project: meta.project_name, project_id: meta.project_id, total_langs: arr.length, pt_variants: pts });\n}\nconst glossary = [];\nfor (const r of rows) { if (r.project_id === '46552447679363c70f7ef8.58193285') { glossary.push(r); } }\nreturn [{ json: { kind: 'summary', projects_read: rows.length, failed: failed, pt_variant_tally: variantTally, glossary_project: glossary } }].concat(rows.map(function (r) { return { json: Object.assign({ kind: 'row' }, r) }; }));\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Projects": {
+      "main": [
+        [
+          {
+            "node": "List Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Projects": {
+      "main": [
+        [
+          {
+            "node": "Fetch Languages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Languages": {
+      "main": [
+        [
+          {
+            "node": "Find PT Variants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "JekZNkoKyySCf6TN",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-28T13:58:10.838Z",
+      "updatedAt": "2026-08-28T13:58:10.838Z"
+    }
+  ],
+  "activeVersion": null
+}
