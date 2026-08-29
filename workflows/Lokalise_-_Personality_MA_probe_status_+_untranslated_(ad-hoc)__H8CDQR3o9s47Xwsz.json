@@ -1,0 +1,164 @@
+{
+  "id": "H8CDQR3o9s47Xwsz",
+  "name": "Lokalise - Personality MA probe: status + untranslated (ad-hoc)",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-28T13:30:51.833Z",
+  "updatedAt": "2026-08-28T13:30:51.833Z",
+  "isArchived": false,
+  "versionId": "ba95eeb7-65c4-4b11-b199-2a735d5e3aad",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "6ed2121d-bf22-4c6f-8482-5242d7d36bad",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "fc3465f7-9c4e-4d87-a7e8-829e5b131edf",
+      "name": "Build Probes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const MA = '9933660066825e9a8005c8.58526829';\nconst LANGS = [\n {iso:'hr',id:793},{iso:'cs',id:765},{iso:'da',id:767},{iso:'nl',id:737},{iso:'et',id:10154},\n {iso:'fil',id:818},{iso:'fi',id:768},{iso:'fr',id:673},{iso:'de',id:666},{iso:'el',id:761},\n {iso:'hu',id:773},{iso:'id',id:757},{iso:'it',id:734},{iso:'ko',id:733},{iso:'lv',id:10153},\n {iso:'lt',id:10152},{iso:'ms',id:749},{iso:'no',id:760},{iso:'pl',id:748},{iso:'pt',id:708},\n {iso:'ro',id:770},{iso:'sk',id:799},{iso:'sl',id:10159},{iso:'es',id:1056},{iso:'sv',id:754},\n {iso:'th',id:753},{iso:'tr',id:744},{iso:'uk',id:769},{iso:'vi',id:774}\n];\nconst out = [];\nout.push({ json: { kind:'create_status', method:'POST', iso:'-',\n  url:'https://api.lokalise.com/api2/projects/' + MA + '/custom_translation_statuses',\n  body: { title: 'MT_to_review', color: '#ff9f1a' } } });\nfor (const l of LANGS) {\n  out.push({ json: { kind:'untranslated', method:'GET', iso: l.iso,\n    url: 'https://api.lokalise.com/api2/projects/' + MA + '/keys?filter_untranslated=1&filter_translation_lang_ids=' + l.id + '&limit=1&page=1',\n    body: {} } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "ff3be5f4-dfb7-41f7-a5bf-aec45dbe7b4d",
+      "name": "Probe",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "={{ $json.method }}",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "154504c4-c3d9-4b68-8ad2-0892b5374ebe",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const req = $('Build Probes').all();\nconst res = $input.all();\nconst out = { status_create: null, untranslated: {}, total: 0, errors: [] };\nfor (let i = 0; i < res.length; i++) {\n  const meta = req[i] ? req[i].json : {};\n  const r = res[i].json || {};\n  const code = r.statusCode;\n  const body = r.body || {};\n  const hdr = r.headers || {};\n  if (meta.kind === 'create_status') {\n    out.status_create = { statusCode: code, body: body };\n    continue;\n  }\n  if (code !== 200) {\n    out.errors.push({ iso: meta.iso, statusCode: code, body: JSON.stringify(body).slice(0, 300) });\n    continue;\n  }\n  const n = parseInt(hdr['x-pagination-total-count'] || '0', 10);\n  out.untranslated[meta.iso] = n;\n  out.total += n;\n}\nreturn [{ json: out }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Build Probes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Probes": {
+      "main": [
+        [
+          {
+            "node": "Probe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Probe": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "H8CDQR3o9s47Xwsz",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-28T13:30:51.835Z",
+      "updatedAt": "2026-08-28T13:30:51.835Z"
+    }
+  ],
+  "activeVersion": null
+}
