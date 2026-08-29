@@ -1,0 +1,1659 @@
+{
+  "id": "Mo5VkX4QqnH6YiEd",
+  "name": "Offboarding - create checklist",
+  "description": "Two-page n8n form that reads the live General tools Confluence page, builds a per-person offboarding tool checklist xlsx in the OneDrive Offboardings folder, registers it, and DMs each access owner on Slack.",
+  "active": true,
+  "activeVersionId": "bff5c314-49e7-4860-9955-2049e4276070",
+  "createdAt": "2026-08-28T12:24:54.927Z",
+  "updatedAt": "2026-08-28T13:35:51.803Z",
+  "isArchived": false,
+  "versionId": "bff5c314-49e7-4860-9955-2049e4276070",
+  "versionCounter": 10,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Start an offboarding",
+        "formDescription": "Generates the tool checklist spreadsheet from the live General tools Confluence page and DMs each access owner on Slack.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "First name",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Last name",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Work email",
+              "fieldType": "email",
+              "placeholder": "firstname.lastname@efuturemedia.com",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Last working day",
+              "fieldType": "date",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {
+          "appendAttribution": false,
+          "buttonLabel": "Next: access owners",
+          "path": "offboarding-start",
+          "ignoreBots": true
+        }
+      },
+      "id": "9e4c2105-5243-41a2-a9a7-5df3005d1f11",
+      "name": "Offboarding intake",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        -624,
+        0
+      ],
+      "webhookId": "7fb43bec-f50d-428a-8321-2f50fb754c5a"
+    },
+    {
+      "parameters": {
+        "url": "https://futuremedia.atlassian.net/wiki/api/v2/pages/1540030465?body-format=atlas_doc_format",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "options": {}
+      },
+      "id": "b654508f-68ac-45e2-a3dd-b2a38113d580",
+      "name": "Fetch General tools page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -400,
+        0
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "C9vZX5ia4sY9xHfI",
+          "name": "Jira API Antonio token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const page = $input.first().json;\nconst adfRaw = page.body && page.body.atlas_doc_format ? page.body.atlas_doc_format.value : null;\nif (!adfRaw) { throw new Error('Confluence page 1540030465 returned no atlas_doc_format body. Offboarding aborted.'); }\nconst doc = typeof adfRaw === 'string' ? JSON.parse(adfRaw) : adfRaw;\n\nfunction textOf(n) {\n  if (!n) { return ''; }\n  if (n.type === 'text') { return n.text || ''; }\n  if (n.type === 'status') { return (n.attrs && n.attrs.text) ? n.attrs.text : ''; }\n  if (n.type === 'inlineCard') { return (n.attrs && n.attrs.url) ? n.attrs.url : ''; }\n  let out = '';\n  const kids = n.content || [];\n  for (let i = 0; i < kids.length; i++) { out += textOf(kids[i]); }\n  return out;\n}\n\nfunction collectTables(n, acc) {\n  if (!n || typeof n !== 'object') { return acc; }\n  if (n.type === 'table') { acc.push(n); }\n  const kids = n.content || [];\n  for (let i = 0; i < kids.length; i++) { collectTables(kids[i], acc); }\n  return acc;\n}\n\nconst tables = collectTables(doc, []);\nconst expected = ['tool name', 'access granted', 'access owner', 'note', 'fs', 'be', 'fe', 'do', 'qa', 'pd'];\nlet target = null;\nlet headerFound = [];\nfor (let t = 0; t < tables.length; t++) {\n  const firstRow = (tables[t].content || [])[0];\n  if (!firstRow) { continue; }\n  const cells = firstRow.content || [];\n  const texts = [];\n  for (let c = 0; c < cells.length; c++) { texts.push(textOf(cells[c]).trim().toLowerCase()); }\n  if (texts.length >= 4 && texts[0] === 'tool name') { target = tables[t]; headerFound = texts; break; }\n}\nif (!target) { throw new Error('Could not find the tools table on the General tools page (no table whose first column header is \"Tool name\"). Structure changed - offboarding aborted.'); }\nif (headerFound.length !== expected.length) { throw new Error('General tools table has ' + headerFound.length + ' columns, expected ' + expected.length + '. Structure changed - offboarding aborted.'); }\nfor (let i = 0; i < expected.length; i++) {\n  if (headerFound[i] !== expected[i]) { throw new Error('General tools column ' + (i + 1) + ' is \"' + headerFound[i] + '\", expected \"' + expected[i] + '\". Structure changed - offboarding aborted.'); }\n}\n\nfunction primaryOwner(raw) {\n  let s = (raw || '').replace(/\\([^)]*\\)/g, ' ');\n  s = s.replace(/\\s+/g, ' ').trim();\n  if (!s) { return ''; }\n  const parts = s.split(/[\\/+,&]/);\n  return parts[0].trim();\n}\n\nconst allRows = target.content || [];\nconst rows = [];\nconst owners = [];\nlet category = '';\nlet categoryCount = 0;\nfor (let r = 1; r < allRows.length; r++) {\n  const cells = allRows[r].content || [];\n  const texts = [];\n  for (let c = 0; c < cells.length; c++) { texts.push(textOf(cells[c]).replace(/\\s+/g, ' ').trim()); }\n  const tool = (texts[0] || '').trim();\n  if (!tool) { continue; }\n  let rest = '';\n  for (let c = 1; c < texts.length; c++) { rest += (texts[c] || ''); }\n  if (rest.trim() === '') { category = tool; categoryCount++; continue; }\n  const ownerRaw = (texts[2] || '').trim();\n  rows.push({ category: category, tool: tool, note: (texts[3] || '').trim(), owner_confluence: ownerRaw, owner_key: primaryOwner(ownerRaw) });\n  const key = primaryOwner(ownerRaw);\n  if (key && owners.indexOf(key) === -1) { owners.push(key); }\n}\n\nif (rows.length < 60) { throw new Error('Only ' + rows.length + ' tool rows parsed from the General tools page (expected at least 60). Structure changed - offboarding aborted.'); }\n\nreturn [{ json: { pageVersion: page.version ? page.version.number : null, toolCount: rows.length, categoryCount: categoryCount, owners: owners, rows: rows } }];"
+      },
+      "id": "b5d78f3b-b87d-4c9e-bf0f-f79d7e09b92d",
+      "name": "Parse tools table",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -176,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "KRchvSwAEIZ9Y1Xe",
+          "cachedResultName": "offboarding_access_owners"
+        },
+        "filters": {
+          "conditions": []
+        },
+        "returnAll": true
+      },
+      "id": "8f9bc29f-b30c-4b7e-bc70-92ed44e2d71a",
+      "name": "Get access owner defaults",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        48,
+        0
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const parsed = $('Parse tools table').first().json;\nconst rows = $input.all();\nconst map = {};\nfor (let i = 0; i < rows.length; i++) {\n  const r = rows[i].json;\n  if (r && r.confluence_owner) { map[String(r.confluence_owner).trim().toLowerCase()] = r.default_email ? String(r.default_email).trim() : ''; }\n}\nconst fields = [];\nfor (let i = 0; i < parsed.owners.length; i++) {\n  const o = parsed.owners[i];\n  const known = map[o.toLowerCase()] || '';\n  fields.push({ fieldLabel: 'Email - ' + o, fieldType: 'email', defaultValue: known, requiredField: false, placeholder: 'leave empty if nobody should be pinged' });\n  fields.push({ fieldLabel: 'Ping - ' + o, fieldType: 'checkbox', fieldOptions: { values: [{ option: 'Needed for this offboarding' }] }, defaultValue: 'Needed for this offboarding' });\n}\nconst unknown = [];\nfor (let i = 0; i < parsed.owners.length; i++) {\n  const o = parsed.owners[i];\n  if (!map[o.toLowerCase()]) { unknown.push(o); }\n}\nreturn [{ json: { formFieldsJson: JSON.stringify(fields), owners: parsed.owners, unknownOwners: unknown } }];"
+      },
+      "id": "84df8779-c6f6-4eae-854d-48d3616a3fcf",
+      "name": "Build owner fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        272,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "defineForm": "json",
+        "jsonOutput": "={{ $json.formFieldsJson }}",
+        "options": {
+          "formTitle": "Access owners for this offboarding",
+          "formDescription": "One row per access owner on the General tools page. Change an email to reassign a person for this offboarding only. Untick a person to skip pinging them. Leave an email empty and nobody is pinged for their tools.",
+          "buttonLabel": "Create checklist and notify"
+        }
+      },
+      "id": "a5b3e7ce-8349-4de7-836f-0ae91d98e77c",
+      "name": "Access owner assignments",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        480,
+        0
+      ],
+      "webhookId": "3eca9dd6-2915-49da-a111-45b519d8ea6f"
+    },
+    {
+      "parameters": {
+        "jsCode": "const answers = $input.first().json;\nconst parsed = $('Parse tools table').first().json;\nconst intake = $('Offboarding intake').first().json;\n\nconst firstName = String(intake['First name'] || '').trim();\nconst lastName = String(intake['Last name'] || '').trim();\nconst personName = (firstName + ' ' + lastName).trim();\nconst personEmail = String(intake['Work email'] || '').trim();\nconst lastDay = String(intake['Last working day'] || '').trim();\nif (!personName || !personEmail) { throw new Error('Missing name or email from the intake form.'); }\n\nfunction isTicked(v) {\n  if (v === true) { return true; }\n  if (Array.isArray(v)) { return v.length > 0; }\n  if (typeof v === 'string') { return v.trim() !== '' && v.trim().toLowerCase() !== 'false'; }\n  return false;\n}\n\nconst assignee = {};\nconst excluded = [];\nconst noEmail = [];\nfor (let i = 0; i < parsed.owners.length; i++) {\n  const o = parsed.owners[i];\n  const email = String(answers['Email - ' + o] || '').trim();\n  const ping = isTicked(answers['Ping - ' + o]);\n  if (!ping) { assignee[o] = ''; excluded.push(o); continue; }\n  if (!email) { assignee[o] = ''; noEmail.push(o); continue; }\n  assignee[o] = email;\n}\n\nconst generatedAt = new Date().toISOString();\nconst sheetRows = [];\nsheetRows.push({ c1: 'Name:', c2: personName, c3: '', c4: '', c5: '', c6: '' });\nsheetRows.push({ c1: 'Email:', c2: personEmail, c3: '', c4: '', c5: '', c6: '' });\nsheetRows.push({ c1: 'Last working day:', c2: lastDay, c3: '', c4: '', c5: '', c6: '' });\nsheetRows.push({ c1: 'Generated:', c2: generatedAt, c3: '', c4: '', c5: '', c6: '' });\nsheetRows.push({ c1: '', c2: '', c3: '', c4: '', c5: '', c6: '' });\nsheetRows.push({ c1: 'Tool', c2: 'Note', c3: 'Access owner (Confluence)', c4: 'Owner for this offboarding', c5: 'Status', c6: 'Status comments' });\n\nlet lastCategory = '';\nfor (let i = 0; i < parsed.rows.length; i++) {\n  const r = parsed.rows[i];\n  if (r.category && r.category !== lastCategory) {\n    sheetRows.push({ c1: r.category, c2: '', c3: '', c4: '', c5: '', c6: '' });\n    lastCategory = r.category;\n  }\n  sheetRows.push({ c1: r.tool, c2: r.note, c3: r.owner_confluence, c4: assignee[r.owner_key] || '', c5: 'To do', c6: '' });\n}\n\nconst fileName = personName + ' - Offboarding.xlsx';\nreturn [{ json: { personName: personName, personEmail: personEmail, lastDay: lastDay, fileName: fileName, generatedAt: generatedAt, worksheetName: 'Base tool checklist', toolCount: parsed.rows.length, pageVersion: parsed.pageVersion, assignee: assignee, excludedOwners: excluded.join(', '), ownersWithoutEmail: noEmail.join(', '), rows: sheetRows, formRaw: JSON.stringify({ intake: intake, owners: answers }) } }];"
+      },
+      "id": "e2070d68-56e9-4021-9d58-98330bab114d",
+      "name": "Build offboarding record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        704,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rec = $input.first().json;\nconst out = [];\nfor (let i = 0; i < rec.rows.length; i++) { out.push({ json: rec.rows[i] }); }\nreturn out;"
+      },
+      "id": "29503ea1-2a25-4327-843a-be1c5d269567",
+      "name": "Rows to items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        928,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {
+          "headerRow": false,
+          "sheetName": "Base tool checklist"
+        }
+      },
+      "id": "33cfc3d2-4cee-4459-99e0-f6372063f661",
+      "name": "Build xlsx",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1152,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "fileName": "={{ $('Build offboarding record').first().json.fileName }}",
+        "parentId": "01X7DFMQMMTGL3D44UZRCL3A5JGMWBRLUY",
+        "binaryData": true
+      },
+      "id": "60c34936-36cc-42f0-90f2-0a80a07363d7",
+      "name": "Upload checklist to OneDrive",
+      "type": "n8n-nodes-base.microsoftOneDrive",
+      "typeVersion": 1.1,
+      "position": [
+        1360,
+        0
+      ],
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "e1JyC6cXYYqJWF8c",
+          "name": "Microsoft Drive account Antonio"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "sQVMWaLii0SkDW9w",
+          "cachedResultName": "offboardings"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "person_name": "={{ $('Build offboarding record').first().json.personName }}",
+            "person_email": "={{ $('Build offboarding record').first().json.personEmail }}",
+            "last_day": "={{ $('Build offboarding record').first().json.lastDay }}",
+            "file_id": "={{ $('Upload checklist to OneDrive').first().json.id }}",
+            "file_url": "={{ $('Create edit share link').first().json.link?.webUrl || $('Upload checklist to OneDrive').first().json.webUrl }}",
+            "worksheet_name": "Base tool checklist",
+            "created_at": "={{ $('Build offboarding record').first().json.generatedAt }}",
+            "state": "open",
+            "sent_6h": false,
+            "sent_12h": false,
+            "sent_24h": false,
+            "sent_48h": false,
+            "excluded_owners": "={{ $('Build offboarding record').first().json.excludedOwners }}",
+            "form_raw": "={{ $('Build offboarding record').first().json.formRaw }}"
+          },
+          "schema": [
+            {
+              "id": "person_name",
+              "displayName": "person_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "person_email",
+              "displayName": "person_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_day",
+              "displayName": "last_day",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "file_id",
+              "displayName": "file_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "file_url",
+              "displayName": "file_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "worksheet_name",
+              "displayName": "worksheet_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "state",
+              "displayName": "state",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sent_6h",
+              "displayName": "sent_6h",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sent_12h",
+              "displayName": "sent_12h",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sent_24h",
+              "displayName": "sent_24h",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sent_48h",
+              "displayName": "sent_48h",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "excluded_owners",
+              "displayName": "excluded_owners",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "form_raw",
+              "displayName": "form_raw",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "db45ce2d-dbd4-433d-91d0-6b1f0c2f872a",
+      "name": "Register offboarding",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2576,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rec = $('Build offboarding record').first().json;\nconst file = $('Upload checklist to OneDrive').first().json;\nconst share = $('Create edit share link').first().json;\nconst parsed = $('Parse tools table').first().json;\nconst url = (share && share.link && share.link.webUrl) ? share.link.webUrl : (file.webUrl || '');\n\nconst byEmail = {};\nfor (let i = 0; i < parsed.rows.length; i++) {\n  const r = parsed.rows[i];\n  const email = rec.assignee[r.owner_key] || '';\n  if (!email) { continue; }\n  if (!byEmail[email]) { byEmail[email] = []; }\n  byEmail[email].push(r.tool);\n}\n\nconst out = [];\nconst emails = Object.keys(byEmail);\nfor (let i = 0; i < emails.length; i++) {\n  const email = emails[i];\n  const tools = byEmail[email];\n  let text = '*Offboarding: ' + rec.personName + '* (' + rec.personEmail + ')\\n';\n  text += 'Last working day: ' + rec.lastDay + '\\n';\n  text += 'Checklist: ' + url + '\\n\\n';\n  text += 'You are the access owner for ' + tools.length + ' tool(s) on this checklist:\\n';\n  for (let t = 0; t < tools.length; t++) { text += '- ' + tools[t] + '\\n'; }\n  text += '\\nPlease remove their access where needed and set each row to *Done* or *Not needed* in the Status column (pick from the dropdown). Reminders follow at 6h, 12h, 24h and 48h for anything still *To do*.';\n  out.push({ json: { email: email, toolCount: tools.length, text: text } });\n}\nreturn out;"
+      },
+      "id": "fc783f24-ff6b-441f-80a9-ff7fdbb79316",
+      "name": "Build kickoff DMs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2800,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "user",
+        "operation": "lookupByEmail",
+        "email": "={{ $json.email }}"
+      },
+      "id": "cb245784-8409-4dcd-a43f-cfdc382a4754",
+      "name": "Look up Slack user",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        3024,
+        0
+      ],
+      "webhookId": "f184b1b9-8c5a-4844-8b39-b6deb868e9a9",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "tSpUlRaNhgWKbKN4",
+          "name": "Automations Slack account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "user",
+        "user": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.id }}"
+        },
+        "text": "={{ $('Build kickoff DMs').item.json.text }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false,
+          "mrkdwn": true
+        }
+      },
+      "id": "c220d5c4-1a8b-4d28-ae5f-00893ba9db50",
+      "name": "Send kickoff DM",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        3232,
+        0
+      ],
+      "webhookId": "26de89ed-31a5-45ea-bb51-62f19f6539b0",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "tSpUlRaNhgWKbKN4",
+          "name": "Automations Slack account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "completionTitle": "Checklist created",
+        "completionMessage": "={{ $('Build offboarding record').first().json.fileName }} is in the Offboardings folder. Access owners have been DM'd on Slack. Owners with no email set (nobody pinged): {{ $('Build offboarding record').first().json.ownersWithoutEmail || 'none' }}",
+        "options": {}
+      },
+      "id": "37df5ee4-db4f-4b1f-8104-268a546147dd",
+      "name": "Checklist created",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        3456,
+        0
+      ],
+      "executeOnce": true,
+      "webhookId": "ecb5f61e-3503-4d42-982f-fcdc5ab735c9"
+    },
+    {
+      "parameters": {
+        "jsCode": "const rec = $('Build offboarding record').first().json;\nconst file = $input.first().json;\nconst fileId = file.id;\nconst sheet = rec.worksheetName || 'Base tool checklist';\nconst base = '/me/drive/items/' + fileId + \"/workbook/worksheets('\" + sheet + \"')\";\nconst H = { 'Content-Type': 'application/json' };\n\nconst v1 = [];\nconst beta = [];\nfunction addV1(method, url, body) {\n  v1.push({ id: String(v1.length + 1), method: method, url: url, headers: H, body: body });\n}\nfunction addBeta(method, url, body) {\n  beta.push({ id: String(beta.length + 1), method: method, url: url, headers: H, body: body });\n}\n\naddV1('PATCH', base + \"/range(address='A1:A4')/format/font\", { bold: true });\naddV1('PATCH', base + \"/range(address='A6:F6')/format/font\", { bold: true });\naddV1('PATCH', base + \"/range(address='A6:F6')/format/fill\", { color: '#D9D9D9' });\n\nconst widths = [['A', 260], ['B', 320], ['C', 200], ['D', 280], ['E', 110], ['F', 320]];\nfor (let i = 0; i < widths.length; i++) {\n  const col = widths[i][0];\n  addV1('PATCH', base + \"/range(address='\" + col + \"6:\" + col + \"400')/format\", { columnWidth: widths[i][1] });\n}\n\naddBeta('POST', base + '/freezePanes/freezeRows', { count: 6 });\n\naddBeta('PATCH', base + \"/range(address='E7:E400')/dataValidation\", { type: 'List', rule: { list: { inCellDropDown: true, source: 'To do,Not needed,Done' } }, errorAlert: { showAlert: true, style: 'Stop', title: 'Invalid status', message: 'Choose To do, Not needed or Done.' } });\n\nconst cf = [['Done', '#C6EFCE', '#006100'], ['Not needed', '#E7E6E6', '#3F3F3F'], ['To do', '#FFEB9C', '#9C6500']];\nfor (let i = 0; i < cf.length; i++) {\n  addBeta('POST', base + \"/range(address='E7:E400')/conditionalFormats\", { type: 'ContainsText', containsText: { format: { fill: { color: cf[i][1] }, font: { color: cf[i][2] } }, rule: { operator: 'Contains', text: cf[i][0] } } });\n}\n\nconst emails = [];\nconst keys = Object.keys(rec.assignee || {});\nfor (let i = 0; i < keys.length; i++) {\n  const e = rec.assignee[keys[i]];\n  if (e && emails.indexOf(e) === -1) { emails.push(e); }\n}\nconst recipients = [];\nfor (let i = 0; i < emails.length; i++) { recipients.push({ email: emails[i] }); }\nconst inviteBody = { recipients: recipients, requireSignIn: true, sendInvitation: false, roles: ['write'] };\n\nreturn [{ json: { fileId: fileId, fileWebUrl: file.webUrl || '', v1RequestCount: v1.length, betaRequestCount: beta.length, recipientCount: emails.length, batchBody: JSON.stringify({ requests: v1 }), betaBatchBody: JSON.stringify({ requests: beta }), inviteBody: JSON.stringify(inviteBody) } }];"
+      },
+      "id": "ec70a361-6fb6-4ca4-aa7f-0ce04cdcbab9",
+      "name": "Build styling and sharing bodies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/$batch",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.batchBody }}",
+        "options": {}
+      },
+      "id": "58483713-5ffd-4c38-b99b-1ed2d23c89ee",
+      "name": "Apply workbook styling",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1792,
+        0
+      ],
+      "credentials": {
+        "microsoftExcelOAuth2Api": {
+          "id": "0EzEdJWR9aBNEEzQ",
+          "name": "Microsoft Excel account Antonio"
+        },
+        "microsoftOneDriveOAuth2Api": {
+          "id": "e1JyC6cXYYqJWF8c",
+          "name": "Microsoft Drive account Antonio"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.microsoft.com/v1.0/me/drive/items/{{ $('Build styling and sharing bodies').first().json.fileId }}/invite",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $('Build styling and sharing bodies').first().json.inviteBody }}",
+        "options": {}
+      },
+      "id": "167d0875-060a-4bc0-a09e-bd2e5c218666",
+      "name": "Share with access owners",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2144,
+        0
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "e1JyC6cXYYqJWF8c",
+          "name": "Microsoft Drive account Antonio"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.microsoft.com/v1.0/me/drive/items/{{ $('Build styling and sharing bodies').first().json.fileId }}/createLink",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"type\":\"edit\",\"scope\":\"organization\"}",
+        "options": {}
+      },
+      "id": "ace04573-1030-41a8-9c48-a6496a656995",
+      "name": "Create edit share link",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2352,
+        0
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "e1JyC6cXYYqJWF8c",
+          "name": "Microsoft Drive account Antonio"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/beta/$batch",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $('Build styling and sharing bodies').first().json.betaBatchBody }}",
+        "options": {}
+      },
+      "id": "e9116063-342b-4b0e-a955-ad5b1c9bc321",
+      "name": "Apply dropdown and conditional formats",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1968,
+        0
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "e1JyC6cXYYqJWF8c",
+          "name": "Microsoft Drive account Antonio"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Offboarding intake": {
+      "main": [
+        [
+          {
+            "node": "Fetch General tools page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch General tools page": {
+      "main": [
+        [
+          {
+            "node": "Parse tools table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse tools table": {
+      "main": [
+        [
+          {
+            "node": "Get access owner defaults",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get access owner defaults": {
+      "main": [
+        [
+          {
+            "node": "Build owner fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build owner fields": {
+      "main": [
+        [
+          {
+            "node": "Access owner assignments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Access owner assignments": {
+      "main": [
+        [
+          {
+            "node": "Build offboarding record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build offboarding record": {
+      "main": [
+        [
+          {
+            "node": "Rows to items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rows to items": {
+      "main": [
+        [
+          {
+            "node": "Build xlsx",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build xlsx": {
+      "main": [
+        [
+          {
+            "node": "Upload checklist to OneDrive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Register offboarding": {
+      "main": [
+        [
+          {
+            "node": "Build kickoff DMs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build kickoff DMs": {
+      "main": [
+        [
+          {
+            "node": "Look up Slack user",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Look up Slack user": {
+      "main": [
+        [
+          {
+            "node": "Send kickoff DM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send kickoff DM": {
+      "main": [
+        [
+          {
+            "node": "Checklist created",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload checklist to OneDrive": {
+      "main": [
+        [
+          {
+            "node": "Build styling and sharing bodies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build styling and sharing bodies": {
+      "main": [
+        [
+          {
+            "node": "Apply workbook styling",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Share with access owners": {
+      "main": [
+        [
+          {
+            "node": "Create edit share link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create edit share link": {
+      "main": [
+        [
+          {
+            "node": "Register offboarding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply workbook styling": {
+      "main": [
+        [
+          {
+            "node": "Apply dropdown and conditional formats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply dropdown and conditional formats": {
+      "main": [
+        [
+          {
+            "node": "Share with access owners",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "pinData": {},
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "Mo5VkX4QqnH6YiEd",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "updatedAt": "2025-09-16T08:57:49.000Z"
+      },
+      "createdAt": "2026-08-28T12:24:54.932Z",
+      "updatedAt": "2026-08-28T12:24:54.932Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "bff5c314-49e7-4860-9955-2049e4276070",
+    "workflowId": "Mo5VkX4QqnH6YiEd",
+    "nodes": [
+      {
+        "parameters": {
+          "formTitle": "Start an offboarding",
+          "formDescription": "Generates the tool checklist spreadsheet from the live General tools Confluence page and DMs each access owner on Slack.",
+          "formFields": {
+            "values": [
+              {
+                "fieldLabel": "First name",
+                "requiredField": true
+              },
+              {
+                "fieldLabel": "Last name",
+                "requiredField": true
+              },
+              {
+                "fieldLabel": "Work email",
+                "fieldType": "email",
+                "placeholder": "firstname.lastname@efuturemedia.com",
+                "requiredField": true
+              },
+              {
+                "fieldLabel": "Last working day",
+                "fieldType": "date",
+                "requiredField": true
+              }
+            ]
+          },
+          "options": {
+            "appendAttribution": false,
+            "buttonLabel": "Next: access owners",
+            "path": "offboarding-start",
+            "ignoreBots": true
+          }
+        },
+        "id": "9e4c2105-5243-41a2-a9a7-5df3005d1f11",
+        "name": "Offboarding intake",
+        "type": "n8n-nodes-base.formTrigger",
+        "typeVersion": 2.6,
+        "position": [
+          -624,
+          0
+        ],
+        "webhookId": "7fb43bec-f50d-428a-8321-2f50fb754c5a"
+      },
+      {
+        "parameters": {
+          "url": "https://futuremedia.atlassian.net/wiki/api/v2/pages/1540030465?body-format=atlas_doc_format",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBasicAuth",
+          "options": {}
+        },
+        "id": "b654508f-68ac-45e2-a3dd-b2a38113d580",
+        "name": "Fetch General tools page",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -400,
+          0
+        ],
+        "credentials": {
+          "httpBasicAuth": {
+            "id": "C9vZX5ia4sY9xHfI",
+            "name": "Jira API Antonio token"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const page = $input.first().json;\nconst adfRaw = page.body && page.body.atlas_doc_format ? page.body.atlas_doc_format.value : null;\nif (!adfRaw) { throw new Error('Confluence page 1540030465 returned no atlas_doc_format body. Offboarding aborted.'); }\nconst doc = typeof adfRaw === 'string' ? JSON.parse(adfRaw) : adfRaw;\n\nfunction textOf(n) {\n  if (!n) { return ''; }\n  if (n.type === 'text') { return n.text || ''; }\n  if (n.type === 'status') { return (n.attrs && n.attrs.text) ? n.attrs.text : ''; }\n  if (n.type === 'inlineCard') { return (n.attrs && n.attrs.url) ? n.attrs.url : ''; }\n  let out = '';\n  const kids = n.content || [];\n  for (let i = 0; i < kids.length; i++) { out += textOf(kids[i]); }\n  return out;\n}\n\nfunction collectTables(n, acc) {\n  if (!n || typeof n !== 'object') { return acc; }\n  if (n.type === 'table') { acc.push(n); }\n  const kids = n.content || [];\n  for (let i = 0; i < kids.length; i++) { collectTables(kids[i], acc); }\n  return acc;\n}\n\nconst tables = collectTables(doc, []);\nconst expected = ['tool name', 'access granted', 'access owner', 'note', 'fs', 'be', 'fe', 'do', 'qa', 'pd'];\nlet target = null;\nlet headerFound = [];\nfor (let t = 0; t < tables.length; t++) {\n  const firstRow = (tables[t].content || [])[0];\n  if (!firstRow) { continue; }\n  const cells = firstRow.content || [];\n  const texts = [];\n  for (let c = 0; c < cells.length; c++) { texts.push(textOf(cells[c]).trim().toLowerCase()); }\n  if (texts.length >= 4 && texts[0] === 'tool name') { target = tables[t]; headerFound = texts; break; }\n}\nif (!target) { throw new Error('Could not find the tools table on the General tools page (no table whose first column header is \"Tool name\"). Structure changed - offboarding aborted.'); }\nif (headerFound.length !== expected.length) { throw new Error('General tools table has ' + headerFound.length + ' columns, expected ' + expected.length + '. Structure changed - offboarding aborted.'); }\nfor (let i = 0; i < expected.length; i++) {\n  if (headerFound[i] !== expected[i]) { throw new Error('General tools column ' + (i + 1) + ' is \"' + headerFound[i] + '\", expected \"' + expected[i] + '\". Structure changed - offboarding aborted.'); }\n}\n\nfunction primaryOwner(raw) {\n  let s = (raw || '').replace(/\\([^)]*\\)/g, ' ');\n  s = s.replace(/\\s+/g, ' ').trim();\n  if (!s) { return ''; }\n  const parts = s.split(/[\\/+,&]/);\n  return parts[0].trim();\n}\n\nconst allRows = target.content || [];\nconst rows = [];\nconst owners = [];\nlet category = '';\nlet categoryCount = 0;\nfor (let r = 1; r < allRows.length; r++) {\n  const cells = allRows[r].content || [];\n  const texts = [];\n  for (let c = 0; c < cells.length; c++) { texts.push(textOf(cells[c]).replace(/\\s+/g, ' ').trim()); }\n  const tool = (texts[0] || '').trim();\n  if (!tool) { continue; }\n  let rest = '';\n  for (let c = 1; c < texts.length; c++) { rest += (texts[c] || ''); }\n  if (rest.trim() === '') { category = tool; categoryCount++; continue; }\n  const ownerRaw = (texts[2] || '').trim();\n  rows.push({ category: category, tool: tool, note: (texts[3] || '').trim(), owner_confluence: ownerRaw, owner_key: primaryOwner(ownerRaw) });\n  const key = primaryOwner(ownerRaw);\n  if (key && owners.indexOf(key) === -1) { owners.push(key); }\n}\n\nif (rows.length < 60) { throw new Error('Only ' + rows.length + ' tool rows parsed from the General tools page (expected at least 60). Structure changed - offboarding aborted.'); }\n\nreturn [{ json: { pageVersion: page.version ? page.version.number : null, toolCount: rows.length, categoryCount: categoryCount, owners: owners, rows: rows } }];"
+        },
+        "id": "b5d78f3b-b87d-4c9e-bf0f-f79d7e09b92d",
+        "name": "Parse tools table",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -176,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "get",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "KRchvSwAEIZ9Y1Xe",
+            "cachedResultName": "offboarding_access_owners"
+          },
+          "filters": {
+            "conditions": []
+          },
+          "returnAll": true
+        },
+        "id": "8f9bc29f-b30c-4b7e-bc70-92ed44e2d71a",
+        "name": "Get access owner defaults",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          48,
+          0
+        ],
+        "executeOnce": true
+      },
+      {
+        "parameters": {
+          "jsCode": "const parsed = $('Parse tools table').first().json;\nconst rows = $input.all();\nconst map = {};\nfor (let i = 0; i < rows.length; i++) {\n  const r = rows[i].json;\n  if (r && r.confluence_owner) { map[String(r.confluence_owner).trim().toLowerCase()] = r.default_email ? String(r.default_email).trim() : ''; }\n}\nconst fields = [];\nfor (let i = 0; i < parsed.owners.length; i++) {\n  const o = parsed.owners[i];\n  const known = map[o.toLowerCase()] || '';\n  fields.push({ fieldLabel: 'Email - ' + o, fieldType: 'email', defaultValue: known, requiredField: false, placeholder: 'leave empty if nobody should be pinged' });\n  fields.push({ fieldLabel: 'Ping - ' + o, fieldType: 'checkbox', fieldOptions: { values: [{ option: 'Needed for this offboarding' }] }, defaultValue: 'Needed for this offboarding' });\n}\nconst unknown = [];\nfor (let i = 0; i < parsed.owners.length; i++) {\n  const o = parsed.owners[i];\n  if (!map[o.toLowerCase()]) { unknown.push(o); }\n}\nreturn [{ json: { formFieldsJson: JSON.stringify(fields), owners: parsed.owners, unknownOwners: unknown } }];"
+        },
+        "id": "84df8779-c6f6-4eae-854d-48d3616a3fcf",
+        "name": "Build owner fields",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          272,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "defineForm": "json",
+          "jsonOutput": "={{ $json.formFieldsJson }}",
+          "options": {
+            "formTitle": "Access owners for this offboarding",
+            "formDescription": "One row per access owner on the General tools page. Change an email to reassign a person for this offboarding only. Untick a person to skip pinging them. Leave an email empty and nobody is pinged for their tools.",
+            "buttonLabel": "Create checklist and notify"
+          }
+        },
+        "id": "a5b3e7ce-8349-4de7-836f-0ae91d98e77c",
+        "name": "Access owner assignments",
+        "type": "n8n-nodes-base.form",
+        "typeVersion": 2.5,
+        "position": [
+          480,
+          0
+        ],
+        "webhookId": "3eca9dd6-2915-49da-a111-45b519d8ea6f"
+      },
+      {
+        "parameters": {
+          "jsCode": "const answers = $input.first().json;\nconst parsed = $('Parse tools table').first().json;\nconst intake = $('Offboarding intake').first().json;\n\nconst firstName = String(intake['First name'] || '').trim();\nconst lastName = String(intake['Last name'] || '').trim();\nconst personName = (firstName + ' ' + lastName).trim();\nconst personEmail = String(intake['Work email'] || '').trim();\nconst lastDay = String(intake['Last working day'] || '').trim();\nif (!personName || !personEmail) { throw new Error('Missing name or email from the intake form.'); }\n\nfunction isTicked(v) {\n  if (v === true) { return true; }\n  if (Array.isArray(v)) { return v.length > 0; }\n  if (typeof v === 'string') { return v.trim() !== '' && v.trim().toLowerCase() !== 'false'; }\n  return false;\n}\n\nconst assignee = {};\nconst excluded = [];\nconst noEmail = [];\nfor (let i = 0; i < parsed.owners.length; i++) {\n  const o = parsed.owners[i];\n  const email = String(answers['Email - ' + o] || '').trim();\n  const ping = isTicked(answers['Ping - ' + o]);\n  if (!ping) { assignee[o] = ''; excluded.push(o); continue; }\n  if (!email) { assignee[o] = ''; noEmail.push(o); continue; }\n  assignee[o] = email;\n}\n\nconst generatedAt = new Date().toISOString();\nconst sheetRows = [];\nsheetRows.push({ c1: 'Name:', c2: personName, c3: '', c4: '', c5: '', c6: '' });\nsheetRows.push({ c1: 'Email:', c2: personEmail, c3: '', c4: '', c5: '', c6: '' });\nsheetRows.push({ c1: 'Last working day:', c2: lastDay, c3: '', c4: '', c5: '', c6: '' });\nsheetRows.push({ c1: 'Generated:', c2: generatedAt, c3: '', c4: '', c5: '', c6: '' });\nsheetRows.push({ c1: '', c2: '', c3: '', c4: '', c5: '', c6: '' });\nsheetRows.push({ c1: 'Tool', c2: 'Note', c3: 'Access owner (Confluence)', c4: 'Owner for this offboarding', c5: 'Status', c6: 'Status comments' });\n\nlet lastCategory = '';\nfor (let i = 0; i < parsed.rows.length; i++) {\n  const r = parsed.rows[i];\n  if (r.category && r.category !== lastCategory) {\n    sheetRows.push({ c1: r.category, c2: '', c3: '', c4: '', c5: '', c6: '' });\n    lastCategory = r.category;\n  }\n  sheetRows.push({ c1: r.tool, c2: r.note, c3: r.owner_confluence, c4: assignee[r.owner_key] || '', c5: 'To do', c6: '' });\n}\n\nconst fileName = personName + ' - Offboarding.xlsx';\nreturn [{ json: { personName: personName, personEmail: personEmail, lastDay: lastDay, fileName: fileName, generatedAt: generatedAt, worksheetName: 'Base tool checklist', toolCount: parsed.rows.length, pageVersion: parsed.pageVersion, assignee: assignee, excludedOwners: excluded.join(', '), ownersWithoutEmail: noEmail.join(', '), rows: sheetRows, formRaw: JSON.stringify({ intake: intake, owners: answers }) } }];"
+        },
+        "id": "e2070d68-56e9-4021-9d58-98330bab114d",
+        "name": "Build offboarding record",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          704,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const rec = $input.first().json;\nconst out = [];\nfor (let i = 0; i < rec.rows.length; i++) { out.push({ json: rec.rows[i] }); }\nreturn out;"
+        },
+        "id": "29503ea1-2a25-4327-843a-be1c5d269567",
+        "name": "Rows to items",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          928,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "xlsx",
+          "options": {
+            "headerRow": false,
+            "sheetName": "Base tool checklist"
+          }
+        },
+        "id": "33cfc3d2-4cee-4459-99e0-f6372063f661",
+        "name": "Build xlsx",
+        "type": "n8n-nodes-base.convertToFile",
+        "typeVersion": 1.1,
+        "position": [
+          1152,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "fileName": "={{ $('Build offboarding record').first().json.fileName }}",
+          "parentId": "01X7DFMQMMTGL3D44UZRCL3A5JGMWBRLUY",
+          "binaryData": true
+        },
+        "id": "60c34936-36cc-42f0-90f2-0a80a07363d7",
+        "name": "Upload checklist to OneDrive",
+        "type": "n8n-nodes-base.microsoftOneDrive",
+        "typeVersion": 1.1,
+        "position": [
+          1360,
+          0
+        ],
+        "credentials": {
+          "microsoftOneDriveOAuth2Api": {
+            "id": "e1JyC6cXYYqJWF8c",
+            "name": "Microsoft Drive account Antonio"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "dataTableId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "sQVMWaLii0SkDW9w",
+            "cachedResultName": "offboardings"
+          },
+          "columns": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "person_name": "={{ $('Build offboarding record').first().json.personName }}",
+              "person_email": "={{ $('Build offboarding record').first().json.personEmail }}",
+              "last_day": "={{ $('Build offboarding record').first().json.lastDay }}",
+              "file_id": "={{ $('Upload checklist to OneDrive').first().json.id }}",
+              "file_url": "={{ $('Create edit share link').first().json.link?.webUrl || $('Upload checklist to OneDrive').first().json.webUrl }}",
+              "worksheet_name": "Base tool checklist",
+              "created_at": "={{ $('Build offboarding record').first().json.generatedAt }}",
+              "state": "open",
+              "sent_6h": false,
+              "sent_12h": false,
+              "sent_24h": false,
+              "sent_48h": false,
+              "excluded_owners": "={{ $('Build offboarding record').first().json.excludedOwners }}",
+              "form_raw": "={{ $('Build offboarding record').first().json.formRaw }}"
+            },
+            "schema": [
+              {
+                "id": "person_name",
+                "displayName": "person_name",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "person_email",
+                "displayName": "person_email",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "last_day",
+                "displayName": "last_day",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "file_id",
+                "displayName": "file_id",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "file_url",
+                "displayName": "file_url",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "worksheet_name",
+                "displayName": "worksheet_name",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "created_at",
+                "displayName": "created_at",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "state",
+                "displayName": "state",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "sent_6h",
+                "displayName": "sent_6h",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "boolean",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "sent_12h",
+                "displayName": "sent_12h",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "boolean",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "sent_24h",
+                "displayName": "sent_24h",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "boolean",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "sent_48h",
+                "displayName": "sent_48h",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "boolean",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "excluded_owners",
+                "displayName": "excluded_owners",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "form_raw",
+                "displayName": "form_raw",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "db45ce2d-dbd4-433d-91d0-6b1f0c2f872a",
+        "name": "Register offboarding",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          2576,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const rec = $('Build offboarding record').first().json;\nconst file = $('Upload checklist to OneDrive').first().json;\nconst share = $('Create edit share link').first().json;\nconst parsed = $('Parse tools table').first().json;\nconst url = (share && share.link && share.link.webUrl) ? share.link.webUrl : (file.webUrl || '');\n\nconst byEmail = {};\nfor (let i = 0; i < parsed.rows.length; i++) {\n  const r = parsed.rows[i];\n  const email = rec.assignee[r.owner_key] || '';\n  if (!email) { continue; }\n  if (!byEmail[email]) { byEmail[email] = []; }\n  byEmail[email].push(r.tool);\n}\n\nconst out = [];\nconst emails = Object.keys(byEmail);\nfor (let i = 0; i < emails.length; i++) {\n  const email = emails[i];\n  const tools = byEmail[email];\n  let text = '*Offboarding: ' + rec.personName + '* (' + rec.personEmail + ')\\n';\n  text += 'Last working day: ' + rec.lastDay + '\\n';\n  text += 'Checklist: ' + url + '\\n\\n';\n  text += 'You are the access owner for ' + tools.length + ' tool(s) on this checklist:\\n';\n  for (let t = 0; t < tools.length; t++) { text += '- ' + tools[t] + '\\n'; }\n  text += '\\nPlease remove their access where needed and set each row to *Done* or *Not needed* in the Status column (pick from the dropdown). Reminders follow at 6h, 12h, 24h and 48h for anything still *To do*.';\n  out.push({ json: { email: email, toolCount: tools.length, text: text } });\n}\nreturn out;"
+        },
+        "id": "fc783f24-ff6b-441f-80a9-ff7fdbb79316",
+        "name": "Build kickoff DMs",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2800,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "authentication": "oAuth2",
+          "resource": "user",
+          "operation": "lookupByEmail",
+          "email": "={{ $json.email }}"
+        },
+        "id": "cb245784-8409-4dcd-a43f-cfdc382a4754",
+        "name": "Look up Slack user",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.7,
+        "position": [
+          3024,
+          0
+        ],
+        "webhookId": "f184b1b9-8c5a-4844-8b39-b6deb868e9a9",
+        "credentials": {
+          "slackOAuth2Api": {
+            "id": "tSpUlRaNhgWKbKN4",
+            "name": "Automations Slack account"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "authentication": "oAuth2",
+          "select": "user",
+          "user": {
+            "__rl": true,
+            "mode": "id",
+            "value": "={{ $json.id }}"
+          },
+          "text": "={{ $('Build kickoff DMs').item.json.text }}",
+          "otherOptions": {
+            "includeLinkToWorkflow": false,
+            "mrkdwn": true
+          }
+        },
+        "id": "c220d5c4-1a8b-4d28-ae5f-00893ba9db50",
+        "name": "Send kickoff DM",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.7,
+        "position": [
+          3232,
+          0
+        ],
+        "webhookId": "26de89ed-31a5-45ea-bb51-62f19f6539b0",
+        "credentials": {
+          "slackOAuth2Api": {
+            "id": "tSpUlRaNhgWKbKN4",
+            "name": "Automations Slack account"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "operation": "completion",
+          "completionTitle": "Checklist created",
+          "completionMessage": "={{ $('Build offboarding record').first().json.fileName }} is in the Offboardings folder. Access owners have been DM'd on Slack. Owners with no email set (nobody pinged): {{ $('Build offboarding record').first().json.ownersWithoutEmail || 'none' }}",
+          "options": {}
+        },
+        "id": "37df5ee4-db4f-4b1f-8104-268a546147dd",
+        "name": "Checklist created",
+        "type": "n8n-nodes-base.form",
+        "typeVersion": 2.5,
+        "position": [
+          3456,
+          0
+        ],
+        "executeOnce": true,
+        "webhookId": "ecb5f61e-3503-4d42-982f-fcdc5ab735c9"
+      },
+      {
+        "parameters": {
+          "jsCode": "const rec = $('Build offboarding record').first().json;\nconst file = $input.first().json;\nconst fileId = file.id;\nconst sheet = rec.worksheetName || 'Base tool checklist';\nconst base = '/me/drive/items/' + fileId + \"/workbook/worksheets('\" + sheet + \"')\";\nconst H = { 'Content-Type': 'application/json' };\n\nconst v1 = [];\nconst beta = [];\nfunction addV1(method, url, body) {\n  v1.push({ id: String(v1.length + 1), method: method, url: url, headers: H, body: body });\n}\nfunction addBeta(method, url, body) {\n  beta.push({ id: String(beta.length + 1), method: method, url: url, headers: H, body: body });\n}\n\naddV1('PATCH', base + \"/range(address='A1:A4')/format/font\", { bold: true });\naddV1('PATCH', base + \"/range(address='A6:F6')/format/font\", { bold: true });\naddV1('PATCH', base + \"/range(address='A6:F6')/format/fill\", { color: '#D9D9D9' });\n\nconst widths = [['A', 260], ['B', 320], ['C', 200], ['D', 280], ['E', 110], ['F', 320]];\nfor (let i = 0; i < widths.length; i++) {\n  const col = widths[i][0];\n  addV1('PATCH', base + \"/range(address='\" + col + \"6:\" + col + \"400')/format\", { columnWidth: widths[i][1] });\n}\n\naddBeta('POST', base + '/freezePanes/freezeRows', { count: 6 });\n\naddBeta('PATCH', base + \"/range(address='E7:E400')/dataValidation\", { type: 'List', rule: { list: { inCellDropDown: true, source: 'To do,Not needed,Done' } }, errorAlert: { showAlert: true, style: 'Stop', title: 'Invalid status', message: 'Choose To do, Not needed or Done.' } });\n\nconst cf = [['Done', '#C6EFCE', '#006100'], ['Not needed', '#E7E6E6', '#3F3F3F'], ['To do', '#FFEB9C', '#9C6500']];\nfor (let i = 0; i < cf.length; i++) {\n  addBeta('POST', base + \"/range(address='E7:E400')/conditionalFormats\", { type: 'ContainsText', containsText: { format: { fill: { color: cf[i][1] }, font: { color: cf[i][2] } }, rule: { operator: 'Contains', text: cf[i][0] } } });\n}\n\nconst emails = [];\nconst keys = Object.keys(rec.assignee || {});\nfor (let i = 0; i < keys.length; i++) {\n  const e = rec.assignee[keys[i]];\n  if (e && emails.indexOf(e) === -1) { emails.push(e); }\n}\nconst recipients = [];\nfor (let i = 0; i < emails.length; i++) { recipients.push({ email: emails[i] }); }\nconst inviteBody = { recipients: recipients, requireSignIn: true, sendInvitation: false, roles: ['write'] };\n\nreturn [{ json: { fileId: fileId, fileWebUrl: file.webUrl || '', v1RequestCount: v1.length, betaRequestCount: beta.length, recipientCount: emails.length, batchBody: JSON.stringify({ requests: v1 }), betaBatchBody: JSON.stringify({ requests: beta }), inviteBody: JSON.stringify(inviteBody) } }];"
+        },
+        "id": "ec70a361-6fb6-4ca4-aa7f-0ce04cdcbab9",
+        "name": "Build styling and sharing bodies",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1584,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://graph.microsoft.com/v1.0/$batch",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ $json.batchBody }}",
+          "options": {}
+        },
+        "id": "58483713-5ffd-4c38-b99b-1ed2d23c89ee",
+        "name": "Apply workbook styling",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1792,
+          0
+        ],
+        "credentials": {
+          "microsoftExcelOAuth2Api": {
+            "id": "0EzEdJWR9aBNEEzQ",
+            "name": "Microsoft Excel account Antonio"
+          },
+          "microsoftOneDriveOAuth2Api": {
+            "id": "e1JyC6cXYYqJWF8c",
+            "name": "Microsoft Drive account Antonio"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "=https://graph.microsoft.com/v1.0/me/drive/items/{{ $('Build styling and sharing bodies').first().json.fileId }}/invite",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ $('Build styling and sharing bodies').first().json.inviteBody }}",
+          "options": {}
+        },
+        "id": "167d0875-060a-4bc0-a09e-bd2e5c218666",
+        "name": "Share with access owners",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2144,
+          0
+        ],
+        "executeOnce": true,
+        "credentials": {
+          "microsoftOneDriveOAuth2Api": {
+            "id": "e1JyC6cXYYqJWF8c",
+            "name": "Microsoft Drive account Antonio"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "=https://graph.microsoft.com/v1.0/me/drive/items/{{ $('Build styling and sharing bodies').first().json.fileId }}/createLink",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\"type\":\"edit\",\"scope\":\"organization\"}",
+          "options": {}
+        },
+        "id": "ace04573-1030-41a8-9c48-a6496a656995",
+        "name": "Create edit share link",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2352,
+          0
+        ],
+        "executeOnce": true,
+        "credentials": {
+          "microsoftOneDriveOAuth2Api": {
+            "id": "e1JyC6cXYYqJWF8c",
+            "name": "Microsoft Drive account Antonio"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://graph.microsoft.com/beta/$batch",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ $('Build styling and sharing bodies').first().json.betaBatchBody }}",
+          "options": {}
+        },
+        "id": "e9116063-342b-4b0e-a955-ad5b1c9bc321",
+        "name": "Apply dropdown and conditional formats",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1968,
+          0
+        ],
+        "executeOnce": true,
+        "credentials": {
+          "microsoftOneDriveOAuth2Api": {
+            "id": "e1JyC6cXYYqJWF8c",
+            "name": "Microsoft Drive account Antonio"
+          }
+        },
+        "onError": "continueRegularOutput"
+      }
+    ],
+    "connections": {
+      "Offboarding intake": {
+        "main": [
+          [
+            {
+              "node": "Fetch General tools page",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch General tools page": {
+        "main": [
+          [
+            {
+              "node": "Parse tools table",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse tools table": {
+        "main": [
+          [
+            {
+              "node": "Get access owner defaults",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get access owner defaults": {
+        "main": [
+          [
+            {
+              "node": "Build owner fields",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build owner fields": {
+        "main": [
+          [
+            {
+              "node": "Access owner assignments",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Access owner assignments": {
+        "main": [
+          [
+            {
+              "node": "Build offboarding record",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build offboarding record": {
+        "main": [
+          [
+            {
+              "node": "Rows to items",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Rows to items": {
+        "main": [
+          [
+            {
+              "node": "Build xlsx",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build xlsx": {
+        "main": [
+          [
+            {
+              "node": "Upload checklist to OneDrive",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Register offboarding": {
+        "main": [
+          [
+            {
+              "node": "Build kickoff DMs",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build kickoff DMs": {
+        "main": [
+          [
+            {
+              "node": "Look up Slack user",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Look up Slack user": {
+        "main": [
+          [
+            {
+              "node": "Send kickoff DM",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send kickoff DM": {
+        "main": [
+          [
+            {
+              "node": "Checklist created",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Upload checklist to OneDrive": {
+        "main": [
+          [
+            {
+              "node": "Build styling and sharing bodies",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build styling and sharing bodies": {
+        "main": [
+          [
+            {
+              "node": "Apply workbook styling",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Share with access owners": {
+        "main": [
+          [
+            {
+              "node": "Create edit share link",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create edit share link": {
+        "main": [
+          [
+            {
+              "node": "Register offboarding",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Apply workbook styling": {
+        "main": [
+          [
+            {
+              "node": "Apply dropdown and conditional formats",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Apply dropdown and conditional formats": {
+        "main": [
+          [
+            {
+              "node": "Share with access owners",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Antonio antonio.marusic@efuturemedia.com",
+    "name": "Version bff5c314",
+    "description": "",
+    "autosaved": false,
+    "createdAt": "2026-08-28T13:35:51.804Z",
+    "updatedAt": "2026-08-28T13:35:53.000Z",
+    "workflowPublishHistory": [
+      {
+        "id": 1777,
+        "workflowId": "Mo5VkX4QqnH6YiEd",
+        "versionId": "bff5c314-49e7-4860-9955-2049e4276070",
+        "event": "activated",
+        "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e",
+        "createdAt": "2026-08-28T13:35:53.162Z"
+      }
+    ]
+  }
+}
