@@ -1,0 +1,161 @@
+{
+  "id": "QBaPhLv9t89kPoMe",
+  "name": "Lokalise - Members area HTML audit, authoritative (read-only)",
+  "description": "READ-ONLY. Authoritative HTML state check for Personality Members area content: fetches every key across all 14 target locales and compares tag tokens against the English source directly, bypassing Lokalise's asynchronous QA index. Reports mismatches and ",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-28T15:13:54.159Z",
+  "updatedAt": "2026-08-28T15:13:54.159Z",
+  "isArchived": false,
+  "versionId": "c264ca6a-0464-4d1f-b0c9-76214686abe2",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "53da90a1-43da-41c0-a031-e3170b8d262c",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "f52a2d37-a80c-4245-9c5d-608ac00a9861",
+      "name": "Build Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Authoritative check: every key in the project, tag tokens compared against the English\n// source ourselves. Does NOT use filter_qa_issues, which Lokalise reindexes asynchronously.\n// Locales split into two groups so each response stays small.\nconst PID = '9933660066825e9a8005c8.58526829';\nconst GROUPS = [\n  ['A', '640,749,10153,10152,10154,753,673,737'],\n  ['B', '640,760,708,754,734,767,733,748']\n];\nconst out = [];\nfor (const g of GROUPS) {\n  for (let p = 1; p <= 10; p++) {\n    out.push({ json: { project_id: PID, page: p, page_size: 500, group: g[0], lang_ids: g[1] } });\n  }\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "b21789c6-aaee-4767-84ac-770f4473ac5b",
+      "name": "Fetch Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?include_translations=1&disable_references=1&limit={{ $json.page_size }}&page={{ $json.page }}&filter_translation_lang_ids={{ $json.lang_ids }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 900
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 4000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "83e0d16d-f28b-41bf-a3de-23b666350755",
+      "name": "Audit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const TARGETS = ['ms','lv','lt','et','th','fr','nl','no','pt','sv','it','da','ko','pl'];\nfunction toks(s) {\n  const re = /<\\s*\\/?\\s*[a-zA-Z][^<>]*>/g;\n  const o = []; let m;\n  while ((m = re.exec(s)) !== null) { o.push(m[0]); }\n  return o;\n}\nfunction exactsig(s) { return toks(s).join('\\u0001'); }\nfunction namesig(s) {\n  const o = [];\n  for (const t of toks(s)) {\n    const mm = /^<\\s*(\\/?)\\s*([a-zA-Z][a-zA-Z0-9]*)/.exec(t);\n    if (mm) { o.push((mm[1] ? '/' : '') + mm[2].toLowerCase()); }\n  }\n  return o.join('|');\n}\nconst per = {};\nfor (const t of TARGETS) { per[t] = { present: 0, empty: 0, exact_mismatch: 0, name_mismatch: 0 }; }\nconst seen = {};\nlet keysWithEn = 0; let noEn = 0; let failedPages = 0;\nconst sampleBroken = [];\nfor (const it of $input.all()) {\n  const b = it.json || {};\n  if (!Array.isArray(b.keys)) { failedPages++; continue; }\n  for (const k of b.keys) {\n    if (k.is_archived) { continue; }\n    let en = null; const tg = [];\n    for (const tr of (k.translations || [])) {\n      if (typeof tr.translation !== 'string') { continue; }\n      const iso = (tr.language_iso || '').toLowerCase();\n      if (iso === 'en') { en = tr.translation; continue; }\n      if (TARGETS.indexOf(iso) < 0) { continue; }\n      tg.push({ iso: iso, v: tr.translation, tid: tr.translation_id });\n    }\n    if (en === null) { noEn++; continue; }\n    if (!seen[k.key_id]) { seen[k.key_id] = 1; keysWithEn++; }\n    const xs = exactsig(en); const ns = namesig(en);\n    for (const t of tg) {\n      const P = per[t.iso];\n      if (!t.v.trim()) { P.empty++; continue; }\n      P.present++;\n      if (exactsig(t.v) !== xs) {\n        P.exact_mismatch++;\n        if (namesig(t.v) !== ns) { P.name_mismatch++; }\n        if (sampleBroken.length < 12) {\n          sampleBroken.push({ iso: t.iso, translation_id: t.tid,\n            key_id: k.key_id, en_sig: ns, tgt_sig: namesig(t.v) });\n        }\n      }\n    }\n  }\n}\nlet totExact = 0; let totName = 0; let totEmpty = 0;\nfor (const t of TARGETS) { totExact += per[t].exact_mismatch; totName += per[t].name_mismatch; totEmpty += per[t].empty; }\nreturn [{ json: { checked_at: new Date().toISOString(), failed_pages: failedPages,\n  keys_with_english_source: keysWithEn, keys_without_english: noEn,\n  total_exact_tag_mismatches: totExact, total_structural_mismatches: totName,\n  total_empty_translations: totEmpty, per_locale: per, samples: sampleBroken } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Build Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Pages": {
+      "main": [
+        [
+          {
+            "node": "Fetch Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Keys": {
+      "main": [
+        [
+          {
+            "node": "Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "QBaPhLv9t89kPoMe",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-28T15:13:54.160Z",
+      "updatedAt": "2026-08-28T15:13:54.160Z"
+    }
+  ],
+  "activeVersion": null
+}
