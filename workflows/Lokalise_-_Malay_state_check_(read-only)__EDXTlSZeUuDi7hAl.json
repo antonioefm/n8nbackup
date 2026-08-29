@@ -1,0 +1,151 @@
+{
+  "id": "EDXTlSZeUuDi7hAl",
+  "name": "Lokalise - Malay state check (read-only)",
+  "description": "READ-ONLY. Fetches 14 keys whose Malay was measured as HTML-broken earlier and reports whether the Malay tag signature now matches the English source, plus who last modified each Malay translation and when.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-28T15:08:50.576Z",
+  "updatedAt": "2026-08-28T15:08:50.576Z",
+  "isArchived": false,
+  "versionId": "74d0e2de-a110-4374-bfd3-2d4f8da6903e",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "2d22aa57-9a1f-4dfa-a1b7-8c28f9092329",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a907bff1-0845-47aa-9ca1-2934a1251529",
+      "name": "Keys To Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const PID = '9933660066825e9a8005c8.58526829';\n// Keys whose Malay was measured as HTML-broken earlier today.\nconst NAMES = ['test_thresholds.13.description','test_thresholds.14.description','test_thresholds.15.description','test_thresholds.16.description','test_thresholds.17.description','test_thresholds.20.description','test_thresholds.21.description','test_thresholds.22.description','test_thresholds.23.description','test_thresholds.24.description','test_thresholds.26.description','test_thresholds.29.description','test_thresholds.31.description','test_thresholds.33.description'];\nreturn [{ json: { project_id: PID, keys_filter: NAMES.join(',') } }];\n"
+      }
+    },
+    {
+      "id": "484797df-6ff0-4007-8fa8-efbc9622f472",
+      "name": "Fetch Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?include_translations=1&disable_references=1&limit=100&filter_keys={{ encodeURIComponent($json.keys_filter) }}&filter_translation_lang_ids=640,749",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "1f9eae67-9362-4637-b831-4ba96c0a7bb8",
+      "name": "Compare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function tagsig(s) {\n  const re = /<\\s*\\/?\\s*[a-zA-Z][^<>]*>/g;\n  const o = []; let m;\n  while ((m = re.exec(s)) !== null) {\n    const mm = /^<\\s*(\\/?)\\s*([a-zA-Z][a-zA-Z0-9]*)/.exec(m[0]);\n    if (mm) { o.push((mm[1] ? '/' : '') + mm[2].toLowerCase()); }\n  }\n  return o.join('|');\n}\nfunction kn(k) { if (k && typeof k === 'object') { return k.web || k.other || ''; } return k || ''; }\nconst rows = [];\nfor (const it of $input.all()) {\n  for (const k of ((it.json || {}).keys || [])) {\n    let en = null; let ms = null; let msMeta = null;\n    for (const tr of (k.translations || [])) {\n      if (typeof tr.translation !== 'string') { continue; }\n      if (tr.language_iso === 'en') { en = tr.translation; }\n      if (tr.language_iso === 'ms') { ms = tr.translation; msMeta = tr; }\n    }\n    rows.push({ key_name: kn(k.key_name), archived: !!k.is_archived,\n      en_len: en ? en.length : 0, ms_len: ms ? ms.length : 0,\n      sig_match: (en !== null && ms !== null) ? (tagsig(en) === tagsig(ms)) : null,\n      ms_modified_at: msMeta ? msMeta.modified_at : null,\n      ms_modified_by: msMeta ? msMeta.modified_by_email : null,\n      ms_unverified: msMeta ? !!msMeta.is_unverified : null,\n      ms_head: ms ? ms.slice(0, 130) : null });\n  }\n}\nreturn [{ json: { checked: rows.length, rows: rows } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Keys To Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keys To Check": {
+      "main": [
+        [
+          {
+            "node": "Fetch Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Keys": {
+      "main": [
+        [
+          {
+            "node": "Compare",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "EDXTlSZeUuDi7hAl",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-28T15:08:50.578Z",
+      "updatedAt": "2026-08-28T15:08:50.578Z"
+    }
+  ],
+  "activeVersion": null
+}
