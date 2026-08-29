@@ -1,0 +1,323 @@
+{
+  "id": "CE8xagg9P0t6dX6P",
+  "name": "Lokalise - Personality HTML mechanical fix (WRITES)",
+  "description": "WRITES when DRY_RUN is false in Config. Re-derives the deterministic HTML tag fixes from live Lokalise state, refuses any fix that alters a single visible character, writes via PUT per translation, and confirms each response echoed the intended text exact",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-28T14:33:30.490Z",
+  "updatedAt": "2026-08-28T14:38:42.589Z",
+  "isArchived": false,
+  "versionId": "a009cfee-98b8-43d0-a2cd-69a3d4cc59c3",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "69417e18-101b-4676-9297-a9c4fa26eebe",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        96
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "829878c7-49f7-44cd-9148-e0104d1eba63",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const DRY_RUN = false;\nreturn [{ json: { dry_run: DRY_RUN, project_id: '9933660066825e9a8005c8.58526829' } }];\n"
+      }
+    },
+    {
+      "id": "3b7165d2-53af-4dd7-a003-ee1485fa1e7b",
+      "name": "Build Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const PID = '9933660066825e9a8005c8.58526829';\nconst out = [];\nfor (let p = 1; p <= 3; p++) { out.push({ json: { project_id: PID, page: p, page_size: 200 } }); }\nreturn out;\n"
+      }
+    },
+    {
+      "id": "411e214b-52f2-45d0-8427-6d94b056be75",
+      "name": "Fetch Flagged Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?filter_qa_issues=html&include_translations=1&disable_references=1&limit={{ $json.page_size }}&page={{ $json.page }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 4000
+    },
+    {
+      "id": "c3eaf73c-0f05-48c0-b832-2c1918b6770b",
+      "name": "Derive Mechanical Fixes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const DRY_RUN = $('Config').first().json.dry_run;\nconst LOC = ['ms','lv','lt','et','th','fr','nl','no','pt','sv','it','da','ko','pl','es','de','hu','ro','hr','fil','sk','uk','cs','fi','sl','vi','el','tr','id'];\nconst TAG = /<\\s*\\/?\\s*[a-zA-Z][^<>]*>/g;\n\nfunction toks(s) { const o = []; let m; TAG.lastIndex = 0;\n  while ((m = TAG.exec(s)) !== null) { o.push({ raw: m[0], at: m.index, end: m.index + m[0].length }); } return o; }\nfunction strip(s) { return s.replace(/<\\s*\\/?\\s*[a-zA-Z][^<>]*>/g, ''); }\nfunction nm(r) { const m = /^<\\s*\\/?\\s*([a-zA-Z][a-zA-Z0-9]*)/.exec(r); return m ? m[1].toLowerCase() : ''; }\nfunction cl(r) { return /^<\\s*\\//.test(r); }\nfunction namesig(t) { const a = []; for (const x of t) { a.push((cl(x.raw) ? '/' : '') + nm(x.raw)); } return a.join('|'); }\nfunction exactsig(t) { const a = []; for (const x of t) { a.push(x.raw); } return a.join('\\u0001'); }\nfunction retag(s, t, raws) { let o = ''; let p = 0;\n  for (let i = 0; i < t.length; i++) { o += s.slice(p, t[i].at) + raws[i]; p = t[i].end; } return o + s.slice(p); }\n\nfunction derive(en, tgt) {\n  const st = toks(en); const tt = toks(tgt);\n  const nsig = namesig(st);\n  // 1. Same tag NAME sequence but the tag text differs - Google MT translated the\n  //    attributes (<p style=\"text-align: start\"> became <p estilo=\"...\">). Re-anchor\n  //    the source tags at the target's own tag positions.\n  if (namesig(tt) === nsig) {\n    const raws = []; for (const x of st) { raws.push(x.raw); }\n    const fixed = retag(tgt, tt, raws);\n    if (fixed !== tgt) { return { rule: 'retag_positional', fix: fixed }; }\n    return null;\n  }\n  // 2. MT split one <strong> span into several - merge the seams back.\n  let cur = tgt;\n  for (let i = 0; i < 8; i++) {\n    const nw = cur.replace(/<\\s*\\/\\s*strong\\s*>([^<>]{0,40}?)<\\s*strong\\s*>/i, '$1');\n    if (nw === cur) { break; }\n    cur = nw;\n  }\n  if (cur !== tgt && namesig(toks(cur)) === nsig) { return { rule: 'merge_split_bold', fix: cur }; }\n  // 3. Source wraps the whole string in one pair and has no inner markup; the target\n  //    dropped or mangled that wrapper. Only safe when every tag in the target is the\n  //    wrapper tag itself, so no legitimate inner markup is destroyed.\n  if (st.length === 2 && !cl(st[0].raw) && cl(st[1].raw) && nm(st[0].raw) === nm(st[1].raw)\n      && st[0].at === 0 && st[1].end === en.length) {\n    let onlySame = true;\n    for (const x of tt) { if (nm(x.raw) !== nm(st[0].raw)) { onlySame = false; } }\n    if (onlySame) {\n      const inner = strip(tgt).replace(/^\\s+|\\s+$/g, '');\n      if (inner.length > 0) { return { rule: 'rewrap_whole', fix: st[0].raw + inner + st[1].raw }; }\n    }\n  }\n  return null;\n}\n\nfunction keyname(k) {\n  if (k && typeof k === 'object') { return k.web || k.other || k.ios || k.android || ''; }\n  if (typeof k === 'string') { return k; } return '';\n}\n\nconst res = $input.all();\nconst out = [];\nconst failed = [];\nconst masked = [];\nconst st = { pages: res.length, keys: 0, archived: 0, no_defect: 0, fixable: 0,\n             needs_linguist: 0, rejected_by_gate: 0, rules: {}, by_locale: {},\n             merge_hiding_split_word: 0, dry_run: DRY_RUN };\n\n// A tag boundary sitting inside a word means the MT broke the word as well as the markup.\nfunction splitsWord(t) {\n  const re = /<\\s*\\/?\\s*[a-zA-Z][^<>]*>/g; let m;\n  while ((m = re.exec(t)) !== null) {\n    const before = t.slice(0, m.index); const after = t.slice(m.index + m[0].length);\n    if (before.length === 0) { continue; }\n    const bc = before.charAt(before.length - 1);\n    if (!/[A-Za-z\\u00C0-\\u024F]/.test(bc)) { continue; }\n    if (/^[a-z\\u00DF-\\u024F]/.test(after)) { return true; }\n    if (/^ [a-z\\u00DF-\\u024F]/.test(after)) { return true; }\n  }\n  return false;\n}\n\nfor (const it of res) {\n  const body = (it.json || {}).body;\n  if (!body || !Array.isArray(body.keys)) { failed.push('page fetch returned no keys array'); continue; }\n  for (const k of body.keys) {\n    if (k.is_archived) { st.archived++; continue; }\n    st.keys++;\n    let en = null; const tg = [];\n    for (const tr of (k.translations || [])) {\n      const iso = (tr.language_iso || '').toLowerCase();\n      if (typeof tr.translation !== 'string') { continue; }\n      if (iso === 'en') { en = tr.translation; continue; }\n      if (LOC.indexOf(iso) < 0) { continue; }\n      tg.push({ iso: iso, tr: tr });\n    }\n    if (en === null || !en.trim()) { continue; }\n    const S = toks(en); const xsig = exactsig(S);\n    for (const t of tg) {\n      const v = t.tr.translation;\n      if (!v || !v.trim()) { continue; }\n      // Exact tag TOKENS, not just names: a translated attribute is a real defect.\n      if (exactsig(toks(v)) === xsig) { st.no_defect++; continue; }\n      const d = derive(en, v);\n      if (!d) { st.needs_linguist++; continue; }\n      // HARD GATES: not one visible character may change, and the result must\n      // reproduce the source tag tokens exactly.\n      if (strip(d.fix) !== strip(v)) { st.rejected_by_gate++; continue; }\n      if (exactsig(toks(d.fix)) !== xsig) { st.rejected_by_gate++; continue; }\n      const hid = (d.rule === 'merge_split_bold' && splitsWord(v));\n      if (hid) {\n        st.merge_hiding_split_word++;\n        masked.push({ key_name: keyname(k.key_name), iso: t.iso, key_id: k.key_id,\n          translation_id: t.tr.translation_id });\n      }\n      st.fixable++;\n      st.rules[d.rule] = (st.rules[d.rule] || 0) + 1;\n      st.by_locale[t.iso] = (st.by_locale[t.iso] || 0) + 1;\n      out.push({ json: {\n        do_write: !DRY_RUN,\n        project_id: body.project_id, key_id: k.key_id, key_name: keyname(k.key_name),\n        iso: t.iso, translation_id: t.tr.translation_id, rule: d.rule,\n        hides_split_word: hid,\n        was_unverified: !!t.tr.is_unverified, was_reviewed: !!t.tr.is_reviewed,\n        before: v, after: d.fix,\n        put_body: JSON.stringify({ translation: d.fix, is_unverified: !!t.tr.is_unverified })\n      }});\n    }\n  }\n}\nif (out.length > 0) { out[0].json.derive_stats = st; out[0].json.derive_failed = failed; out[0].json.masked_list = masked; }\nelse { out.push({ json: { do_write: false, derive_stats: st, derive_failed: failed, masked_list: masked } }); }\nreturn out;\n"
+      }
+    },
+    {
+      "id": "3d42b963-4ba5-41b4-8153-ba1d81956aaa",
+      "name": "Write Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        96
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.do_write }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "54bf273b-3f30-4bed-8c45-8cc36ff22f40",
+      "name": "Write Translation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/translations/{{ $json.translation_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.put_body }}",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 4000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "2d6b1f93-3f0a-4361-8c12-00476fb3f93d",
+      "name": "Verify Writes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const reqs = $('Derive Mechanical Fixes').all();\nconst res = $input.all();\nconst sent = [];\nfor (const r of reqs) { if (r.json && r.json.do_write === true) { sent.push(r.json); } }\nconst ALIGNED = (res.length === sent.length);\n\nconst ok = [];\nconst bad = [];\nconst reasons = {};\nfunction fail(u, why, detail) {\n  reasons[why] = (reasons[why] || 0) + 1;\n  bad.push({ kind: 'FAILED', reason: why, detail: (detail || '').slice(0, 160),\n    key_name: u.key_name, iso: u.iso, translation_id: u.translation_id });\n}\nif (ALIGNED) {\n  for (let i = 0; i < res.length; i++) {\n    const u = sent[i];\n    const r = res[i].json || {};\n    if (r.error) { fail(u, 'api_error', String(r.error.message || r.error)); continue; }\n    const t = r.translation;\n    if (!t) { fail(u, 'no_translation_in_response', JSON.stringify(r).slice(0, 160)); continue; }\n    // Lokalise echoes the saved record. Only an exact echo counts as written.\n    if (t.translation !== u.after) { fail(u, 'echo_mismatch', 'saved value differs from intended'); continue; }\n    ok.push({ kind: 'written', key_name: u.key_name, iso: u.iso, rule: u.rule,\n      translation_id: u.translation_id, chars_before: u.before.length, chars_after: u.after.length });\n  }\n}\nconst byRule = {}; const byIso = {};\nfor (const o of ok) { byRule[o.rule] = (byRule[o.rule] || 0) + 1; byIso[o.iso] = (byIso[o.iso] || 0) + 1; }\nlet ds = null;\nfor (const r of reqs) { if (r.json && r.json.derive_stats) { ds = r.json.derive_stats; } }\nconst out = [{ json: { kind: 'summary', aligned: ALIGNED, attempted: res.length, intended: sent.length,\n  written: ok.length, failed: bad.length, fail_reasons: reasons,\n  written_by_rule: byRule, written_by_locale: byIso, derive_stats: ds } }];\nif (!ALIGNED) { return [out[0]]; }\nfor (const b of bad) { out.push({ json: b }); }\nfor (const o of ok) { out.push({ json: o }); }\nreturn out;\n"
+      }
+    },
+    {
+      "id": "bdceedb3-a779-4823-a1ab-3533649096e3",
+      "name": "Dry Run Only",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1344,
+        192
+      ],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Build Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Pages": {
+      "main": [
+        [
+          {
+            "node": "Fetch Flagged Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Flagged Keys": {
+      "main": [
+        [
+          {
+            "node": "Derive Mechanical Fixes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Derive Mechanical Fixes": {
+      "main": [
+        [
+          {
+            "node": "Write Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Enabled?": {
+      "main": [
+        [
+          {
+            "node": "Write Translation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Dry Run Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Translation": {
+      "main": [
+        [
+          {
+            "node": "Verify Writes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "CE8xagg9P0t6dX6P",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-28T14:33:30.494Z",
+      "updatedAt": "2026-08-28T14:33:30.494Z"
+    }
+  ],
+  "activeVersion": null
+}
