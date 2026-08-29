@@ -1,0 +1,226 @@
+{
+  "id": "KySZhALet2t6MEgE",
+  "name": "Lokalise glossary - gap probe (read-only)",
+  "description": "Read-only. Fetches the Lokalise shared glossary and the project language list, then reports missing-term counts per locale plus per-term gap detail. Writes nothing.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-28T07:58:54.730Z",
+  "updatedAt": "2026-08-28T07:58:54.730Z",
+  "isArchived": false,
+  "versionId": "85a71028-6b8c-462e-a6bc-222091821e19",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "9e9fd8f4-4eb3-44a6-9d63-816867212eee",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a673b052-d549-406d-9f63-a20afb41f07b",
+      "name": "Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const GLOSS_PID = '46552447679363c70f7ef8.58193285';\nreturn [{ json: {\n  project_id: GLOSS_PID,\n  languages_url: 'https://api.lokalise.com/api2/projects/' + GLOSS_PID + '/languages?limit=500',\n  read_url: 'https://api.lokalise.com/api2/projects/' + GLOSS_PID + '/glossary-terms?limit=500&pagination=cursor'\n} }];\n"
+      }
+    },
+    {
+      "id": "46fa7ca8-5bd4-4209-8474-8b36930d7f76",
+      "name": "Fetch languages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.languages_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": false,
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "2b6d5077-d88f-4e8b-8baa-6c3adf478cd8",
+      "name": "Fetch glossary terms",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Plan').first().json.read_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": false,
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": false
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 25,
+              "requestInterval": 700
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "43a071e1-318b-4768-8d4b-6fc1d02823f6",
+      "name": "Gap summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const plan = $('Plan').first().json;\nconst lr = $('Fetch languages').first().json || {};\nconst lb = (lr.body !== undefined) ? lr.body : lr;\nconst projectLangs = lb.languages || [];\n\nconst isoById = {};\nconst nameById = {};\nconst langOrder = [];\nfor (const L of projectLangs) {\n  const id = Number(L.lang_id);\n  isoById[String(id)] = L.lang_iso;\n  nameById[String(id)] = L.lang_name;\n  langOrder.push(id);\n}\n\nconst live = {};\nconst pages = [];\nfor (const p of $input.all()) {\n  const r = p.json || {};\n  const b = (r.body !== undefined) ? r.body : r;\n  const arr = b.data || b.glossary_terms || [];\n  pages.push({ status: r.statusCode || null, terms: arr.length });\n  for (const t of arr) { live[String(t.id)] = t; }\n}\n\nconst termIds = Object.keys(live);\nconst filled = {};\nconst empty = {};\nfor (const id of langOrder) { filled[String(id)] = 0; empty[String(id)] = 0; }\nconst strayLangIds = {};\n\nconst terms = [];\nfor (const tid of termIds) {\n  const t = live[tid];\n  const byId = {};\n  for (const x of (t.translations || [])) {\n    const lid = String(Number(x.langId));\n    byId[lid] = String(x.translation || '').trim();\n    if (isoById[lid] === undefined) { strayLangIds[lid] = (strayLangIds[lid] || 0) + 1; }\n  }\n  const missing = [];\n  const has = [];\n  for (const id of langOrder) {\n    const k = String(id);\n    const v = byId[k];\n    if (v === undefined || v === '') { empty[k] = empty[k] + 1; missing.push(isoById[k]); }\n    else { filled[k] = filled[k] + 1; has.push(isoById[k]); }\n  }\n  terms.push({\n    id: Number(t.id),\n    term: t.term,\n    description: t.description || '',\n    translatable: t.translatable,\n    forbidden: t.forbidden,\n    caseSensitive: t.caseSensitive,\n    tags: t.tags || [],\n    filled_count: has.length,\n    missing_count: missing.length,\n    filled_isos: has,\n    missing_isos: missing,\n    values: byId\n  });\n}\n\nterms.sort(function (a, b) { return String(a.term).toLowerCase().localeCompare(String(b.term).toLowerCase()); });\n\nconst perLocale = [];\nfor (const id of langOrder) {\n  const k = String(id);\n  perLocale.push({ langId: id, iso: isoById[k], name: nameById[k], filled: filled[k], missing: empty[k] });\n}\nperLocale.sort(function (a, b) { return b.missing - a.missing; });\n\nreturn [{ json: {\n  project_id: plan.project_id,\n  pages: pages,\n  page_count: pages.length,\n  term_count: termIds.length,\n  project_language_count: langOrder.length,\n  stray_lang_ids: strayLangIds,\n  per_locale: perLocale,\n  terms: terms\n} }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan": {
+      "main": [
+        [
+          {
+            "node": "Fetch languages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch languages": {
+      "main": [
+        [
+          {
+            "node": "Fetch glossary terms",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch glossary terms": {
+      "main": [
+        [
+          {
+            "node": "Gap summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "KySZhALet2t6MEgE",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-28T07:58:54.735Z",
+      "updatedAt": "2026-08-28T07:58:54.735Z"
+    }
+  ],
+  "activeVersion": null
+}
