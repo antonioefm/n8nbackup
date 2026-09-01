@@ -1,0 +1,167 @@
+{
+  "id": "aGsqQr2mvy1EWBrw",
+  "name": "Personality.co - case audit group B (lv nl no pl pt sv)",
+  "description": "Read-only. Corrected title-case detector for lv, nl, no, pl, pt, sv. Positional edits instead of global regex, bullets and parenthetical labels recognised as sentence starts, legal and address strings routed to triage, stricter corpus-frequency guard for ",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-31T13:24:53.723Z",
+  "updatedAt": "2026-08-31T13:24:53.723Z",
+  "isArchived": false,
+  "versionId": "6ba67f0c-5f29-4134-b98a-adcaab775342",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "056545f3-25af-4a74-8337-1802f2623557",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "d84c3b94-f079-4a63-8d5a-142695d3d1cc",
+      "name": "Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const BASE = \"https://api.lokalise.com/api2\";\nconst PID = \"31393214664f295f94dd86.76792605\";\nconst IDS = \"640,10153,737,759,748,708,754\";\nconst TOTAL = 17522, LIMIT = 200;\nconst out = [];\nfor (let p = 1; p <= Math.ceil(TOTAL / LIMIT); p++) {\n  out.push({ json: { page: p, url: BASE + \"/projects/\" + PID + \"/keys?limit=\" + LIMIT + \"&page=\" + p\n    + \"&include_translations=1&filter_translation_lang_ids=\" + IDS } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "e9e9624a-2566-42d9-b52d-cac3407d81a9",
+      "name": "Fetch keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": false,
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "9cca20e7-b298-4f1a-92c9-2c94b72d48a6",
+      "name": "Audit case",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const TARGETS = ['lv', 'nl', 'no', 'pl', 'pt', 'sv'];\nconst MINLOWER = 5, CAPRATIO = 3;\nconst LEGAL = /(terms_and_conditions|privacy|cookie|refund|disclaimer|imprint)/i;\nconst ADDRESSY = /(\\bSTE\\b|\\bBlvd\\b|\\b\\d{4,6}\\b,|\\b\\d+(st|nd|rd|th)\\b|https?:)/;\n\n// positional tokens: [text, index]\nfunction toks(s) {\n  const out = [];\n  const re = /\\S+/g;\n  let m;\n  while ((m = re.exec(String(s || ''))) !== null) out.push([m[0], m.index]);\n  return out;\n}\nfunction core(t) { return t.replace(/^[^\\p{L}]+|[^\\p{L}]+$/gu, ''); }\nfunction isCap(w) { const f = w.charAt(0); return f === f.toUpperCase() && f !== f.toLowerCase(); }\nfunction isTagOnly(t) { return /^<[^>]*>$/.test(t); }\n// a token index is sentence-initial if it is 0, or the previous token ends a\n// sentence, or the previous token is a list marker / label / closing HTML tag\nfunction starts(tk) {\n  const S = { 0: true };\n  for (let i = 1; i < tk.length; i++) {\n    const p = tk[i - 1][0];\n    if (/[.!?:;]$/.test(p)) S[i] = true;\n    else if (/[\\u25cf\\u2022\\u25aa\\u2023*>]$/.test(p)) S[i] = true;\n    else if (/^\\(\\s*[\\p{L}\\d]{1,3}\\s*\\)$/u.test(p)) S[i] = true;\n    else if (/^\\d+[.)]$/.test(p)) S[i] = true;\n    else if (isTagOnly(p)) S[i] = true;\n  }\n  return S;\n}\nfunction profile(s) {\n  const tk = toks(s), S = starts(tk);\n  let caps = 0, words = 0;\n  for (let i = 0; i < tk.length; i++) {\n    if (S[i] || isTagOnly(tk[i][0])) continue;\n    const c = core(tk[i][0]);\n    if (!c || c.length < 2 || c === c.toUpperCase()) continue;\n    words++;\n    if (isCap(c)) caps++;\n  }\n  return { caps: caps, words: words };\n}\n\nconst items = $input.all();\nconst rows = [];\nconst errors = [];\nlet keys_seen = 0;\nfor (const it of items) {\n  const r = it.json || {};\n  const b = r.body !== undefined ? r.body : r;\n  if (!Array.isArray(b.keys)) { errors.push({ status: r.statusCode }); continue; }\n  for (const k of b.keys) {\n    if (k.is_archived) continue;\n    keys_seen++;\n    let en = ''; const t = {};\n    for (const tr of (k.translations || [])) {\n      if (tr.language_iso === 'en') { en = tr.translation || ''; continue; }\n      if (TARGETS.indexOf(tr.language_iso) === -1) continue;\n      if (tr.translation && String(tr.translation).trim()) {\n        t[tr.language_iso] = { v: tr.translation, rev: tr.is_reviewed, fz: tr.is_fuzzy,\n          cs: (tr.custom_translation_statuses || []).map(s => s.status_id) };\n      }\n    }\n    if (!en || !Object.keys(t).length) continue;\n    rows.push({ id: k.key_id, k: (k.key_name && k.key_name.web) || '', en: en, t: t });\n  }\n}\n\n// PASS 1 - per locale token frequency\nconst freq = {};\nfor (const iso of TARGETS) freq[iso] = {};\nfor (const r of rows) {\n  for (const iso of Object.keys(r.t)) {\n    const tk = toks(r.t[iso].v), S = starts(tk), F = freq[iso];\n    for (let i = 0; i < tk.length; i++) {\n      if (isTagOnly(tk[i][0])) continue;\n      const c = core(tk[i][0]);\n      if (!c || c.length < 2 || c === c.toUpperCase()) continue;\n      const key = c.toLowerCase();\n      if (!F[key]) F[key] = { lower: 0, capNonInit: 0 };\n      if (isCap(c)) { if (!S[i]) F[key].capNonInit++; } else F[key].lower++;\n    }\n  }\n}\n\n// PASS 2 - detect, propose positionally\nconst per = {}; const samples = []; const fixes = []; const triage = [];\nfor (const iso of TARGETS) per[iso] = { filled: 0, src_title: 0, suspect: 0, fixable: 0, legal: 0, addressy: 0, no_safe_token: 0 };\nfor (const r of rows) {\n  const S0 = profile(r.en);\n  if (!(S0.caps >= 2 && S0.words >= 2 && S0.caps / S0.words >= 0.5)) {\n    for (const iso of Object.keys(r.t)) per[iso].filled++;\n    continue;\n  }\n  const isLegal = LEGAL.test(r.k);\n  for (const iso of Object.keys(r.t)) {\n    const A = per[iso]; A.filled++; A.src_title++;\n    const v = r.t[iso].v;\n    const T = profile(v);\n    if (!(T.caps >= 2 && T.words >= 2 && T.caps / T.words >= 0.5)) continue;\n    A.suspect++;\n    if (isLegal) { A.legal++; triage.push({ iso: iso, reason: 'legal defined terms', id: r.id, k: r.k, en: r.en.slice(0, 90), cur: v.slice(0, 120) }); continue; }\n    if (ADDRESSY.test(v)) { A.addressy++; triage.push({ iso: iso, reason: 'address or url', id: r.id, k: r.k, en: r.en.slice(0, 90), cur: v.slice(0, 120) }); continue; }\n    const tk = toks(v), SS = starts(tk), F = freq[iso];\n    const edits = [];\n    let blocked = 0;\n    for (let i = 0; i < tk.length; i++) {\n      if (SS[i] || isTagOnly(tk[i][0])) continue;\n      const tokTxt = tk[i][0], idx = tk[i][1];\n      if (/\\d/.test(tokTxt)) { blocked++; continue; }\n      const c = core(tokTxt);\n      if (!c || c.length < 2 || c === c.toUpperCase() || !isCap(c)) continue;\n      const f = F[c.toLowerCase()] || { lower: 0, capNonInit: 0 };\n      if (f.lower >= MINLOWER && f.lower > CAPRATIO * f.capNonInit) {\n        const off = tokTxt.indexOf(c);\n        edits.push({ at: idx + off, ch: c.charAt(0) });\n      } else blocked++;\n    }\n    if (!edits.length) { A.no_safe_token++; triage.push({ iso: iso, reason: 'no token safe to lowercase', id: r.id, k: r.k, en: r.en.slice(0, 90), cur: v.slice(0, 120) }); continue; }\n    let outStr = v;\n    edits.sort((a, b2) => b2.at - a.at);\n    for (const e of edits) {\n      outStr = outStr.slice(0, e.at) + e.ch.toLowerCase() + outStr.slice(e.at + 1);\n    }\n    if (outStr === v) { A.no_safe_token++; continue; }\n    A.fixable++;\n    fixes.push({ id: r.id, iso: iso, k: r.k, en: r.en, from: v, to: outStr,\n      lowered: edits.length, blocked: blocked, rev: r.t[iso].rev, fz: r.t[iso].fz, cs: r.t[iso].cs });\n    if (samples.length < 35) samples.push({ iso: iso, k: r.k.slice(0, 55), en: r.en.slice(0, 50), from: v.slice(0, 72), to: outStr.slice(0, 72), blocked: blocked });\n  }\n}\nconst summary = TARGETS.map(iso => ({ iso: iso, ...per[iso] }));\nreturn [{ json: {\n  pages: items.length, errors: errors, keys_seen: keys_seen, rows: rows.length,\n  summary: summary, total_fixes: fixes.length, total_triage: triage.length,\n  samples: samples, fixes: fixes, triage: triage.slice(0, 400)\n} }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan": {
+      "main": [
+        [
+          {
+            "node": "Fetch keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch keys": {
+      "main": [
+        [
+          {
+            "node": "Audit case",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "aGsqQr2mvy1EWBrw",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-31T13:24:53.725Z",
+      "updatedAt": "2026-08-31T13:24:53.725Z"
+    }
+  ],
+  "activeVersion": null
+}
