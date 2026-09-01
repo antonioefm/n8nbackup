@@ -1,0 +1,167 @@
+{
+  "id": "ZJbZ2457wECiVbRW",
+  "name": "Personality - missing translations full fetch",
+  "description": "Read-only. Enumerates all pages of filter_untranslated keys for Members area (6 pages) and Personality.co (40 pages), returns key name, EN source and the list of locales missing it.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-31T09:59:27.190Z",
+  "updatedAt": "2026-08-31T09:59:27.190Z",
+  "isArchived": false,
+  "versionId": "465ccab3-7388-410a-8f33-2397ac2499a7",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "a02dfdab-eeee-47d2-967e-a1531a75894c",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "393bee8e-2607-4626-888c-2f138818993b",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const BASE = 'https://api.lokalise.com/api2';\nconst JOBS = [\n  { name: 'Members area', pid: '9933660066825e9a8005c8.58526829',\n    langs: [640,765,761,768,818,793,773,799,10159,744,769,774], total: 1138 },\n  { name: 'Personality.co', pid: '31393214664f295f94dd86.76792605',\n    langs: [640,767,1056,10154,673,757,734,733,10152,10153,749,737,759,748,708,770,754,753,666], total: 7982 }\n];\nconst LIMIT = 200;\nconst out = [];\nfor (const j of JOBS) {\n  const pages = Math.ceil(j.total / LIMIT);\n  for (let p = 1; p <= pages; p++) {\n    const qs = [\n      'limit=' + LIMIT,\n      'page=' + p,\n      'include_translations=1',\n      'filter_untranslated=1',\n      'filter_translation_lang_ids=' + j.langs.join(',')\n    ].join('&');\n    out.push({ json: { name: j.name, pid: j.pid, page: p, pages: pages, url: BASE + '/projects/' + j.pid + '/keys?' + qs } });\n  }\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "4d432831-176b-4de1-b4a8-58c8fee696eb",
+      "name": "Fetch Lokalise",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": false,
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "a2d655fa-7182-4954-a0ea-21b53d55b1b4",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst cfgs = $('Config').all().map(c => c.json);\nconst acc = {};\nconst errors = [];\nlet seen = 0;\nfor (let i = 0; i < items.length; i++) {\n  const r = items[i].json || {};\n  const b = r.body !== undefined ? r.body : r;\n  const cfg = cfgs[i];\n  if (!Array.isArray(b.keys)) {\n    errors.push({ name: cfg.name, page: cfg.page, statusCode: r.statusCode, body: JSON.stringify(b).slice(0, 300) });\n    continue;\n  }\n  if (!acc[cfg.name]) acc[cfg.name] = { name: cfg.name, pid: cfg.pid, keys_seen: 0, archived: 0, no_source: 0, perLang: {}, ns: {}, rows: [] };\n  const A = acc[cfg.name];\n  for (const k of b.keys) {\n    A.keys_seen++; seen++;\n    if (k.is_archived) { A.archived++; continue; }\n    const kn = (k.key_name && (k.key_name.web || k.key_name.other || k.key_name.ios || k.key_name.android)) || '';\n    const sep = kn.indexOf('::') > -1 ? '::' : '.';\n    const parts = kn.split(sep);\n    const ns = parts.slice(0, Math.min(3, Math.max(1, parts.length - 1))).join(sep) || '(none)';\n    A.ns[ns] = (A.ns[ns] || 0) + 1;\n    let src = '';\n    const miss = [];\n    for (const t of (k.translations || [])) {\n      if (t.language_iso === 'en') { src = t.translation || ''; continue; }\n      if (!t.translation || String(t.translation).trim() === '') {\n        A.perLang[t.language_iso] = (A.perLang[t.language_iso] || 0) + 1;\n        miss.push(t.language_iso);\n      }\n    }\n    if (!String(src).trim()) { A.no_source++; continue; }\n    if (miss.length === 0) continue;\n    A.rows.push({ id: k.key_id, k: kn, s: src, m: miss.join(',') });\n  }\n}\nconst out = [];\nfor (const name of Object.keys(acc)) {\n  const A = acc[name];\n  out.push({ json: {\n    name: A.name, pid: A.pid,\n    keys_seen: A.keys_seen, archived: A.archived, no_source: A.no_source,\n    translatable_rows: A.rows.length,\n    missing_segments: Object.values(A.perLang).reduce((a, b2) => a + b2, 0),\n    perLang: A.perLang,\n    namespaces: Object.entries(A.ns).sort((a, c) => c[1] - a[1]),\n    rows: A.rows\n  }});\n}\nout.push({ json: { SUMMARY: true, requests: items.length, keys_seen: seen, errors: errors } });\nreturn out;\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lokalise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lokalise": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "ZJbZ2457wECiVbRW",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-31T09:59:27.191Z",
+      "updatedAt": "2026-08-31T09:59:27.191Z"
+    }
+  ],
+  "activeVersion": null
+}
