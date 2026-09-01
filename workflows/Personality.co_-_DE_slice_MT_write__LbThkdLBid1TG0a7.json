@@ -1,0 +1,169 @@
+{
+  "id": "LbThkdLBid1TG0a7",
+  "name": "Personality.co - DE slice MT write",
+  "description": "WRITES to Lokalise. Fills 22 German translations in Personality.co with is_fuzzy=true and custom status MT_to_review (29251). Rollback: set the same 22 translations back to empty string. Calibration slice for the full MT fill.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-31T10:24:09.490Z",
+  "updatedAt": "2026-08-31T10:24:09.490Z",
+  "isArchived": false,
+  "versionId": "2418f1c6-e3bd-49c8-8eac-779bde6e079b",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "765ac87e-e0cb-41e7-b9fd-0fabb2bcaa27",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "978dcbd4-44c3-4897-8bed-314965312c75",
+      "name": "Build payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const BASE = 'https://api.lokalise.com/api2';\nconst PID = '31393214664f295f94dd86.76792605';\nconst MT_TO_REVIEW = 29251;\nconst DATA = [\n  {id: 866733814, t: \"Der König\"},\n  {id: 866733817, t: \"Der Krieger\"},\n  {id: 866733820, t: \"Der Liebende\"},\n  {id: 866733823, t: \"Der Weise\"},\n  {id: 866733826, t: \"Der Rebell\"},\n  {id: 866733829, t: \"Der Versorger\"},\n  {id: 866733832, t: \"Der Entdecker\"},\n  {id: 866733835, t: \"Der Handwerker\"},\n  {id: 866734035, t: \"Emotionale Intensität steuern\"},\n  {id: 866734041, t: \"Grenzen stärken\"},\n  {id: 866734047, t: \"Strategisches Bewusstsein entwickeln\"},\n  {id: 866734144, t: \"Beständigkeit stärken\"},\n  {id: 866734036, t: \"Weil du emotional feinfühlig bist, kann dir Folgendes helfen:\"},\n  {id: 866734040, t: \"So vermeidest du Überforderung.\"},\n  {id: 866734042, t: \"Du musst deine Empathie nicht zurücknehmen – aber du kannst Folgendes tun:\"},\n  {id: 866734046, t: \"Das schafft Balance.\"},\n  {id: 866734037, t: \"Raum schaffen, um Erlebnisse zu verarbeiten\"},\n  {id: 866734038, t: \"Die Emotionen anderer nicht zu stark aufnehmen\"},\n  {id: 866734039, t: \"Emotionale Grenzen wahren\"},\n  {id: 866734043, t: \"Schütze deine Zeit und Energie\"},\n  {id: 866734044, t: \"Übernimm keine unnötige Verantwortung\"},\n  {id: 866734045, t: \"Erkenne, wo deine Rolle endet\"}\n];\nconst payload = { keys: DATA.map(d => ({\n  key_id: d.id,\n  translations: [{\n    language_iso: 'de',\n    translation: d.t,\n    is_reviewed: false,\n    is_fuzzy: true,\n    custom_translation_status_ids: [MT_TO_REVIEW]\n  }]\n})) };\nreturn [{ json: { url: BASE + '/projects/' + PID + '/keys', payload: payload, count: DATA.length, ids: DATA.map(d => d.id) } }];\n"
+      }
+    },
+    {
+      "id": "5217235e-61e3-4e43-9e93-7aa5fa7491f6",
+      "name": "Write Lokalise",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1500
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "1eb30d94-702e-49be-b636-c7620449a649",
+      "name": "Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const r = $input.first().json || {};\nconst b = r.body !== undefined ? r.body : r;\nconst cfg = $('Build payload').first().json;\nconst keys = Array.isArray(b.keys) ? b.keys : [];\nconst errs = Array.isArray(b.errors) ? b.errors : [];\nconst written = [];\nfor (const k of keys) {\n  for (const t of (k.translations || [])) {\n    if (t.language_iso !== 'de') continue;\n    written.push({ key_id: k.key_id, translation: t.translation,\n      is_fuzzy: t.is_fuzzy, is_reviewed: t.is_reviewed,\n      statuses: (t.custom_translation_statuses || []).map(s => s.status_id + ':' + s.title) });\n  }\n}\nreturn [{ json: {\n  statusCode: r.statusCode,\n  requested: cfg.count,\n  keys_returned: keys.length,\n  de_translations_written: written.length,\n  api_errors: errs,\n  raw_error: keys.length ? null : JSON.stringify(b).slice(0, 600),\n  written: written\n} }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Build payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build payload": {
+      "main": [
+        [
+          {
+            "node": "Write Lokalise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Lokalise": {
+      "main": [
+        [
+          {
+            "node": "Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "LbThkdLBid1TG0a7",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-31T10:24:09.491Z",
+      "updatedAt": "2026-08-31T10:24:09.491Z"
+    }
+  ],
+  "activeVersion": null
+}
