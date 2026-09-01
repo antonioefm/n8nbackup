@@ -1,0 +1,167 @@
+{
+  "id": "43bv5OAUEGR566h7",
+  "name": "Personality - missing translations probe",
+  "description": "Read-only probe: page 1 of filter_untranslated keys with translations, to get exact totals, namespaces and content shape before any generation.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-31T09:56:47.997Z",
+  "updatedAt": "2026-08-31T09:56:47.997Z",
+  "isArchived": false,
+  "versionId": "f8059fec-154a-4e18-88f2-44b6856de71f",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "21b7cd12-b6f5-480d-b386-c57eb9f45ae4",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "2cc304b4-721d-417c-ad59-4bc0ea553065",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const BASE = 'https://api.lokalise.com/api2';\nconst JOBS = [\n  { name: 'Personality.co', pid: '31393214664f295f94dd86.76792605',\n    langs: [767,1056,10154,673,757,734,733,10152,10153,749,737,759,748,708,770,754,753,666] },\n  { name: 'Members area', pid: '9933660066825e9a8005c8.58526829',\n    langs: [765,761,768,818,793,773,799,10159,744,769,774] }\n];\nreturn JOBS.map(j => {\n  const qs = [\n    'limit=200',\n    'page=1',\n    'include_translations=1',\n    'filter_untranslated=1',\n    'filter_translation_lang_ids=' + j.langs.join(',')\n  ].join('&');\n  return { json: { name: j.name, pid: j.pid, langs: j.langs, url: BASE + '/projects/' + j.pid + '/keys?' + qs } };\n});\n"
+      }
+    },
+    {
+      "id": "4516c564-a22a-48b3-9df9-b79d6d5a8f33",
+      "name": "Fetch Lokalise",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": false,
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "9cfebb26-2e33-46d4-8da3-3b9fda00301b",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst out = [];\nfor (let i = 0; i < items.length; i++) {\n  const r = items[i].json || {};\n  const b = r.body !== undefined ? r.body : r;\n  const cfg = $('Config').all()[i].json;\n  if (!Array.isArray(b.keys)) {\n    out.push({ json: { name: cfg.name, ERROR: true, statusCode: r.statusCode, body: JSON.stringify(b).slice(0, 500) } });\n    continue;\n  }\n  const total = Number((r.headers || {})['x-pagination-total-count'] || 0);\n  const keys = b.keys;\n  let archived = 0;\n  const perLang = {};\n  const platformCount = {};\n  const nsCount = {};\n  const samples = [];\n  for (const k of keys) {\n    if (k.is_archived) { archived++; continue; }\n    for (const p of (k.platforms || [])) platformCount[p] = (platformCount[p] || 0) + 1;\n    const kn = (k.key_name && (k.key_name.web || k.key_name.other || k.key_name.ios || k.key_name.android)) || '';\n    const ns = kn.split(/[.:_]/)[0] || '(none)';\n    nsCount[ns] = (nsCount[ns] || 0) + 1;\n    let src = '';\n    const missingHere = [];\n    for (const t of (k.translations || [])) {\n      if (t.language_iso === 'en') { src = t.translation; continue; }\n      const empty = !t.translation || String(t.translation).trim() === '';\n      if (empty) {\n        perLang[t.language_iso] = (perLang[t.language_iso] || 0) + 1;\n        missingHere.push(t.language_iso);\n      }\n    }\n    if (samples.length < 30) {\n      samples.push({ key: kn, chars: (src || '').length, src: String(src || '').slice(0, 180), missing_n: missingHere.length });\n    }\n  }\n  const topNs = Object.entries(nsCount).sort((a, c) => c[1] - a[1]).slice(0, 20);\n  out.push({ json: {\n    name: cfg.name,\n    statusCode: r.statusCode,\n    untranslated_keys_total: total,\n    page_keys: keys.length,\n    archived_in_page: archived,\n    platforms_in_page: platformCount,\n    top_namespaces_in_page: topNs,\n    missing_per_lang_in_page: perLang,\n    samples: samples\n  }});\n}\nreturn out;\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lokalise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lokalise": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "43bv5OAUEGR566h7",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-31T09:56:47.998Z",
+      "updatedAt": "2026-08-31T09:56:47.998Z"
+    }
+  ],
+  "activeVersion": null
+}
