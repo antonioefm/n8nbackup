@@ -1,0 +1,240 @@
+{
+  "id": "ao3e9CIU9e1OospU",
+  "name": "Personality.co - revert orphaned MT (es id ko ms ro)",
+  "description": "WRITES. Snapshots then clears the 125 orphaned MT_to_review translations in the five paused locales (es, id, ko, ms, ro) back to empty. Snapshot is returned in the Report node output for the rollback artifact.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-31T11:53:30.090Z",
+  "updatedAt": "2026-08-31T11:53:30.090Z",
+  "isArchived": false,
+  "versionId": "b31ecea9-a7c3-47aa-88ee-43568464bcaf",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "8b8b3b03-0ba0-4741-8daa-92e016a7db77",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "7300f2fd-8056-4a1b-9d61-bced0322f2cd",
+      "name": "Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const BASE = \"https://api.lokalise.com/api2\";\nconst PID = \"31393214664f295f94dd86.76792605\";\nconst IDS = \"866733809,866733810,866733811,866733812,866733814,866733815,866733817,866733818,866733820,866733821,866733823,866733824,866733826,866733827,866733829,866733830,866733832,866733833,866733835,866733836,866733838,866733839,866733841,866733842,866733844\";\nconst LANGS = [{iso:\"es\",id:1056},{iso:\"id\",id:757},{iso:\"ko\",id:733},{iso:\"ms\",id:749},{iso:\"ro\",id:770}];\nreturn LANGS.map(L => ({ json: { iso: L.iso, pid: PID,\n  url: BASE + \"/projects/\" + PID + \"/keys?limit=100&page=1&include_translations=1&filter_key_ids=\" + IDS + \"&filter_translation_lang_ids=640,\" + L.id } }));"
+      }
+    },
+    {
+      "id": "95cd35b0-d42c-46c9-8467-61b1cb7a68b3",
+      "name": "Fetch current",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": false,
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "0a272890-fa75-4585-8bd3-a24b8e58b378",
+      "name": "Snapshot and build revert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const MT = 29251;\nconst items = $input.all();\nconst plans = $('Plan').all().map(p => p.json);\nconst snapshot = [];\nconst keysPayload = [];\nfor (let i = 0; i < items.length; i++) {\n  const r = items[i].json || {};\n  const b = r.body !== undefined ? r.body : r;\n  const P = plans[i];\n  if (!P || !Array.isArray(b.keys)) continue;\n  for (const k of b.keys) {\n    for (const t of (k.translations || [])) {\n      if (t.language_iso !== P.iso) continue;\n      const st = (t.custom_translation_statuses || []).map(s => s.status_id);\n      if (!t.translation || !String(t.translation).trim()) continue;\n      if (st.indexOf(MT) === -1) continue;\n      snapshot.push({ key_id: k.key_id, key_name: (k.key_name && k.key_name.web) || '',\n        language_iso: P.iso, translation_id: t.translation_id,\n        previous_translation: t.translation,\n        previous_is_reviewed: t.is_reviewed, previous_is_fuzzy: t.is_fuzzy,\n        previous_custom_translation_status_ids: st });\n      keysPayload.push({ key_id: k.key_id, translations: [{ language_iso: P.iso,\n        translation: '', is_reviewed: false, is_fuzzy: false, custom_translation_status_ids: [] }] });\n    }\n  }\n}\nreturn [{ json: {\n  to_revert: snapshot.length,\n  snapshot: snapshot,\n  url: 'https://api.lokalise.com/api2/projects/' + '31393214664f295f94dd86.76792605' + '/keys',\n  payload: { keys: keysPayload }\n} }];"
+      }
+    },
+    {
+      "id": "66337e8a-8fcb-41d5-9509-d32ce39a0c91",
+      "name": "Revert Lokalise",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "fa9c5911-23fb-439c-8094-517fe6793f70",
+      "name": "Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const r = $input.first().json || {};\nconst b = r.body !== undefined ? r.body : r;\nconst s = $('Snapshot and build revert').first().json;\nconst keys = Array.isArray(b.keys) ? b.keys : [];\nconst OUT = { es: 1, id: 1, ko: 1, ms: 1, ro: 1 };\nlet stillFilled = 0, cleared = 0;\nfor (const k of keys) {\n  for (const t of (k.translations || [])) {\n    if (!OUT[t.language_iso]) continue;\n    if (t.translation && String(t.translation).trim()) stillFilled++; else cleared++;\n  }\n}\nreturn [{ json: {\n  requested_revert: s.to_revert,\n  lokaliseStatus: r.statusCode,\n  keys_returned: keys.length,\n  cleared_confirmed: cleared,\n  still_filled: stillFilled,\n  errors: Array.isArray(b.errors) ? b.errors : [],\n  rawError: keys.length ? null : JSON.stringify(b).slice(0, 400),\n  snapshot: s.snapshot\n} }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan": {
+      "main": [
+        [
+          {
+            "node": "Fetch current",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch current": {
+      "main": [
+        [
+          {
+            "node": "Snapshot and build revert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Snapshot and build revert": {
+      "main": [
+        [
+          {
+            "node": "Revert Lokalise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Revert Lokalise": {
+      "main": [
+        [
+          {
+            "node": "Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "ao3e9CIU9e1OospU",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-31T11:53:30.092Z",
+      "updatedAt": "2026-08-31T11:53:30.092Z"
+    }
+  ],
+  "activeVersion": null
+}
