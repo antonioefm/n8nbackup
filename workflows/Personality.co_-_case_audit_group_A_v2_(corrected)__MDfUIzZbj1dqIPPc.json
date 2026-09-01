@@ -1,0 +1,167 @@
+{
+  "id": "MDfUIzZbj1dqIPPc",
+  "name": "Personality.co - case audit group A v2 (corrected)",
+  "description": "Read-only. Group A rerun on the corrected detector so it is comparable with group B. German is detect-only because noun capitalisation makes automated lowercasing unsafe.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-31T13:30:38.888Z",
+  "updatedAt": "2026-08-31T13:30:38.888Z",
+  "isArchived": false,
+  "versionId": "0c43b9dc-43bd-4139-acc2-9bf48bffdcc6",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "84af0d9e-7d93-4f85-824e-1c930a39667a",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "f684bee5-6713-469e-8858-1f4e669b89df",
+      "name": "Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const BASE = \"https://api.lokalise.com/api2\";\nconst PID = \"31393214664f295f94dd86.76792605\";\nconst IDS = \"640,767,666,10154,673,734,10152\";\nconst TOTAL = 17522, LIMIT = 200;\nconst out = [];\nfor (let p = 1; p <= Math.ceil(TOTAL / LIMIT); p++) {\n  out.push({ json: { page: p, url: BASE + \"/projects/\" + PID + \"/keys?limit=\" + LIMIT + \"&page=\" + p\n    + \"&include_translations=1&filter_translation_lang_ids=\" + IDS } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "f81364e0-6ee1-4110-b021-6af6a5877e9a",
+      "name": "Fetch keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": false,
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "4a4e2890-dc88-4af7-8405-bbd027782c5f",
+      "name": "Audit case",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const TARGETS = ['da', 'de', 'et', 'fr', 'it', 'lt'];\nconst NOAUTOFIX = { de: true };\nconst MINLOWER = 5, CAPRATIO = 3;\nconst LEGAL = /(terms_and_conditions|privacy|cookie|refund|disclaimer|imprint)/i;\nconst ADDRESSY = /(\\bSTE\\b|\\bBlvd\\b|\\b\\d{4,6}\\b,|\\b\\d+(st|nd|rd|th)\\b|https?:)/;\n\nfunction toks(s) {\n  const out = []; const re = /\\S+/g; let m;\n  while ((m = re.exec(String(s || ''))) !== null) out.push([m[0], m.index]);\n  return out;\n}\nfunction core(t) { return t.replace(/^[^\\p{L}]+|[^\\p{L}]+$/gu, ''); }\nfunction isCap(w) { const f = w.charAt(0); return f === f.toUpperCase() && f !== f.toLowerCase(); }\nfunction isTagOnly(t) { return /^<[^>]*>$/.test(t); }\nfunction starts(tk) {\n  const S = { 0: true };\n  for (let i = 1; i < tk.length; i++) {\n    const p = tk[i - 1][0];\n    if (/[.!?:;]$/.test(p)) S[i] = true;\n    else if (/[\\u25cf\\u2022\\u25aa\\u2023*>]$/.test(p)) S[i] = true;\n    else if (/^\\(\\s*[\\p{L}\\d]{1,3}\\s*\\)$/u.test(p)) S[i] = true;\n    else if (/^\\d+[.)]$/.test(p)) S[i] = true;\n    else if (isTagOnly(p)) S[i] = true;\n  }\n  return S;\n}\nfunction profile(s) {\n  const tk = toks(s), S = starts(tk);\n  let caps = 0, words = 0;\n  for (let i = 0; i < tk.length; i++) {\n    if (S[i] || isTagOnly(tk[i][0])) continue;\n    const c = core(tk[i][0]);\n    if (!c || c.length < 2 || c === c.toUpperCase()) continue;\n    words++;\n    if (isCap(c)) caps++;\n  }\n  return { caps: caps, words: words };\n}\n\nconst items = $input.all();\nconst rows = []; const errors = []; let keys_seen = 0;\nfor (const it of items) {\n  const r = it.json || {};\n  const b = r.body !== undefined ? r.body : r;\n  if (!Array.isArray(b.keys)) { errors.push({ status: r.statusCode }); continue; }\n  for (const k of b.keys) {\n    if (k.is_archived) continue;\n    keys_seen++;\n    let en = ''; const t = {};\n    for (const tr of (k.translations || [])) {\n      if (tr.language_iso === 'en') { en = tr.translation || ''; continue; }\n      if (TARGETS.indexOf(tr.language_iso) === -1) continue;\n      if (tr.translation && String(tr.translation).trim()) {\n        t[tr.language_iso] = { v: tr.translation, rev: tr.is_reviewed, fz: tr.is_fuzzy,\n          cs: (tr.custom_translation_statuses || []).map(s => s.status_id) };\n      }\n    }\n    if (!en || !Object.keys(t).length) continue;\n    rows.push({ id: k.key_id, k: (k.key_name && k.key_name.web) || '', en: en, t: t });\n  }\n}\n\nconst freq = {};\nfor (const iso of TARGETS) freq[iso] = {};\nfor (const r of rows) {\n  for (const iso of Object.keys(r.t)) {\n    const tk = toks(r.t[iso].v), S = starts(tk), F = freq[iso];\n    for (let i = 0; i < tk.length; i++) {\n      if (isTagOnly(tk[i][0])) continue;\n      const c = core(tk[i][0]);\n      if (!c || c.length < 2 || c === c.toUpperCase()) continue;\n      const key = c.toLowerCase();\n      if (!F[key]) F[key] = { lower: 0, capNonInit: 0 };\n      if (isCap(c)) { if (!S[i]) F[key].capNonInit++; } else F[key].lower++;\n    }\n  }\n}\n\nconst per = {}; const samples = []; const fixes = []; const triage = [];\nfor (const iso of TARGETS) per[iso] = { filled: 0, src_title: 0, suspect: 0, fixable: 0, legal: 0, addressy: 0, no_safe_token: 0, detect_only: 0 };\nfor (const r of rows) {\n  const S0 = profile(r.en);\n  if (!(S0.caps >= 2 && S0.words >= 2 && S0.caps / S0.words >= 0.5)) {\n    for (const iso of Object.keys(r.t)) per[iso].filled++;\n    continue;\n  }\n  const isLegal = LEGAL.test(r.k);\n  for (const iso of Object.keys(r.t)) {\n    const A = per[iso]; A.filled++; A.src_title++;\n    const v = r.t[iso].v;\n    const T = profile(v);\n    if (!(T.caps >= 2 && T.words >= 2 && T.caps / T.words >= 0.5)) continue;\n    A.suspect++;\n    if (NOAUTOFIX[iso]) { A.detect_only++; continue; }\n    if (isLegal) { A.legal++; triage.push({ iso: iso, reason: 'legal defined terms', id: r.id, k: r.k, en: r.en.slice(0, 90), cur: v.slice(0, 120) }); continue; }\n    if (ADDRESSY.test(v)) { A.addressy++; triage.push({ iso: iso, reason: 'address or url', id: r.id, k: r.k, en: r.en.slice(0, 90), cur: v.slice(0, 120) }); continue; }\n    const tk = toks(v), SS = starts(tk), F = freq[iso];\n    const edits = []; let blocked = 0;\n    for (let i = 0; i < tk.length; i++) {\n      if (SS[i] || isTagOnly(tk[i][0])) continue;\n      const tokTxt = tk[i][0], idx = tk[i][1];\n      if (/\\d/.test(tokTxt)) { blocked++; continue; }\n      const c = core(tokTxt);\n      if (!c || c.length < 2 || c === c.toUpperCase() || !isCap(c)) continue;\n      const f = F[c.toLowerCase()] || { lower: 0, capNonInit: 0 };\n      if (f.lower >= MINLOWER && f.lower > CAPRATIO * f.capNonInit) {\n        const off = tokTxt.indexOf(c);\n        edits.push({ at: idx + off, ch: c.charAt(0) });\n      } else blocked++;\n    }\n    if (!edits.length) { A.no_safe_token++; triage.push({ iso: iso, reason: 'no token safe to lowercase', id: r.id, k: r.k, en: r.en.slice(0, 90), cur: v.slice(0, 120) }); continue; }\n    let outStr = v;\n    edits.sort((a, b2) => b2.at - a.at);\n    for (const e of edits) outStr = outStr.slice(0, e.at) + e.ch.toLowerCase() + outStr.slice(e.at + 1);\n    if (outStr === v) { A.no_safe_token++; continue; }\n    A.fixable++;\n    fixes.push({ id: r.id, iso: iso, k: r.k, en: r.en, from: v, to: outStr,\n      lowered: edits.length, blocked: blocked, rev: r.t[iso].rev, fz: r.t[iso].fz, cs: r.t[iso].cs });\n    if (samples.length < 30) samples.push({ iso: iso, k: r.k.slice(0, 55), en: r.en.slice(0, 50), from: v.slice(0, 72), to: outStr.slice(0, 72), blocked: blocked });\n  }\n}\nreturn [{ json: {\n  pages: items.length, errors: errors, keys_seen: keys_seen, rows: rows.length,\n  summary: TARGETS.map(iso => ({ iso: iso, ...per[iso] })),\n  total_fixes: fixes.length, total_triage: triage.length,\n  samples: samples, fixes: fixes, triage: triage.slice(0, 400)\n} }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan": {
+      "main": [
+        [
+          {
+            "node": "Fetch keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch keys": {
+      "main": [
+        [
+          {
+            "node": "Audit case",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "MDfUIzZbj1dqIPPc",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-31T13:30:38.891Z",
+      "updatedAt": "2026-08-31T13:30:38.891Z"
+    }
+  ],
+  "activeVersion": null
+}
