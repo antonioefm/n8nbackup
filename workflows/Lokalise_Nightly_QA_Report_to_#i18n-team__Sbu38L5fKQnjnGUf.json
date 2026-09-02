@@ -5,10 +5,10 @@
   "active": true,
   "activeVersionId": "75fd56a6-c3da-46b8-9511-8d08b1adabe2",
   "createdAt": "2026-08-19T11:52:14.313Z",
-  "updatedAt": "2026-08-28T15:41:39.632Z",
+  "updatedAt": "2026-09-01T11:31:36.630Z",
   "isArchived": false,
-  "versionId": "75fd56a6-c3da-46b8-9511-8d08b1adabe2",
-  "versionCounter": 40,
+  "versionId": "9ad95b5c-04c0-43fe-9688-082ecce851ec",
+  "versionCounter": 41,
   "sourceWorkflowId": null,
   "triggerCount": 1,
   "nodes": [
@@ -148,9 +148,9 @@
         "messageType": "block",
         "text": "={{ $json.summary }}",
         "otherOptions": {
-          "mrkdwn": true,
           "includeLinkToWorkflow": false,
-          "unfurl_links": false,
+          "mrkdwn": true,
+          "unfurl_links": true,
           "unfurl_media": true
         },
         "blocksUi": "={{ $json.summary_blocks }}"
@@ -318,6 +318,47 @@
         "height": 460,
         "width": 620
       }
+    },
+    {
+      "id": "70cd23e6-bd62-4a23-9cdf-f076aaf1f82b",
+      "name": "Fetch Celebration GIF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "method": "GET",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        },
+        "url": "=https://api.giphy.com/v1/gifs/search?q=celebration&limit=50&rating=pg&lang=en&offset={{ Math.floor(Math.random() * 150) }}"
+      },
+      "onError": "continueRegularOutput",
+      "executeOnce": true
+    },
+    {
+      "id": "753b5b03-0da9-40cd-811b-9fd4723237c0",
+      "name": "Pick GIF",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Appends a celebration GIF to the summary. Never blocks the report: if Giphy\n// is unreachable, rate-limited, or the credential is missing, the HTTP node\n// passes its input through instead and we post the summary unchanged.\nconst summary = $('Build Slack Report').first().json.summary;\n\nlet gifUrl = null;\nlet gifId = null;\nlet note = 'no gif';\n\ntry {\n  const r = $input.first().json || {};\n  const arr = Array.isArray(r.data) ? r.data : [];\n  const usable = [];\n  for (const g of arr) {\n    if (!g || !g.id) { continue; }\n    const img = g.images && g.images.original;\n    if (img && typeof img.url === 'string' && img.url.length > 0) {\n      usable.push({ id: g.id, url: img.url.split('?')[0] });\n    }\n  }\n\n  if (usable.length > 0) {\n    // Remember recent picks so the same GIF does not come back two nights\n    // running. Static data persists for scheduled runs; manual test runs may\n    // not save it, which is fine - worst case is an earlier repeat.\n    const sd = $getWorkflowStaticData('global');\n    if (!Array.isArray(sd.recentGifIds)) { sd.recentGifIds = []; }\n\n    let pool = [];\n    for (const g of usable) {\n      if (sd.recentGifIds.indexOf(g.id) === -1) { pool.push(g); }\n    }\n    if (pool.length === 0) { pool = usable; note = 'pool exhausted, allowing a repeat'; }\n    else { note = 'fresh pick from ' + pool.length + ' unseen'; }\n\n    const chosen = pool[Math.floor(Math.random() * pool.length)];\n    gifUrl = chosen.url;\n    gifId = chosen.id;\n\n    sd.recentGifIds.push(chosen.id);\n    while (sd.recentGifIds.length > 60) { sd.recentGifIds.shift(); }\n  } else if (r.meta && r.meta.status && r.meta.status !== 200) {\n    note = 'giphy returned status ' + r.meta.status;\n  }\n} catch (e) {\n  note = 'gif step failed: ' + String(e.message).slice(0, 120);\n}\n\nconst text = gifUrl ? (summary + '\\n' + gifUrl) : summary;\nreturn [{ json: { summary: text, gif_url: gifUrl, gif_id: gifId, gif_note: note } }];\n",
+        "mode": "runOnceForAllItems"
+      },
+      "executeOnce": true
     }
   ],
   "connections": {
@@ -359,17 +400,6 @@
         [
           {
             "node": "Build Slack Report",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build Slack Report": {
-      "main": [
-        [
-          {
-            "node": "Post Summary",
             "type": "main",
             "index": 0
           }
@@ -419,6 +449,39 @@
           }
         ]
       ]
+    },
+    "Build Slack Report": {
+      "main": [
+        [
+          {
+            "node": "Fetch Celebration GIF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Celebration GIF": {
+      "main": [
+        [
+          {
+            "node": "Pick GIF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick GIF": {
+      "main": [
+        [
+          {
+            "node": "Post Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "nodeGroups": [],
@@ -455,7 +518,9 @@
         "225008626a33e62b328c63.04676982::Placeholders": [],
         "225008626a33e62b328c63.04676982::HTML": [],
         "225008626a33e62b328c63.04676982::Missing inline code": [],
-        "225008626a33e62b328c63.04676982::Double space": [],
+        "225008626a33e62b328c63.04676982::Double space": [
+          877925448
+        ],
         "8241074569a69e614ce094.27318095::Placeholders": [],
         "8241074569a69e614ce094.27318095::HTML": [],
         "8241074569a69e614ce094.27318095::Missing inline code": [],
@@ -592,7 +657,7 @@
         "1274536968b58980dc56a0.78363786::Missing inline code": [],
         "1274536968b58980dc56a0.78363786::Double space": []
       },
-      "qaBaselineAt": "2026-09-01T00:01:00.582Z"
+      "qaBaselineAt": "2026-09-02T00:00:59.229Z"
     }
   },
   "pinData": null,
