@@ -1,0 +1,157 @@
+{
+  "id": "WRQp9It6Au6Z36uP",
+  "name": "Lokalise - Personality MA missing inventory (ad-hoc)",
+  "description": "Fetches the untranslated key set from Personality - Members area content with translations, and computes the per-language missing inventory client-side.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-08-28T13:22:36.241Z",
+  "updatedAt": "2026-09-01T08:19:21.730Z",
+  "isArchived": false,
+  "versionId": "b3b861fd-6550-4aec-a00f-ac44afee5c32",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "e8c26374-b039-4d02-95f6-988239eea095",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "96dd4260-ee0f-4504-838e-190dfa43f7b9",
+      "name": "Build Targets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const MA='9933660066825e9a8005c8.58526829';\nconst B=[[793,765,767,737,10154,818],[768,673,666,761,773,757],[734,733,10153,10152,749,760],[748,708,770,799,10159,1056],[754,753,744,769,774]];\nconst I=[['hr','cs','da','nl','et','fil'],['fi','fr','de','el','hu','id'],['it','ko','lv','lt','ms','no'],['pl','pt','ro','sk','sl','es'],['sv','th','tr','uk','vi']];\nconst o=[];\nfor(let b=0;b<B.length;b++){\n  const ids=[640].concat(B[b]).join(',');\n  for(let p=1;p<=7;p++){\n    o.push({json:{batch:b,page:p,isos:I[b],url:'https://api.lokalise.com/api2/projects/'+MA+'/keys?filter_untranslated=1&include_translations=1&filter_translation_lang_ids='+ids+'&limit=200&page='+p}});\n  }\n}\nreturn o;"
+      }
+    },
+    {
+      "id": "622fd0be-efc3-4ac9-941e-8958212fd364",
+      "name": "Fetch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 700
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "c23b1c91-8424-46a2-bc47-0eab10da97fe",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const req=$('Build Targets').all(),res=$input.all();\nconst T=['hr','cs','da','nl','et','fil','fi','fr','de','el','hu','id','it','ko','lv','lt','ms','no','pl','pt','ro','sk','sl','es','sv','th','tr','uk','vi'];\nconst keys={},miss={};for(const t of T)miss[t]=[];\nlet ok=0,bad=0,seen=0;const prob=[];\nconst isEmpty=v=>{if(typeof v==='string')return v.trim()==='';if(v&&typeof v==='object')return Object.values(v).every(x=>String(x==null?'':x).trim()==='');return true;};\nfor(let i=0;i<res.length;i++){\n  const m=req[i]?req[i].json:{},b=res[i].json||{};\n  if(!Array.isArray(b.keys)){bad++;prob.push('b'+m.batch+'p'+m.page);continue;}\n  ok++;\n  for(const k of b.keys){\n    if(k.is_archived)continue;\n    seen++;const id=k.key_id;const bi={};\n    for(const t of (k.translations||[]))bi[t.language_iso]=t;\n    if(!keys[id])keys[id]={key_id:id,key_name:(k.key_name&&(k.key_name.web||k.key_name.other||k.key_name.ios||k.key_name.android))||'',is_plural:!!k.is_plural,tags:k.tags||[],base_words:k.base_words,context:k.context||'',description:k.description||'',char_limit:k.char_limit||0,source:bi.en?bi.en.translation:null};\n    else if(keys[id].source==null&&bi.en)keys[id].source=bi.en.translation;\n    for(const iso of (m.isos||[])){const t=bi[iso];if(!t)continue;if(isEmpty(t.translation))miss[iso].push({key_id:id,translation_id:t.translation_id});}\n  }\n}\nconst s={ok,bad,prob,distinct:Object.keys(keys).length,rows:seen,per:{},total:0,src_empty:0,plural:0};\nfor(const t of T){s.per[t]=miss[t].length;s.total+=miss[t].length;}\nfor(const id in keys){if(isEmpty(keys[id].source))s.src_empty++;if(keys[id].is_plural)s.plural++;}\nconst smp=Object.values(keys).slice(0,10).map(k=>({n:k.key_name,p:k.is_plural,w:k.base_words,t:k.tags,s:typeof k.source==='string'?k.source.slice(0,180):k.source}));\nreturn [{json:{kind:'summary',s,smp}},{json:{kind:'inventory',keys,miss}}];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Build Targets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Targets": {
+      "main": [
+        [
+          {
+            "node": "Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "WRQp9It6Au6Z36uP",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-08-28T13:22:36.243Z",
+      "updatedAt": "2026-08-28T13:22:36.243Z"
+    }
+  ],
+  "activeVersion": null
+}
