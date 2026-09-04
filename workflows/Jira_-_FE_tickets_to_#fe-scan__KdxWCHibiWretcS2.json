@@ -1,0 +1,609 @@
+{
+  "id": "KdxWCHibiWretcS2",
+  "name": "Jira - FE tickets to #fe-scan",
+  "description": "Posts every Jira ticket tagged FE (label FE or frontend, or Component FE) to Slack #fe-scan, on creation or when the tag is added later. Created inactive.",
+  "active": true,
+  "activeVersionId": "8fe43250-7be8-4aaf-80a6-bbe3056eda90",
+  "createdAt": "2026-09-03T10:32:58.812Z",
+  "updatedAt": "2026-09-03T11:48:08.983Z",
+  "isArchived": false,
+  "versionId": "8fe43250-7be8-4aaf-80a6-bbe3056eda90",
+  "versionCounter": 6,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "911aa9b0-1712-4049-98ac-bf9fff4434ff",
+      "name": "Jira - Issue Created or Updated",
+      "type": "n8n-nodes-base.jiraTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "jiraVersion": "cloud",
+        "events": [
+          "jira:issue_created",
+          "jira:issue_updated"
+        ],
+        "additionalFields": {}
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "QJte7dJbX10mIzJI",
+          "name": "Jira SW Cloud account"
+        }
+      },
+      "webhookId": "a98763e5-dae0-404a-be7a-d91bca56e47d",
+      "disabled": true
+    },
+    {
+      "id": "db0807f5-47bc-4e50-9f3a-c038f5c3253b",
+      "name": "Match Tags and Dedupe",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const FE_LABELS = [\"fe\", \"frontend\"];\nconst FE_COMPONENT_NAMES = [\"fe\"];\nconst LOC_LABELS = [\"localization\", \"needs_localization\"];\nconst MAX_AGE_DAYS = 14;\nconst MEMORY_LIMIT = 2000;\nconst store = $getWorkflowStaticData(\"global\");\nif (!Array.isArray(store.postedIssueKeys)) { store.postedIssueKeys = []; }\nconst results = [];\nfor (const item of $input.all()) {\n  const raw = item.json.body || item.json;\n  const issue = raw.issue || (raw.key ? raw : {});\n  const fields = issue.fields || {};\n  const key = issue.key;\n  if (!key) { continue; }\n  const labels = Array.isArray(fields.labels) ? fields.labels : [];\n  const components = Array.isArray(fields.components) ? fields.components : [];\n  const hitFeLabels = labels.filter(function (l) { return FE_LABELS.indexOf(String(l).toLowerCase()) !== -1; });\n  const hitFeComponents = components.filter(function (c) { return FE_COMPONENT_NAMES.indexOf(String((c && c.name) || \"\").toLowerCase()) !== -1; }).map(function (c) { return c.name + \" (component)\"; });\n  const hitLocLabels = labels.filter(function (l) { return LOC_LABELS.indexOf(String(l).toLowerCase()) !== -1; });\n  const isFe = hitFeLabels.length > 0 || hitFeComponents.length > 0;\n  const isLoc = hitLocLabels.length > 0;\n  if (!isFe && !isLoc) { continue; }\n  const createdMs = fields.created ? Date.parse(fields.created) : 0;\n  if (createdMs && (Date.now() - createdMs) / 86400000 > MAX_AGE_DAYS) { continue; }\n  if (store.postedIssueKeys.indexOf(key) !== -1) { continue; }\n  store.postedIssueKeys.push(key);\n  if (store.postedIssueKeys.length > MEMORY_LIMIT) { store.postedIssueKeys = store.postedIssueKeys.slice(-MEMORY_LIMIT); }\n  const url = \"https://futuremedia.atlassian.net/browse/\" + key;\n  const project = (fields.project && (fields.project.name || fields.project.key)) || \"unknown project\";\n  const summary = fields.summary || \"(no summary)\";\n  const issueType = (fields.issuetype && fields.issuetype.name) || \"Issue\";\n  const priority = (fields.priority && fields.priority.name) || \"No priority\";\n  const status = (fields.status && fields.status.name) || \"unknown status\";\n  const reporter = (fields.reporter && fields.reporter.displayName) || \"unknown\";\n  const assignee = (fields.assignee && fields.assignee.displayName) || \"unassigned\";\n  const matched = hitFeLabels.concat(hitFeComponents).concat(hitLocLabels).join(\", \");\n  const headline = isFe ? \":mag: *FE ticket*\" : \":globe_with_meridians: *Localization ticket*\";\n  const text = headline + \" \\u00b7 <\" + url + \"|\" + key + \"> \\u00b7 \" + project + \"\\n\"\n    + \"*\" + summary + \"*\\n\"\n    + issueType + \" \\u00b7 \" + priority + \" \\u00b7 \" + status + \" \\u00b7 matched: \" + matched + \"\\n\"\n    + \"Reporter: \" + reporter + \" \\u00b7 Assignee: \" + assignee;\n  results.push({ json: { issueKey: key, issueUrl: url, project: project, summary: summary, matched: matched, category: isFe ? \"FE\" : \"Localization\", slackText: text } });\n}\nreturn results;"
+      }
+    },
+    {
+      "id": "d79139ba-28d5-48ca-81b7-4f7c52a6568b",
+      "name": "Post to #fe-scan",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "authentication": "accessToken",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C0BURS608QZ",
+          "cachedResultName": "fe-scan"
+        },
+        "messageType": "text",
+        "text": "={{ $json.slackText }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false,
+          "mrkdwn": true,
+          "unfurl_links": false,
+          "unfurl_media": false
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "webhookId": "c3fea5de-e575-48cc-adef-3966c791404e",
+      "disabled": false
+    },
+    {
+      "id": "1da4c34d-183d-47f6-8158-e7cf93dc38b6",
+      "name": "Sticky Note 5ac6c608",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        100,
+        300
+      ],
+      "parameters": {
+        "content": "## Jira FE tickets to #fe-scan\n\nFires on jira:issue_created and jira:issue_updated across every Jira project, pre-filtered by the webhook JQL: labels in (\"FE\",\"frontend\") OR component = \"FE\".\n\nThe Code node re-checks the tags and keeps the last 1000 posted issue keys in workflow static data, so each ticket is announced once - whether FE was there at creation or added later.",
+        "color": 4
+      }
+    },
+    {
+      "id": "b9b5eba4-dac0-4a9b-8786-f8cb5a712806",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -220,
+        200
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "5c2ef009-2189-42ce-8eb9-2bd8ae1a84e8",
+      "name": "Fetch Recent FE and Localization Tickets",
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "jiraVersion": "cloud",
+        "operation": "getAll",
+        "options": {
+          "fields": "summary,labels,components,project,issuetype,priority,status,reporter,assignee,created,updated",
+          "jql": "(labels in (\"FE\", \"frontend\", \"Localization\", \"needs_localization\") OR component = \"FE\") AND updated >= -20m ORDER BY created DESC"
+        },
+        "resource": "issue",
+        "returnAll": true
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "QJte7dJbX10mIzJI",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Jira - Issue Created or Updated": {
+      "main": [
+        [
+          {
+            "node": "Match Tags and Dedupe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Fetch Recent FE and Localization Tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Recent FE and Localization Tickets": {
+      "main": [
+        [
+          {
+            "node": "Match Tags and Dedupe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match Tags and Dedupe": {
+      "main": [
+        [
+          {
+            "node": "Post to #fe-scan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:Jira - Issue Created or Updated": {
+      "endpoint": "/webhooks/1.0/webhook"
+    },
+    "node:Every 5 Minutes": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    },
+    "global": {
+      "postedIssueKeys": [
+        "AICHAT-1052",
+        "INTERNAT-2226",
+        "PDFHELP-2410",
+        "AICHAT-840",
+        "AICHAT-1054",
+        "AICHAT-1053",
+        "AICHAT-1041",
+        "AICHAT-1023",
+        "AICHAT-1040",
+        "AICHAT-1027",
+        "AICHAT-1039",
+        "AICHAT-997",
+        "REALCHECK-335",
+        "AICHAT-1049",
+        "AICHAT-1048",
+        "AICHAT-1046",
+        "AICHAT-1043",
+        "AICHAT-1042",
+        "AICHAT-1037",
+        "AICHAT-1036",
+        "AICHAT-1035",
+        "AICHAT-1034",
+        "AICHAT-1033",
+        "AICHAT-1032",
+        "AICHAT-1024",
+        "AICHAT-1019",
+        "AICHAT-1018",
+        "AICHAT-1014",
+        "AICHAT-1012",
+        "AICHAT-1010",
+        "AICHAT-1009",
+        "AICHAT-1008",
+        "AICHAT-1007",
+        "AICHAT-1006",
+        "AICHAT-1005",
+        "AICHAT-1004",
+        "MYQRCODE-10868",
+        "UNICOPY-1263",
+        "MYQRCODE-10866",
+        "AICHAT-1003",
+        "AICHAT-1002",
+        "AICHAT-1001",
+        "AICHAT-999",
+        "AICHAT-998",
+        "AICHAT-994",
+        "AICHAT-993",
+        "AICHAT-992",
+        "AICHAT-991",
+        "AICHAT-989",
+        "AICHAT-987",
+        "AICHAT-986",
+        "MYIMAGE-1013",
+        "AICHAT-984",
+        "AICHAT-982",
+        "AICHAT-979",
+        "AICHAT-978",
+        "AICHAT-977",
+        "AICHAT-976",
+        "AICHAT-975",
+        "AICHAT-974",
+        "AICHAT-972",
+        "AICHAT-971",
+        "AICHAT-970",
+        "AICHAT-968",
+        "AICHAT-964",
+        "MOBITRCLN-91",
+        "AICHAT-962",
+        "AICHAT-961",
+        "AICHAT-959",
+        "PDFHELP-2423",
+        "BUMOBI-87",
+        "BUMOBI-86",
+        "AICHAT-957",
+        "REALCHECK-303",
+        "AICHAT-956",
+        "AICHAT-955",
+        "AICHAT-954",
+        "AICHAT-953",
+        "AICHAT-952",
+        "AICHAT-951",
+        "AICHAT-947",
+        "AICHAT-946",
+        "AICHAT-945",
+        "AICHAT-944",
+        "AICHAT-943",
+        "AICHAT-942",
+        "AICHAT-941",
+        "AICHAT-940",
+        "AICHAT-939",
+        "AICHAT-937",
+        "AICHAT-936",
+        "AICHAT-935",
+        "REALCHECK-296",
+        "AICHAT-930",
+        "AICHAT-929",
+        "MYQRCODE-10851",
+        "MYQRCODE-10850",
+        "AICHAT-927",
+        "AICHAT-926",
+        "AICHAT-924",
+        "AICHAT-923",
+        "AICHAT-922",
+        "AICHAT-921",
+        "AICHAT-920",
+        "AICHAT-919",
+        "AICHAT-918",
+        "AICHAT-917",
+        "AICHAT-915",
+        "AICHAT-913",
+        "AICHAT-912",
+        "RESUME-2180",
+        "AICHAT-909",
+        "AICHAT-908",
+        "AICHAT-906",
+        "REALCHECK-285",
+        "AICHAT-904",
+        "AICHAT-903",
+        "AICHAT-902",
+        "AICHAT-900",
+        "AICHAT-899",
+        "AICHAT-898",
+        "AICHAT-894",
+        "AICHAT-893",
+        "REALCHECK-277",
+        "AICHAT-888",
+        "AICHAT-887",
+        "AICHAT-885",
+        "I18NP-1418",
+        "AICHAT-882",
+        "REALCHECK-272",
+        "AICHAT-880",
+        "AICHAT-878",
+        "AICHAT-875",
+        "AICHAT-873",
+        "AICHAT-870",
+        "AICHAT-869",
+        "AICHAT-868",
+        "AICHAT-866",
+        "AICHAT-865",
+        "AICHAT-864",
+        "AICHAT-1055",
+        "AICHAT-1056",
+        "AICHAT-1057",
+        "AICHAT-1058",
+        "AICHAT-1059",
+        "AICHAT-1060",
+        "AICHAT-1061",
+        "AICHAT-1062",
+        "AICHAT-1063"
+      ]
+    }
+  },
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "KdxWCHibiWretcS2",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-03T10:32:58.816Z",
+      "updatedAt": "2026-09-03T10:32:58.816Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "8fe43250-7be8-4aaf-80a6-bbe3056eda90",
+    "workflowId": "KdxWCHibiWretcS2",
+    "nodes": [
+      {
+        "id": "911aa9b0-1712-4049-98ac-bf9fff4434ff",
+        "name": "Jira - Issue Created or Updated",
+        "type": "n8n-nodes-base.jiraTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "jiraVersion": "cloud",
+          "events": [
+            "jira:issue_created",
+            "jira:issue_updated"
+          ],
+          "additionalFields": {}
+        },
+        "credentials": {
+          "jiraSoftwareCloudApi": {
+            "id": "QJte7dJbX10mIzJI",
+            "name": "Jira SW Cloud account"
+          }
+        },
+        "webhookId": "a98763e5-dae0-404a-be7a-d91bca56e47d",
+        "disabled": true
+      },
+      {
+        "id": "db0807f5-47bc-4e50-9f3a-c038f5c3253b",
+        "name": "Match Tags and Dedupe",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          220,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "const FE_LABELS = [\"fe\", \"frontend\"];\nconst FE_COMPONENT_NAMES = [\"fe\"];\nconst LOC_LABELS = [\"localization\", \"needs_localization\"];\nconst MAX_AGE_DAYS = 14;\nconst MEMORY_LIMIT = 2000;\nconst store = $getWorkflowStaticData(\"global\");\nif (!Array.isArray(store.postedIssueKeys)) { store.postedIssueKeys = []; }\nconst results = [];\nfor (const item of $input.all()) {\n  const raw = item.json.body || item.json;\n  const issue = raw.issue || (raw.key ? raw : {});\n  const fields = issue.fields || {};\n  const key = issue.key;\n  if (!key) { continue; }\n  const labels = Array.isArray(fields.labels) ? fields.labels : [];\n  const components = Array.isArray(fields.components) ? fields.components : [];\n  const hitFeLabels = labels.filter(function (l) { return FE_LABELS.indexOf(String(l).toLowerCase()) !== -1; });\n  const hitFeComponents = components.filter(function (c) { return FE_COMPONENT_NAMES.indexOf(String((c && c.name) || \"\").toLowerCase()) !== -1; }).map(function (c) { return c.name + \" (component)\"; });\n  const hitLocLabels = labels.filter(function (l) { return LOC_LABELS.indexOf(String(l).toLowerCase()) !== -1; });\n  const isFe = hitFeLabels.length > 0 || hitFeComponents.length > 0;\n  const isLoc = hitLocLabels.length > 0;\n  if (!isFe && !isLoc) { continue; }\n  const createdMs = fields.created ? Date.parse(fields.created) : 0;\n  if (createdMs && (Date.now() - createdMs) / 86400000 > MAX_AGE_DAYS) { continue; }\n  if (store.postedIssueKeys.indexOf(key) !== -1) { continue; }\n  store.postedIssueKeys.push(key);\n  if (store.postedIssueKeys.length > MEMORY_LIMIT) { store.postedIssueKeys = store.postedIssueKeys.slice(-MEMORY_LIMIT); }\n  const url = \"https://futuremedia.atlassian.net/browse/\" + key;\n  const project = (fields.project && (fields.project.name || fields.project.key)) || \"unknown project\";\n  const summary = fields.summary || \"(no summary)\";\n  const issueType = (fields.issuetype && fields.issuetype.name) || \"Issue\";\n  const priority = (fields.priority && fields.priority.name) || \"No priority\";\n  const status = (fields.status && fields.status.name) || \"unknown status\";\n  const reporter = (fields.reporter && fields.reporter.displayName) || \"unknown\";\n  const assignee = (fields.assignee && fields.assignee.displayName) || \"unassigned\";\n  const matched = hitFeLabels.concat(hitFeComponents).concat(hitLocLabels).join(\", \");\n  const headline = isFe ? \":mag: *FE ticket*\" : \":globe_with_meridians: *Localization ticket*\";\n  const text = headline + \" \\u00b7 <\" + url + \"|\" + key + \"> \\u00b7 \" + project + \"\\n\"\n    + \"*\" + summary + \"*\\n\"\n    + issueType + \" \\u00b7 \" + priority + \" \\u00b7 \" + status + \" \\u00b7 matched: \" + matched + \"\\n\"\n    + \"Reporter: \" + reporter + \" \\u00b7 Assignee: \" + assignee;\n  results.push({ json: { issueKey: key, issueUrl: url, project: project, summary: summary, matched: matched, category: isFe ? \"FE\" : \"Localization\", slackText: text } });\n}\nreturn results;"
+        }
+      },
+      {
+        "id": "d79139ba-28d5-48ca-81b7-4f7c52a6568b",
+        "name": "Post to #fe-scan",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.7,
+        "position": [
+          440,
+          0
+        ],
+        "parameters": {
+          "resource": "message",
+          "operation": "post",
+          "authentication": "accessToken",
+          "select": "channel",
+          "channelId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "C0BURS608QZ",
+            "cachedResultName": "fe-scan"
+          },
+          "messageType": "text",
+          "text": "={{ $json.slackText }}",
+          "otherOptions": {
+            "includeLinkToWorkflow": false,
+            "mrkdwn": true,
+            "unfurl_links": false,
+            "unfurl_media": false
+          }
+        },
+        "credentials": {
+          "slackApi": {
+            "id": "CXa5wwj5tndNAnHG",
+            "name": "i18n assignment bot"
+          }
+        },
+        "webhookId": "c3fea5de-e575-48cc-adef-3966c791404e",
+        "disabled": false
+      },
+      {
+        "id": "1da4c34d-183d-47f6-8158-e7cf93dc38b6",
+        "name": "Sticky Note 5ac6c608",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          100,
+          300
+        ],
+        "parameters": {
+          "content": "## Jira FE tickets to #fe-scan\n\nFires on jira:issue_created and jira:issue_updated across every Jira project, pre-filtered by the webhook JQL: labels in (\"FE\",\"frontend\") OR component = \"FE\".\n\nThe Code node re-checks the tags and keeps the last 1000 posted issue keys in workflow static data, so each ticket is announced once - whether FE was there at creation or added later.",
+          "color": 4
+        }
+      },
+      {
+        "id": "b9b5eba4-dac0-4a9b-8786-f8cb5a712806",
+        "name": "Every 5 Minutes",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.4,
+        "position": [
+          -220,
+          200
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "minutes",
+                "minutesInterval": 5
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "5c2ef009-2189-42ce-8eb9-2bd8ae1a84e8",
+        "name": "Fetch Recent FE and Localization Tickets",
+        "type": "n8n-nodes-base.jira",
+        "typeVersion": 1,
+        "position": [
+          0,
+          200
+        ],
+        "parameters": {
+          "jiraVersion": "cloud",
+          "operation": "getAll",
+          "options": {
+            "fields": "summary,labels,components,project,issuetype,priority,status,reporter,assignee,created,updated",
+            "jql": "(labels in (\"FE\", \"frontend\", \"Localization\", \"needs_localization\") OR component = \"FE\") AND updated >= -20m ORDER BY created DESC"
+          },
+          "resource": "issue",
+          "returnAll": true
+        },
+        "credentials": {
+          "jiraSoftwareCloudApi": {
+            "id": "QJte7dJbX10mIzJI",
+            "name": "Jira SW Cloud account"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Jira - Issue Created or Updated": {
+        "main": [
+          [
+            {
+              "node": "Match Tags and Dedupe",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Every 5 Minutes": {
+        "main": [
+          [
+            {
+              "node": "Fetch Recent FE and Localization Tickets",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Recent FE and Localization Tickets": {
+        "main": [
+          [
+            {
+              "node": "Match Tags and Dedupe",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Match Tags and Dedupe": {
+        "main": [
+          [
+            {
+              "node": "Post to #fe-scan",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Maria Sica (via MCP)",
+    "name": "Revert seeding, resume normal posting",
+    "description": "Reverted the temporary seed-only pass. Back to the 20-minute updated window, normal per-ticket Slack posting, Slack node re-enabled. The 128 pre-existing tickets seeded into static data will never post, so the channel only carries tickets tagged from now on.",
+    "autosaved": false,
+    "createdAt": "2026-09-03T11:48:08.986Z",
+    "updatedAt": "2026-09-03T11:48:08.986Z",
+    "workflowPublishHistory": [
+      {
+        "id": 1818,
+        "workflowId": "KdxWCHibiWretcS2",
+        "versionId": "8fe43250-7be8-4aaf-80a6-bbe3056eda90",
+        "event": "activated",
+        "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
+        "createdAt": "2026-09-03T11:48:11.462Z"
+      }
+    ]
+  }
+}
