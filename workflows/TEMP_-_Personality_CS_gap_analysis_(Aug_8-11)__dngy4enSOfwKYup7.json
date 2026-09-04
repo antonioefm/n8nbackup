@@ -5,10 +5,10 @@
   "active": false,
   "activeVersionId": null,
   "createdAt": "2026-08-12T12:40:02.138Z",
-  "updatedAt": "2026-08-13T20:51:44.230Z",
+  "updatedAt": "2026-09-03T15:42:06.085Z",
   "isArchived": false,
-  "versionId": "1d7cd529-6fe9-4cfa-bf92-7c5c6d783b37",
-  "versionCounter": 14,
+  "versionId": "f59ff76d-ddb2-497c-b7b2-6845830c974b",
+  "versionCounter": 16,
   "sourceWorkflowId": null,
   "triggerCount": 0,
   "nodes": [
@@ -39,19 +39,19 @@
               "id": "p1",
               "name": "project_key",
               "type": "string",
-              "value": "realchecker_prod"
+              "value": "personality_prod"
             },
             {
               "id": "p2",
               "name": "created_from",
               "type": "string",
-              "value": "2026-08-01"
+              "value": "2026-08-31"
             },
             {
               "id": "p3",
               "name": "created_to_exclusive",
               "type": "string",
-              "value": "2026-08-13"
+              "value": "2026-09-04"
             },
             {
               "id": "p4",
@@ -157,8 +157,8 @@
       },
       "credentials": {
         "zendeskApi": {
-          "id": "OCiadiDsrFfoaNwC",
-          "name": "Realchecker Zendesk account"
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
         }
       }
     },
@@ -207,8 +207,8 @@
       },
       "credentials": {
         "zendeskApi": {
-          "id": "OCiadiDsrFfoaNwC",
-          "name": "Realchecker Zendesk account"
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
         }
       }
     },
@@ -240,8 +240,8 @@
         "options": {
           "batching": {
             "batch": {
-              "batchInterval": 1200,
-              "batchSize": 2
+              "batchInterval": 1000,
+              "batchSize": 4
             }
           }
         },
@@ -262,8 +262,8 @@
       },
       "credentials": {
         "zendeskApi": {
-          "id": "OCiadiDsrFfoaNwC",
-          "name": "Realchecker Zendesk account"
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
         }
       },
       "onError": "continueRegularOutput"
@@ -279,6 +279,19 @@
       ],
       "parameters": {
         "jsCode": "const params = $('Set params').first().json;\nconst limit = Number(params.text_limit) || 450;\nconst withBodies = params.include_bodies === true || params.include_bodies === 'true';\nconst bucketFilter = Number(params.bucket_filter) || 0;\nconst tickets = $('Flatten Tickets').all();\nconst responses = $input.all();\nconst meta = tickets.length ? (tickets[0].json._meta || {}) : {};\nconst autoId = String(meta.automation_user_id || '');\nfunction clean(s, cap) {\n  if (!s) return '';\n  const c = cap || limit;\n  let t = String(s).replace(/\\r/g, '');\n  t = t.split('\\n').filter(l => !/^\\s*>/.test(l)).join(' ');\n  t = t.replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');\n  t = t.replace(/\\s+/g, ' ').trim();\n  return t.length > c ? t.slice(0, c) + '...' : t;\n}\nconst rows = [];\nconst totals = { analyzed: 0, bucket1: 0, bucket2: 0, bucket3: 0, unresolved: 0, comment_fetch_errors: 0, nocat_notes: 0 };\nfor (let i = 0; i < tickets.length; i++) {\n  const t = tickets[i].json;\n  const resp = responses[i] ? responses[i].json : {};\n  if (!resp || !resp.comments) totals.comment_fetch_errors++;\n  const comments = (resp && resp.comments) || [];\n  const pub = comments.filter(c => c.public);\n  const cust = pub.filter(c => String(c.author_id) === String(t.requester_id));\n  const auto = autoId ? pub.filter(c => String(c.author_id) === autoId) : [];\n  const agent = pub.filter(c => String(c.author_id) !== String(t.requester_id) && (!autoId || String(c.author_id) !== autoId));\n  const notes = comments.filter(c => !c.public);\n  const rawNotes = notes.map(c => String(c.plain_body || c.body || '')).join(' \\n ');\n  const nocat = /did not fit into any of the predefined categories/i.test(rawNotes);\n  const fr = rawNotes.match(/Fail reason:\\s*([a-zA-Z_]+)/);\n  if (nocat) totals.nocat_notes++;\n  let bucket;\n  if (auto.length > 0) { bucket = 3; } else if (agent.length <= 1) { bucket = 1; } else { bucket = 2; }\n  totals.analyzed++;\n  if (bucket === 1) { totals.bucket1++; } else if (bucket === 2) { totals.bucket2++; } else { totals.bucket3++; }\n  if (t.status !== 'solved' && t.status !== 'closed') totals.unresolved++;\n  const row = { id: t.id, d: String(t.created_at).slice(5, 10), st: t.status, b: bucket, ch: t.channel, subj: t.subject, nc: cust.length, na: agent.length, nb: auto.length, nn: notes.length, nocat: nocat, failreason: fr ? fr[1] : '', tags: (t.tags || []).join(','), cf: t.cf || '' };\n  if (withBodies) {\n    row.cust1 = clean((cust[0] && cust[0].plain_body) ? cust[0].plain_body : (t.description || ((pub[0] || {}).plain_body)), 1200);\n    row.agent1 = agent[0] ? clean(agent[0].plain_body) : '';\n    row.cust2 = cust[1] ? clean(cust[1].plain_body) : '';\n    row.agentL = agent.length > 1 ? clean(agent[agent.length - 1].plain_body) : '';\n    row.auto1 = auto[0] ? clean(auto[0].plain_body, 300) : '';\n    row.notes_txt = clean(rawNotes, 700);\n  }\n  if (bucketFilter === 0 || bucketFilter === bucket) rows.push(row);\n}\nconst off = Number(params.output_offset) || 0;\nconst lim = Number(params.output_limit) || 0;\nconst sliced = lim > 0 ? rows.slice(off, off + lim) : rows.slice(off);\nreturn [{ json: { meta, window: { from: params.created_from, to_exclusive: params.created_to_exclusive }, totals, returned: sliced.length, matching_filter: rows.length, tickets: sliced } }];\n"
+      }
+    },
+    {
+      "id": "10e0f6b9-0ca0-45c8-97fa-36c2e1d59f27",
+      "name": "Match Failed Charge",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const src = $input.first().json;\nconst rows = src.tickets || [];\nconst A1 = /charged only|solo se te cobraron|se te cobraron solo/i;\nconst A2 = /attempted to renew|attempt to renew|renew your subscription|intento renovar|renovar tu suscripcion/i;\nconst A3 = /unsuccessful|was not successful|no se realizo correctamente|no fue exitoso|nicht erfolgreich/i;\nconst B1 = /do not currently have an active subscription|do not have an active subscription|no cuentas con una suscripcion activa|no tienes una suscripcion activa/i;\nconst B2 = /payment for the trial period was unsuccessful|no charges have been processed|no se han procesado cargos|trial period was unsuccessful/i;\nconst NOTE_INC = /INITIAL or INCOMPLETE|complete the first payment|abandoned payment process/i;\nconst CUST_ATT = /attempt|tried to charge|tried to take|tried to debit|declined|decline|unsuccessful|did not go through|didnt go through|did not take|failed|unpaid|intento|rechaz|no paso/i;\nconst CUST_CHG = /charg|deduct|debit|transaction|payment|withdraw|taken from|funds|cobr|pago|invoice|balance/i;\nfunction amt(s) { const m = String(s || '').match(/charged only ([A-Za-z$EUR£₺฿]{0,4} ?[0-9.,]+)/i); return m ? m[1].trim() : ''; }\nconst out = [];\nlet cA = 0, cB = 0, cC = 0, cD = 0;\nfor (const r of rows) {\n  const a = String(r.agent1 || '') + ' || ' + String(r.agentL || '');\n  const nt = String(r.notes_txt || '');\n  const cu = String(r.cust1 || '') + ' ' + String(r.cust2 || '');\n  const tmplA = A1.test(a) && A3.test(a) && A2.test(a);\n  const tmplB = B1.test(a) && B2.test(a);\n  const noteInc = NOTE_INC.test(nt);\n  const custSig = CUST_ATT.test(cu) && CUST_CHG.test(cu);\n  let tier = '';\n  if (tmplA) { tier = 'A_confirmed_declined_renewal'; cA++; }\n  else if (tmplB) { tier = 'B_confirmed_no_subscription'; cB++; }\n  else if (noteInc) { tier = 'C_note_initial_incomplete'; cC++; }\n  else if (custSig) { tier = 'D_text_signal_only'; cD++; }\n  if (!tier) { continue; }\n  const cap = tier === 'D_text_signal_only' ? 320 : 600;\n  out.push({ id: r.id, d: r.d, st: r.st, na: r.na, nb: r.nb, tier: tier, amount: amt(a), note_inc: noteInc, cust_sig: custSig, subj: r.subj, tags: r.tags, cust: String(r.cust1 || '').slice(0, cap), agent: a.slice(0, 420), notes: nt.slice(0, 300) });\n}\nconst order = { A_confirmed_declined_renewal: 1, B_confirmed_no_subscription: 2, C_note_initial_incomplete: 3, D_text_signal_only: 4 };\nout.sort(function (x, y) { return (order[x.tier] - order[y.tier]) || (x.id - y.id); });\nreturn [{ json: { window: src.window, scanned: rows.length, totals_from_pull: src.totals, counts: { A: cA, B: cB, C: cC, D: cD, total: out.length }, matches: out } }];\n"
       }
     }
   ],
@@ -354,6 +367,17 @@
         [
           {
             "node": "Build Records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Records": {
+      "main": [
+        [
+          {
+            "node": "Match Failed Charge",
             "type": "main",
             "index": 0
           }
