@@ -1,0 +1,167 @@
+{
+  "id": "6YxRt7q5n8MoPlQv",
+  "name": "Lokalise - small backlog probe, Mobitrace + Unicopy (read-only)",
+  "description": "READ-ONLY. Fetches the untranslated key set with translations for Mobitrace, Unicopy and Unicopy (backend) to establish the real change set before any external-automation write: which locales are actually empty per key, whether keys are archived or plural",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-07T13:25:24.286Z",
+  "updatedAt": "2026-09-07T13:25:24.286Z",
+  "isArchived": false,
+  "versionId": "f9908618-c284-440c-bef2-b1a5960c0628",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "d1f6aaea-fad3-4748-b982-1c424e6d41eb",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "0885c217-524c-4e40-b4df-b4ea6c64c5c9",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const P = [\n  ['Mobitrace','14240418673f52ae29a007.74392007'],\n  ['Unicopy','35679002689c4f3ba6dd50.31739712'],\n  ['Unicopy (backend)','1600517668d38be7f36ba4.51132642']\n];\nconst out = [];\nfor (const p of P) {\n  for (let pg = 1; pg <= 3; pg++) {\n    out.push({ json: { name: p[0], pid: p[1], page: pg, url: 'https://api.lokalise.com/api2/projects/' + p[1] + '/keys?filter_untranslated=1&include_translations=1&limit=200&page=' + pg } });\n  }\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "ad53f146-ef76-4a49-a67e-48f8c86bb782",
+      "name": "Fetch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1500
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 4000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "6a7851c3-4ed1-4424-be3d-61dc9144b359",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const reqs = $('Config').all();\nconst res = $input.all();\nconst per = {};\nconst errors = [];\nconst rows = [];\nfor (let i = 0; i < res.length; i++) {\n  const meta = (reqs[i] || { json: {} }).json;\n  const r = res[i].json || {};\n  const b = r.body || {};\n  if (r.statusCode !== 200) { errors.push(meta.name + ' p' + meta.page + ' status ' + r.statusCode); continue; }\n  if (!Array.isArray(b.keys)) { errors.push(meta.name + ' p' + meta.page + ' no keys array'); continue; }\n  if (!per[meta.name]) { per[meta.name] = { pid: meta.pid, keys: 0, archived: 0, plural: 0, missing_by_locale: {}, no_en: 0 }; }\n  const o = per[meta.name];\n  for (const k of b.keys) {\n    o.keys++;\n    if (k.is_archived) { o.archived++; }\n    if (k.is_plural) { o.plural++; }\n    let en = '';\n    const empties = [];\n    for (const t of (k.translations || [])) {\n      const iso = t.language_iso;\n      const txt = (t.translation === null || t.translation === undefined) ? '' : (typeof t.translation === 'object' ? JSON.stringify(t.translation) : String(t.translation));\n      if (iso === 'en') { en = txt; continue; }\n      if (!txt.trim()) { empties.push(iso); o.missing_by_locale[iso] = (o.missing_by_locale[iso] || 0) + 1; }\n    }\n    if (!en.trim()) { o.no_en++; }\n    if (rows.length < 40) {\n      rows.push({ project: meta.name, key_id: k.key_id, key: (k.key_name || {}).web || (k.key_name || {}).other || '', archived: !!k.is_archived, plural: !!k.is_plural, en: en.slice(0, 120), missing: empties.join(',') });\n    }\n  }\n}\nreturn [{ json: { per_project: per, errors: errors, sample_rows: rows } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "6YxRt7q5n8MoPlQv",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-07T13:25:24.289Z",
+      "updatedAt": "2026-09-07T13:25:24.289Z"
+    }
+  ],
+  "activeVersion": null
+}
