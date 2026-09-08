@@ -1,0 +1,450 @@
+{
+  "id": "XfQM9JA9LZsv8A2x",
+  "name": "Lokalise - external automation, 6 projects (TM then AI)",
+  "description": "External stand-in for Lokalise native automations in the six projects that cannot have one (account at 130/150 locale-pair automations). Webhook-triggered on new key or EN source edit. Runs TM 100% exact-source match first, writing hits with the project 1",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-07T13:32:31.539Z",
+  "updatedAt": "2026-09-07T13:32:31.539Z",
+  "isArchived": false,
+  "versionId": "6cc4bed4-fd0e-42c6-abab-1808b6289da2",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "5b2438d1-946b-4807-8b46-726f0cf48960",
+      "name": "Lokalise Event",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lokalise-external-fill",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "webhookId": "e47cb637-9719-4e72-949a-dc9280884d91"
+    },
+    {
+      "id": "b788c2f3-41d1-4a3f-b80b-1572121760c6",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\n// External stand-in for Lokalise native automations, for six projects that cannot have\n// one because the account is at 130/150 locale-pair automations.\n// Order mirrors Lokalise exactly: TM 100% exact-source match first -> 100TM status.\n// Only on a miss does the string go to AI generation -> AI_TO_REVIEW status.\nconst DRY_RUN = false;          // set true to plan without writing\nconst MAX_UNITS_PER_FIRE = 50;  // safety cap per webhook fire\nconst MODEL = 'gpt-4o';\nconst TM_TTL_MS = 6 * 60 * 60 * 1000;\nconst GLOSSARY_PID = '46552447679363c70f7ef8.58193285';\n\n// status ids verified live 2026-09-07; Unicopy's TM status is titled \"TM matches\", not 100TM\nconst PROJECTS = {\n  '14240418673f52ae29a007.74392007': { name: 'Mobitrace',                   tm: 29166, ai: 29167 },\n  '9274956467e3e224807498.79791832': { name: 'Mobitrace - backend/emails',  tm: 29469, ai: 29470 },\n  '50011170688b3050b0a7f8.40995136': { name: 'My Image - Backend',          tm: 29445, ai: 29446 },\n  '35679002689c4f3ba6dd50.31739712': { name: 'Unicopy',                     tm: 29170, ai: 29467 },\n  '1600517668d38be7f36ba4.51132642': { name: 'Unicopy (backend)',           tm: 29172, ai: 29468 },\n  '4780438967fe077b4e6484.83742970': { name: 'WAPP',                        tm: 29313, ai: 29314 }\n};\n\n// Norwegian is 760 in Mobitrace and My Image - Backend but 759 in Mobitrace - backend/emails.\n// Never share a language-id map across projects; these are read from /languages per project.\nconst LANGS = {\n  '14240418673f52ae29a007.74392007': { hr:793, cs:765, da:767, nl:737, fr:673, de:666, el:761, id:757, it:734, ko:733, ms:749, no:760, pl:748, pt:708, ro:770, sk:799, es:1056, sv:754, th:753, tr:744, uk:769, vi:774 },\n  '9274956467e3e224807498.79791832': { hr:793, cs:765, da:767, nl:737, fr:673, de:666, el:761, id:757, it:734, ko:733, ms:749, no:759, pl:748, pt:708, ro:770, sk:799, es:1056, sv:754, th:753, tr:744, uk:769, vi:774 },\n  '50011170688b3050b0a7f8.40995136': { da:767, nl:737, fr:673, de:666, id:757, it:734, ko:733, ms:749, no:760, pl:748, pt:708, ro:770, es:1056, sv:754, th:753, tr:744, uk:769, vi:774 },\n  '35679002689c4f3ba6dd50.31739712': { es:1056 },\n  '1600517668d38be7f36ba4.51132642': { es:1056 },\n  '4780438967fe077b4e6484.83742970': { nl:737, fr:673, de:666, it:734, pt:708, es:1056 }\n};\n\n// Distilled from the style guide documents. Register is the field most often got wrong,\n// so it leads every block.\nconst GUIDES = {\n  cs: 'Register: formal 2nd-person plural (vykani). Concise, readable, friendly but authoritative; short clear sentences. Gender-neutral where possible, otherwise grammatical neutral masculine; never he/she dual-gender syntax. Avoid word-for-word translation; prefer phrasing used on Czech psychology pages. Standard Czech grammar, typography, numbers and dates.',\n  da: 'Register: informal du. Informal, helpful, engaging yet professional; active voice; clarity over length; avoid noun-heavy formal phrasing. Buttons and CTAs: imperative (Start nu). Help-centre headlines: infinitive. Body-text instructions: imperative. Cite UI elements capitalised without quotation marks even if the source quotes them. Avoid over-using possessive pronouns.',\n  de: 'Register: duzen everywhere including emails and legal text; du/dir/dich/dein lowercase except sentence-initial. Generic masculine, no gender star, colon or Binnen-I. Short sentences. Neue Deutsche Rechtschreibung with ss (use the sharp s, not ss). Quotes: German low-high only. Plain spaces and plain hyphens only. Buttons and labels: infinitive. Full CTA sentences and instructions: du-imperative. No final period on labels, buttons or headings; period on full sentences including error messages. Abonnement in all products, never Mitgliedschaft here. Konto not Account. E-Mail. QR-Code hyphenated. Keep English for Dashboard, Support, Upload, Download.',\n  el: 'Register: formal 2nd-person plural always. Buttons and CTAs: translate English infinitives as Greek noun forms, not imperatives. Avoid gendered language; default masculine acceptable if rephrasing fails; never dual-gender syntax. Clear friendly tone, no slang. Split long sentences. Final nu: keep on ton and on den; normal rules for min; remove from autin. Dates DD/MM/YYYY, 24-hour HH:MM. Decimal comma, currency symbol after the figure.',\n  es: 'Register: informal tu. Clear, direct, professional but simple and natural. Buttons: infinitive. Active voice; colloquial expressions acceptable. Prioritise clarity and naturalness over literal translation. Follow RAE and Fundeu.',\n  fr: 'Register: vous unless the source is plainly informal. Clear and concise, never literal; always idiomatic. Exclamation points only occasionally. Aim for gender-neutral epicene phrasing; where addressing the user directly and that fails, add the feminine mark in parentheses. Capitalisation follows French orthography, including the definite-article rule; never carry English title case across. Standard French abbreviations (1er, 1re, 2e, p. ex., etc., Go, h, min, s, M., Mme, Dr).',\n  hr: 'Register: formal 2nd-person plural, Vi capitalised when the pronoun is written out. Buttons and CTAs: nouns where natural (Continue as Nastavak, Sign in as Prijava) but avoid verbal nouns; use imperative verbs instead. Unambiguous prompts to the user take 2nd person plural; prompts the user gives the system may take 2nd person singular. Sentence case; do not capitalise nouns mid-sentence. Product names unchanged. Follow pravopis.hr. Rephrase rather than translate word for word.',\n  id: 'Register: formal, translate you as Anda at all times, friendly tone. Follow EYD and KBBI. Effective and concise, natural flow. Headings and buttons: noun or verb form, following the source style. Decimal comma, thousand period (3,5 m and 6.000 km). Dates DD/MM/YYYY, 24-hour clock with a dot separator.',\n  it: 'Register: informal tu. Friendly, inclusive, respectful, optimistic. CTAs and buttons: imperative (Registrati ora, Accedi). Avoid long sentences and repetition. Prefer phrasing that works for both genders; where impossible use the informato/a form. Never translate URLs. Dates DD/MM/YY, Italian abbreviations (min., sec.). Currency localised as 29,99 with the symbol after. Accented capitals always (E with grave, never E apostrophe). High double quotes; move the period outside the quotes.',\n  ko: 'Register: friendly but polite. Declaratives take the -seyo form, questions the -nikka form. Concise, no redundancy. CTA buttons: use the noun form, not -hagi. Avoid second-person address; where unavoidable use the formal honorific. Sentences end with a period; convert a source colon to a period; no periods in titles or headings. Metric units, no space between number and unit. Dates YYYY/MM/DD, 12-hour clock with the Korean AM/PM markers.',\n  ms: 'Register: friendly, not overly formal except in legal contexts; inclusive, respectful, optimistic. Follow DBP references (Tatabahasa Dewan, PRPM, Gaya Dewan). Pronouns are gender-neutral. Avoid unnecessary plural marking unless context requires it. CTA buttons: imperative verbs without suffixes.',\n  nl: 'Register: informal you (jij/je); warm, welcoming, engaging, informal but still professional, like friendly self-care advice. Follow Van Dale and Woordenlijst.org for spelling. Paraphrasing permitted for style provided register and meaning hold. CTAs: imperative (Klik nu hier). Buttons: infinitive (Resultaten bekijken).',\n  no: 'Register: informal du. Informal, helpful, engaging yet professional; active voice; clarity over length; avoid noun-heavy formal phrasing. Buttons and CTAs: imperative (Start na, Les mer). Help-centre headlines: infinitive. Body-text instructions: imperative. Cite UI elements capitalised without quotation marks. Avoid over-using possessive pronouns. Exclamation points and superlatives sparingly.',\n  pl: 'Register: 2nd person singular. Gender-neutral forms where possible (Popelniono trzy bledy, not Popelniles). Avoid English passive voice; make the actor the subject. Polish quotation marks (low-high). En dash, not a hyphen, for ranges. Decimal comma. Ordinals take a period after the number. Do not copy English capitalisation in UI names; sentence case. Exclamation marks sparingly.',\n  pt: 'Brazilian Portuguese. Register: formal but friendly, confident, helpful, authoritative, science-based. Dates dd/mm/yyyy, long form as day de month de year. 24-hour clock written as 23h30, no spaces, no leading zeros. Space between number and unit; do not pluralise unit symbols. Metric only. Currency real, symbol R$, format R$ 1,10. Decimal comma, thousand period.',\n  ro: 'Register: informal tu. Informal, engaging, friendly, approachable; active voice. Gender-neutral phrasing; avoid unnecessary gendered forms. Natural everyday Romanian where appropriate. Buttons and CTAs: clear direct imperative verbs. Borrowed words take -uri without a hyphen (feedbackul); acronyms and foreign terms with non-standard endings take a hyphen (PDF-uri). Check DOOM and DEX for plurals and definite forms.',\n  sk: 'Register: formal vy throughout (vy, vas, vasa, vam, vase). Capitalise V only in personalised emails and messages, never in general website copy. Space between number and unit (500 KB); space as thousand separator over four digits (1 500); true minus sign for negatives. Currency after the amount (35 EUR sign). Sentence case always, even where the source uses title case. Accented capitals. Gender-neutral rephrasing where the source has a singular pronoun or participle.',\n  sv: 'Register: informal du, never the singular ni. Informal, helpful, engaging yet professional; active voice; clarity over length; avoid noun-heavy formal phrasing. Buttons and CTAs: imperative (Starta nu, Las mer). Help-centre headlines: infinitive. Body-text instructions: imperative. Cite UI elements capitalised without quotation marks. Avoid over-using possessive pronouns. Exclamation points and superlatives sparingly. Gender-neutral vocabulary where available.',\n  th: 'Thai per the reviewed guide of 1 Sep 2026. No spaces between words; use spaces only where Thai convention requires a phrase break. No sentence-final period. Arabic numerals. Latin script only for brand names and placeholders, never for translated content. Neutral polite register; avoid the sentence-final politeness particles in UI copy. Do not translate placeholder names or HTML tags.',\n  tr: 'Register: 2nd person plural polite for body copy and CTA links (Buraya tiklayin), but avoid the over-formal -iniz form. Buttons: 2nd person singular (Giris yap, Teste basla). Currency as a code to the right of the figure with a space (10 USD, 25 GBP), never a symbol on the left. Turkish decimal and thousand separators (10.000 for 10,000; percent written before the figure with a comma decimal). Times use a full stop, not a colon (13.35). Follow TDK for spelling and punctuation.',\n  uk: 'Register: formal Vy, gender-neutral language. Friendly tone; avoid overly formal pronoun-heavy phrasing; avoid repetition. Restructure the English sentence so it reads naturally in Ukrainian. CTAs: imperative. Ordinary buttons: infinitive. Punctuation: guillemets for quotes, em dash, curly apostrophe. Respect character limits, staying near the source length.',\n  vi: 'Sentence case in general; exception for widely used organisation names. Avoid passive voice. Double quotes even where the source uses single. No comma before va or hoac. No hyphens splitting words. Decimal comma, thousand full stop. 24-hour clock preferred. No space before a full stop, and none inside brackets.'\n};\n\n// Exclusions established from the 7 Sep backlog probe: every untranslated key in these\n// projects was archived, tagged to_exclude, or had an empty EN source.\nconst EXCLUDE_TAGS = ['to_exclude'];\n\nreturn [{ json: { DRY_RUN, MAX_UNITS_PER_FIRE, MODEL, TM_TTL_MS, GLOSSARY_PID, PROJECTS, LANGS, GUIDES, EXCLUDE_TAGS } }];\n"
+      }
+    },
+    {
+      "id": "04df91fd-a4c0-462a-a532-d759a4b2ad2a",
+      "name": "Normalize Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst c = $('Config').first().json;\nconst ev = $('Lokalise Event').first().json || {};\nconst b = ev.body || ev;\nconst store = $getWorkflowStaticData('global');\nif (!store.seen) { store.seen = {}; }\n\nconst pid = String(b.project && b.project.id ? b.project.id : (b.project_id || ''));\nconst type = String(b.event || b.event_type || '');\nconst project = c.PROJECTS[pid];\nconst drop = [];\n\nif (!project) { drop.push('project not in scope: ' + pid); }\n\n// Only the events a Lokalise automation would fire on: a new key, or an EN source edit.\nconst KEY_EVENTS = ['project.key.added', 'project.keys.added'];\nconst TRANS_EVENTS = ['project.translation.updated', 'project.translations.updated'];\nlet ids = [];\nif (KEY_EVENTS.indexOf(type) !== -1) {\n  const arr = b.keys || (b.key ? [b.key] : []);\n  for (const k of arr) { if (k && (k.id || k.key_id)) { ids.push(Number(k.id || k.key_id)); } }\n} else if (TRANS_EVENTS.indexOf(type) !== -1) {\n  const arr = b.translations || (b.translation ? [b.translation] : []);\n  for (const t of arr) {\n    const iso = String((t.language && t.language.iso) || t.language_iso || '');\n    if (iso !== 'en') { continue; }   // only EN source edits retrigger a fill\n    if (t.key && (t.key.id || t.key_id)) { ids.push(Number(t.key.id || t.key_id)); }\n    else if (t.key_id) { ids.push(Number(t.key_id)); }\n  }\n  if (!ids.length) { drop.push('translation event with no EN key ids'); }\n} else {\n  drop.push('event type not handled: ' + type);\n}\n\n// Dedupe: a key already processed for this project is not refilled.\nconst fresh = [];\nfor (const id of ids) {\n  const tag = pid + ':' + id;\n  if (store.seen[tag]) { continue; }\n  fresh.push(id);\n}\nconst capped = fresh.slice(0, c.MAX_UNITS_PER_FIRE);\nconst deferred = fresh.length - capped.length;\n\nreturn [{ json: {\n  has_work: capped.length > 0 && !!project,\n  pid: pid,\n  project_name: project ? project.name : null,\n  event: type,\n  key_ids: capped,\n  deferred: deferred,\n  dropped: drop\n} }];\n"
+      }
+    },
+    {
+      "id": "de1fc8c6-207a-49f9-bc1a-6500bab17271",
+      "name": "Has Work",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.has_work }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "17ad765f-4fb0-471a-970f-befb758155d4",
+      "name": "Build Fetch Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst c = $('Config').first().json;\nconst w = $('Normalize Event').first().json;\nconst B = 'https://api.lokalise.com/api2';\nconst out = [];\n\n// the affected keys themselves\nout.push({ json: { kind: 'keys', pid: w.pid, url: B + '/projects/' + w.pid + '/keys?filter_key_ids=' + w.key_ids.join(',') + '&include_translations=1&limit=200' } });\n\n// the shared glossary, cursor-paginated (page= silently re-serves page 1)\nout.push({ json: { kind: 'glossary', pid: c.GLOSSARY_PID, url: B + '/projects/' + c.GLOSSARY_PID + '/glossary-terms?limit=500' } });\n\n// TM corpus, only when the cached index is stale. limit=200 because 500 crashes above ~5k keys.\nconst store = $getWorkflowStaticData('global');\nconst stale = !store.tm_built_at || (Date.now() - store.tm_built_at) > c.TM_TTL_MS;\nif (stale) {\n  for (const p of Object.keys(c.PROJECTS)) {\n    for (let pg = 1; pg <= 12; pg++) {\n      out.push({ json: { kind: 'tm', pid: p, page: pg, url: B + '/projects/' + p + '/keys?include_translations=1&limit=200&page=' + pg } });\n    }\n  }\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "2bff9646-2df6-4006-b666-b738810e0074",
+      "name": "Fetch Lokalise",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2500
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "05175f27-9712-4ef5-928d-2283687834b4",
+      "name": "Plan Units",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst c = $('Config').first().json;\nconst w = $('Normalize Event').first().json;\nconst reqs = $('Build Fetch Plan').all();\nconst res = $input.all();\nconst store = $getWorkflowStaticData('global');\n\nconst norm = function (s) { return String(s == null ? '' : s).replace(/\\s+/g, ' ').trim().toLowerCase(); };\nconst txt = function (t) {\n  if (t == null) { return ''; }\n  if (typeof t === 'object') { return ''; }   // plural objects handled separately, skipped here\n  return String(t);\n};\n\nlet targetKeys = [];\nconst glossary = [];\nlet tmPages = 0;\nconst tm = (store.tm && !((!store.tm_built_at) || (Date.now() - store.tm_built_at) > c.TM_TTL_MS)) ? store.tm : {};\nconst rebuilding = Object.keys(tm).length === 0;\n\nfor (let i = 0; i < res.length; i++) {\n  const meta = (reqs[i] || { json: {} }).json;\n  const r = res[i].json || {};\n  const b = r.body || {};\n  if (meta.kind === 'keys') {\n    if (!Array.isArray(b.keys)) { throw new Error('keys fetch returned no array - aborting rather than filling blind'); }\n    targetKeys = b.keys;\n  } else if (meta.kind === 'glossary') {\n    for (const t of (b.data || [])) { if (t.translatable) { glossary.push(t); } }\n  } else if (meta.kind === 'tm') {\n    if (!Array.isArray(b.keys)) { continue; }\n    tmPages++;\n    for (const k of b.keys) {\n      if (k.is_archived) { continue; }\n      let en = '';\n      const per = {};\n      for (const t of (k.translations || [])) {\n        const s = txt(t.translation);\n        if (!s.trim()) { continue; }\n        if (t.language_iso === 'en') { en = s; continue; }\n        // TM only trusts reviewed, non-fuzzy strings\n        if (t.is_reviewed && !t.is_fuzzy && !t.is_unverified) { per[t.language_iso] = s; }\n      }\n      if (!en.trim()) { continue; }\n      const key = norm(en);\n      if (!tm[key]) { tm[key] = {}; }\n      for (const iso of Object.keys(per)) {\n        if (tm[key][iso] === undefined) { tm[key][iso] = per[iso]; }\n        else if (tm[key][iso] !== per[iso]) { tm[key][iso] = null; }   // ambiguous - never used\n      }\n    }\n  }\n}\nif (rebuilding && tmPages > 0) { store.tm = tm; store.tm_built_at = Date.now(); }\n\nconst langs = c.LANGS[w.pid] || {};\nconst tmHits = [];\nconst aiUnits = [];\nconst skipped = [];\n\nfor (const k of targetKeys) {\n  const name = (k.key_name || {}).web || (k.key_name || {}).other || '';\n  if (k.is_archived) { skipped.push({ key: name, why: 'archived' }); continue; }\n  if (k.is_hidden) { skipped.push({ key: name, why: 'hidden' }); continue; }\n  const tags = k.tags || [];\n  let excluded = false;\n  for (const t of c.EXCLUDE_TAGS) { if (tags.indexOf(t) !== -1) { excluded = true; } }\n  if (excluded) { skipped.push({ key: name, why: 'tagged to_exclude' }); continue; }\n  if (k.is_plural) { skipped.push({ key: name, why: 'plural - not handled in v1' }); continue; }\n\n  let en = '';\n  const empty = [];\n  for (const t of (k.translations || [])) {\n    const s = txt(t.translation);\n    if (t.language_iso === 'en') { en = s; continue; }\n    if (langs[t.language_iso] === undefined) { continue; }\n    if (!s.trim()) { empty.push(t.language_iso); }\n  }\n  if (!en.trim()) { skipped.push({ key: name, why: 'empty EN source' }); continue; }\n  if (!empty.length) { skipped.push({ key: name, why: 'nothing empty' }); continue; }\n\n  const hit = tm[norm(en)] || {};\n  const gslice = [];\n  for (const g of glossary) {\n    let term = '';\n    for (const tr of (g.translations || [])) { if (tr.langIso === 'en' || tr.langId === 640) { term = tr.translation; } }\n    if (!term) { term = g.term || ''; }\n    if (!term) { continue; }\n    if (norm(en).indexOf(norm(term)) === -1) { continue; }\n    gslice.push(g);\n  }\n\n  for (const iso of empty) {\n    const cand = hit[iso];\n    if (cand) {\n      tmHits.push({ key_id: k.key_id, key: name, iso: iso, lang_id: langs[iso], text: cand, en: en });\n    } else {\n      const terms = [];\n      for (const g of gslice) {\n        for (const tr of (g.translations || [])) {\n          if (tr.langIso === iso && tr.translation) { terms.push((g.term || '') + ' = ' + tr.translation); }\n        }\n      }\n      aiUnits.push({ key_id: k.key_id, key: name, iso: iso, lang_id: langs[iso], en: en,\n        guide: c.GUIDES[iso] || '', glossary: terms.slice(0, 25), description: k.description || '', char_limit: k.char_limit || 0 });\n    }\n  }\n}\n\nreturn [{ json: { pid: w.pid, project_name: w.project_name, tm_hits: tmHits, ai_units: aiUnits, skipped: skipped,\n  tm_index_size: Object.keys(tm).length, tm_rebuilt: rebuilding && tmPages > 0, deferred: w.deferred } }];\n"
+      }
+    },
+    {
+      "id": "6357e4e7-5a11-4406-8eab-305d1585e841",
+      "name": "Build AI Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst c = $('Config').first().json;\nconst p = $('Plan Units').first().json;\nconst out = [];\nfor (const u of p.ai_units) {\n  const sys = 'You are a professional localisation translator working into ' + u.iso + '. Translate the English UI string exactly, obeying the style guide. Output ONLY the translation, no quotes, no commentary, no explanation. Preserve every placeholder, HTML tag and attribute unchanged, including surrounding spaces and punctuation. Never translate placeholder names or brand names. Preserve leading and trailing whitespace exactly as in the source. Match the source terminal punctuation: if the source ends with a full stop, so does your output; if it does not, yours must not either.';\n  let usr = 'STYLE GUIDE for ' + u.iso + ':\\n' + u.guide + '\\n\\n';\n  if (u.glossary.length) { usr += 'GLOSSARY - these renderings are mandatory and override the style guide:\\n' + u.glossary.join('\\n') + '\\n\\n'; }\n  if (u.description) { usr += 'CONTEXT for this string: ' + u.description + '\\n\\n'; }\n  if (u.char_limit) { usr += 'HARD CHARACTER LIMIT: ' + u.char_limit + '\\n\\n'; }\n  usr += 'KEY NAME (for context only, do not translate): ' + u.key + '\\n\\nENGLISH SOURCE:\\n' + u.en;\n  out.push({ json: { unit: u, body: { model: c.MODEL, max_tokens: 1000, temperature: 0.2,\n    messages: [ { role: 'system', content: sys }, { role: 'user', content: usr } ] } } });\n}\nif (!out.length) { return [{ json: { unit: null, body: null, nothing_to_generate: true } }]; }\nreturn out;\n"
+      }
+    },
+    {
+      "id": "3514edea-34a8-43f4-96e5-877602b71222",
+      "name": "Generate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1792,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "yra2iG8pnmCKhZIc",
+          "name": "Futuremedia - n8n project"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "fe2754f4-08a3-437c-8f68-553c39d9c3cd",
+      "name": "Gate And Group",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst c = $('Config').first().json;\nconst p = $('Plan Units').first().json;\nconst reqs = $('Build AI Requests').all();\nconst res = $input.all();\nconst proj = c.PROJECTS[p.pid];\n\nconst rejected = [];\nconst accepted = [];\n\nconst LATIN = /[A-Za-z]/;\nconst stripQ = function (s) { return s.replace(/[\"\\u201c\\u201d\\u00ab\\u00bb\\u201e\\u2018\\u2019']+$/, ''); };\nconst endPunct = function (s) { const t = stripQ(s.trim()); const ch = t.slice(-1); return /[.!?:;]/.test(ch) ? ch : ''; };\nconst tags = function (s) { const m = String(s).match(/<[^>]+>/g) || []; return m.slice().sort().join('|'); };\nconst phold = function (s) { const m = String(s).match(/\\[%[^\\]]+\\]|\\{\\{?[^}]+\\}?\\}|%[sd@]|%\\d+\\$[sd@]/g) || []; return m.slice().sort().join('|'); };\n\nfor (let i = 0; i < res.length; i++) {\n  const meta = (reqs[i] || { json: {} }).json;\n  if (!meta || !meta.unit) { continue; }\n  const u = meta.unit;\n  const r = res[i].json || {};\n  if (r.statusCode !== 200) { rejected.push({ key: u.key, iso: u.iso, why: 'model HTTP ' + r.statusCode }); continue; }\n  const body = r.body || {};\n  let outText = '';\n  try { outText = body.choices[0].message.content; } catch (e) { outText = ''; }\n  if (!outText || !String(outText).trim()) { rejected.push({ key: u.key, iso: u.iso, why: 'empty model output' }); continue; }\n  let t = String(outText);\n\n  // strip a wrapping quote pair the model sometimes adds\n  if (/^\".*\"$/.test(t.trim()) && !/^\".*\"$/.test(u.en.trim())) { t = t.trim().slice(1, -1); }\n\n  // whitespace repair rather than rejection\n  const lead = (u.en.match(/^\\s*/) || [''])[0];\n  const trail = (u.en.match(/\\s*$/) || [''])[0];\n  t = lead + t.trim() + trail;\n\n  // markup and placeholder fidelity - hard reject\n  if (tags(t) !== tags(u.en)) { rejected.push({ key: u.key, iso: u.iso, why: 'HTML tag signature changed' }); continue; }\n  if (phold(t) !== phold(u.en)) { rejected.push({ key: u.key, iso: u.iso, why: 'placeholder signature changed' }); continue; }\n\n  // untranslated passthrough, only for multi-word sources so single-word loanwords survive\n  const multi = u.en.trim().split(/\\s+/).length > 1;\n  if (multi && t.trim().toLowerCase() === u.en.trim().toLowerCase()) { rejected.push({ key: u.key, iso: u.iso, why: 'model returned the source unchanged' }); continue; }\n\n  // Thai must not come back in Latin script\n  if (u.iso === 'th' && LATIN.test(t.replace(/<[^>]+>/g, '').replace(/\\[%[^\\]]+\\]/g, ''))) {\n    rejected.push({ key: u.key, iso: u.iso, why: 'Latin script in Thai output' }); continue;\n  }\n\n  // terminal punctuation parity, Thai exempt because it takes no sentence-final period\n  if (u.iso !== 'th' && endPunct(t) !== endPunct(u.en)) {\n    rejected.push({ key: u.key, iso: u.iso, why: 'terminal punctuation differs from source' }); continue;\n  }\n\n  if (u.char_limit && t.length > u.char_limit) { rejected.push({ key: u.key, iso: u.iso, why: 'over char limit ' + u.char_limit }); continue; }\n\n  accepted.push({ key_id: u.key_id, key: u.key, iso: u.iso, lang_id: u.lang_id, text: t, kind: 'ai' });\n}\n\nfor (const h of p.tm_hits) { accepted.push({ key_id: h.key_id, key: h.key, iso: h.iso, lang_id: h.lang_id, text: h.text, kind: 'tm' }); }\n\n// CRITICAL: bulk PUT /keys keeps only ONE translations array per key_id. Sending the same\n// key twice for different locales makes the second silently vanish with HTTP 200.\n// So every locale for a key must be grouped under a single key entry.\nconst byKey = {};\nfor (const a of accepted) {\n  if (!byKey[a.key_id]) { byKey[a.key_id] = []; }\n  byKey[a.key_id].push({\n    language_iso: a.iso,\n    translation: a.text,\n    is_fuzzy: a.kind === 'ai',\n    is_reviewed: false,\n    custom_translation_status_ids: [ a.kind === 'tm' ? proj.tm : proj.ai ]\n  });\n}\nconst keys = [];\nfor (const kid of Object.keys(byKey)) { keys.push({ key_id: Number(kid), translations: byKey[kid] }); }\n\nconst tmCount = accepted.filter(function (a) { return a.kind === 'tm'; }).length;\nconst aiCount = accepted.filter(function (a) { return a.kind === 'ai'; }).length;\n\nreturn [{ json: {\n  pid: p.pid, project_name: p.project_name, dry_run: c.DRY_RUN,\n  url: 'https://api.lokalise.com/api2/projects/' + p.pid + '/keys',\n  payload: { keys: keys },\n  will_write: keys.length > 0 && !c.DRY_RUN,\n  counts: { tm: tmCount, ai: aiCount, keys: keys.length, rejected: rejected.length, skipped: p.skipped.length },\n  rejected: rejected, skipped: p.skipped, accepted: accepted,\n  tm_index_size: p.tm_index_size, tm_rebuilt: p.tm_rebuilt, deferred: p.deferred\n} }];\n"
+      }
+    },
+    {
+      "id": "2b902cef-d5eb-41bc-b400-1b7febae3ce1",
+      "name": "Write Lokalise",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2240,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2500
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "76ff56e4-1bee-46c5-95d0-ec8f9ed15143",
+      "name": "Verify And Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2464,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst g = $('Gate And Group').first().json;\nconst r = $input.first().json || {};\nconst store = $getWorkflowStaticData('global');\nif (!store.seen) { store.seen = {}; }\n\nconst confirmed = [];\nconst mismatched = [];\nif (g.will_write && r.statusCode === 200) {\n  const back = {};\n  for (const k of ((r.body || {}).keys || [])) {\n    for (const t of (k.translations || [])) { back[k.key_id + ':' + t.language_iso] = t.translation; }\n  }\n  for (const a of g.accepted) {\n    const got = back[a.key_id + ':' + a.iso];\n    if (got === a.text) { confirmed.push(a.key + ' [' + a.iso + ']'); }\n    else { mismatched.push({ key: a.key, iso: a.iso, sent: a.text, echoed: got === undefined ? '(absent)' : got }); }\n  }\n  // only mark a key seen once its write was echoed back correctly\n  for (const a of g.accepted) {\n    if (back[a.key_id + ':' + a.iso] === a.text) { store.seen[g.pid + ':' + a.key_id] = Date.now(); }\n  }\n}\n\nreturn [{ json: {\n  project: g.project_name,\n  dry_run: g.dry_run,\n  wrote: !!g.will_write,\n  http: r.statusCode === undefined ? null : r.statusCode,\n  counts: g.counts,\n  confirmed: confirmed.length,\n  mismatched: mismatched,\n  rejected: g.rejected,\n  skipped: g.skipped,\n  tm_index_size: g.tm_index_size,\n  tm_rebuilt: g.tm_rebuilt,\n  deferred_to_next_fire: g.deferred,\n  rollback_hint: 'to revert, set the listed key/locale pairs back to empty string'\n} }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Lokalise Event": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Normalize Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Event": {
+      "main": [
+        [
+          {
+            "node": "Has Work",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Work": {
+      "main": [
+        [
+          {
+            "node": "Build Fetch Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Fetch Plan": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lokalise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lokalise": {
+      "main": [
+        [
+          {
+            "node": "Plan Units",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan Units": {
+      "main": [
+        [
+          {
+            "node": "Build AI Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build AI Requests": {
+      "main": [
+        [
+          {
+            "node": "Generate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate": {
+      "main": [
+        [
+          {
+            "node": "Gate And Group",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gate And Group": {
+      "main": [
+        [
+          {
+            "node": "Write Lokalise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Lokalise": {
+      "main": [
+        [
+          {
+            "node": "Verify And Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "global": {
+      "seen": {}
+    }
+  },
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "XfQM9JA9LZsv8A2x",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-07T13:32:31.543Z",
+      "updatedAt": "2026-09-07T13:32:31.543Z"
+    }
+  ],
+  "activeVersion": null
+}
