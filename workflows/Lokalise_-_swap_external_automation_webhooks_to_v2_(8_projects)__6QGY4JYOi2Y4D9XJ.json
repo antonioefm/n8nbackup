@@ -1,0 +1,243 @@
+{
+  "id": "6QGY4JYOi2Y4D9XJ",
+  "name": "Lokalise - swap external automation webhooks to v2 (8 projects)",
+  "description": "Removes the six v1 external-automation webhooks and registers the v2 URL on all eight projects, adding QRcreate and WAPP Backend (emails). Reversible by deleting the returned webhook ids.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-07T14:15:16.820Z",
+  "updatedAt": "2026-09-07T14:15:16.820Z",
+  "isArchived": false,
+  "versionId": "285798f2-b000-412a-b396-41b6b0b97e5f",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "97d0c794-0337-4794-b1cc-a78ac117b57b",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "34205acb-cda1-4463-a152-4c1bb1702318",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Swaps the six v1 webhooks onto the v2 URL and adds the two new projects.\nconst V2 = 'https://efuturemedia.app.n8n.cloud/webhook/lokalise-external-fill-v2';\nconst EVENTS = ['project.key.added', 'project.keys.added', 'project.translation.updated', 'project.translations.updated'];\nconst B = 'https://api.lokalise.com/api2/projects/';\n// v1 webhook ids to remove\nconst OLD = [\n  ['Mobitrace','14240418673f52ae29a007.74392007','a472871f3ef9efaf49af761f0b85e69a8af377bf'],\n  ['Mobitrace - backend/emails','9274956467e3e224807498.79791832','534d93017280da2231731d4bc531bcf1b840d052'],\n  ['My Image - Backend','50011170688b3050b0a7f8.40995136','e5d75d86a85785511d33dd93e3257fe1c2d584a8'],\n  ['Unicopy','35679002689c4f3ba6dd50.31739712','d07c9b9c715dff4f0306144ccdad8bb81a66165e'],\n  ['Unicopy (backend)','1600517668d38be7f36ba4.51132642','01a1bb85fa76954ea1b3c4df5e9825c270146254'],\n  ['WAPP','4780438967fe077b4e6484.83742970','0845e3cfceed782dc4df1fdcdd736fcdbfca429d']\n];\nconst ALL = [\n  ['Mobitrace','14240418673f52ae29a007.74392007'],\n  ['Mobitrace - backend/emails','9274956467e3e224807498.79791832'],\n  ['My Image - Backend','50011170688b3050b0a7f8.40995136'],\n  ['Unicopy','35679002689c4f3ba6dd50.31739712'],\n  ['Unicopy (backend)','1600517668d38be7f36ba4.51132642'],\n  ['WAPP','4780438967fe077b4e6484.83742970'],\n  ['QRcreate','491848986923fad6dc2f85.42477363'],\n  ['WAPP Backend (emails)','1274536968b58980dc56a0.78363786']\n];\nconst out = [];\nfor (const o of OLD) { out.push({ json: { step: 'delete', name: o[0], method: 'DELETE', url: B + o[1] + '/webhooks/' + o[2], body: null } }); }\nfor (const a of ALL) { out.push({ json: { step: 'create', name: a[0], method: 'POST', url: B + a[1] + '/webhooks', body: { url: V2, events: EVENTS } } }); }\nreturn out;\n"
+      }
+    },
+    {
+      "id": "f545543c-d6b9-40e2-8dcb-9d462f3e9dba",
+      "name": "Delete Old",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1500
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "2342000c-7b2f-4bf6-9f39-e1e34fd30ec7",
+      "name": "Split Steps",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const reqs = $('Config').all();\nconst res = $input.all();\nconst delResults = [];\nconst creates = [];\nfor (let i = 0; i < reqs.length; i++) {\n  const m = reqs[i].json;\n  if (m.step === 'delete') {\n    const r = (res[i] || { json: {} }).json || {};\n    delResults.push({ project: m.name, status: r.statusCode });\n  }\n}\nfor (const q of reqs) { if (q.json.step === 'create') { creates.push({ json: { name: q.json.name, url: q.json.url, body: q.json.body, del: delResults } }); } }\nreturn creates;\n"
+      }
+    },
+    {
+      "id": "c2493eb9-0e8a-4b75-ab34-e42af38139ca",
+      "name": "Create New",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1500
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "a9f704fd-4c7b-49e6-ba00-8eccba6d02c5",
+      "name": "Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const reqs = $('Split Steps').all();\nconst res = $input.all();\nconst rows = [];\nfor (let i = 0; i < res.length; i++) {\n  const m = (reqs[i] || { json: {} }).json;\n  const r = res[i].json || {};\n  const b = r.body || {};\n  const w = b.webhook || null;\n  rows.push({ project: m.name, status: r.statusCode, webhook_id: w ? w.webhook_id : null, error: w ? null : JSON.stringify(b).slice(0, 200) });\n}\nreturn [{ json: { deleted: (reqs[0] || { json: {} }).json.del || [], created: rows } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Delete Old",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Old": {
+      "main": [
+        [
+          {
+            "node": "Split Steps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Steps": {
+      "main": [
+        [
+          {
+            "node": "Create New",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create New": {
+      "main": [
+        [
+          {
+            "node": "Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "6QGY4JYOi2Y4D9XJ",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-07T14:15:16.822Z",
+      "updatedAt": "2026-09-07T14:15:16.822Z"
+    }
+  ],
+  "activeVersion": null
+}
