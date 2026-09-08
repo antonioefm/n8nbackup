@@ -1,0 +1,164 @@
+{
+  "id": "Os0mRCRMVAw7Q0oC",
+  "name": "Lokalise - external automation discovery, 6 projects (read-only)",
+  "description": "READ-ONLY discovery for the planned external (n8n) automation covering Mobitrace, Mobitrace backend/emails, My Image - Backend, Unicopy, Unicopy (backend) and WAPP. Reports each project's languages with ids, custom translation statuses and whether they ar",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-07T13:17:00.214Z",
+  "updatedAt": "2026-09-07T13:17:00.214Z",
+  "isArchived": false,
+  "versionId": "695f2eda-5e2b-42f4-98f2-2062c038a08c",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "6ba9bac4-39a5-43c4-97dd-db96178f183c",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "254c5a3e-dd4e-44ad-8018-c33950d3d13a",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const P = [\n  ['Mobitrace','14240418673f52ae29a007.74392007'],\n  ['Mobitrace - backend/emails','9274956467e3e224807498.79791832'],\n  ['My Image - Backend','50011170688b3050b0a7f8.40995136'],\n  ['Unicopy','35679002689c4f3ba6dd50.31739712'],\n  ['Unicopy (backend)','1600517668d38be7f36ba4.51132642'],\n  ['WAPP','4780438967fe077b4e6484.83742970']\n];\nconst out = [];\nfor (const p of P) {\n  out.push({ json: { name: p[0], pid: p[1], kind: 'cts', url: 'https://api.lokalise.com/api2/projects/' + p[1] + '/custom_translation_statuses?limit=100' } });\n  out.push({ json: { name: p[0], pid: p[1], kind: 'langs', url: 'https://api.lokalise.com/api2/projects/' + p[1] + '/languages?limit=100' } });\n  out.push({ json: { name: p[0], pid: p[1], kind: 'stats', url: 'https://api.lokalise.com/api2/projects/' + p[1] + '?include_statistics=1&include_settings=1' } });\n  out.push({ json: { name: p[0], pid: p[1], kind: 'untranslated', url: 'https://api.lokalise.com/api2/projects/' + p[1] + '/keys?filter_untranslated=1&limit=1&page=1' } });\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "9d47107c-68d8-4b2e-8ffe-79356ad21a70",
+      "name": "Fetch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1500
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "a680023e-034d-4747-a069-f20c553ad36b",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const reqs = $('Config').all();\nconst res = $input.all();\nconst out = {};\nconst errors = [];\nfor (let i = 0; i < res.length; i++) {\n  const meta = (reqs[i] || { json: {} }).json;\n  const r = res[i].json || {};\n  const b = r.body || {};\n  if (!out[meta.name]) { out[meta.name] = { pid: meta.pid }; }\n  const o = out[meta.name];\n  if (r.statusCode !== 200) { errors.push(meta.name + ' ' + meta.kind + ' status ' + r.statusCode + ' ' + JSON.stringify(b).slice(0,150)); continue; }\n  if (meta.kind === 'cts') {\n    const m = {};\n    for (const s of (b.custom_translation_statuses || [])) { m[String(s.status_id)] = s.title; }\n    o.statuses = m;\n  } else if (meta.kind === 'langs') {\n    const l = [];\n    for (const x of (b.languages || [])) { l.push(x.lang_iso + ':' + x.lang_id); }\n    o.languages = l;\n  } else if (meta.kind === 'stats') {\n    const p = b.project || {};\n    const st = p.statistics || {};\n    o.key_count = st.key_count;\n    o.progress_total = st.progress_total;\n    o.custom_statuses_enabled = (p.settings || {}).custom_translation_statuses;\n    const per = [];\n    for (const l of (st.languages || [])) { if (l.words_to_do > 0) { per.push(l.language_iso + ':' + l.words_to_do); } }\n    o.words_to_do = per;\n  } else {\n    o.untranslated_keys = (r.headers || {})['x-pagination-total-count'];\n  }\n}\nreturn [{ json: { projects: out, errors: errors } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "Os0mRCRMVAw7Q0oC",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-07T13:17:00.218Z",
+      "updatedAt": "2026-09-07T13:17:00.218Z"
+    }
+  ],
+  "activeVersion": null
+}
