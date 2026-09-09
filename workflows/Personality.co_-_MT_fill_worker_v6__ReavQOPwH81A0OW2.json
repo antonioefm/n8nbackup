@@ -1,0 +1,421 @@
+{
+  "id": "ReavQOPwH81A0OW2",
+  "name": "Personality.co - MT fill worker v6",
+  "description": "WRITES. MT fill worker v6. Fixes the French guillemet false positive by trimming after stripping trailing quotes. Adds product, report and archetype vocabulary to the capitalisation protect list and exempts product-name sources from the title-case check. ",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-08T09:33:44.319Z",
+  "updatedAt": "2026-09-08T09:33:44.319Z",
+  "isArchived": false,
+  "versionId": "047888ec-4389-462c-ab03-79f9c5c06c7a",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "2027d324-88f3-4311-8d76-5eb6e44f33c9",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "976bbb7b-1c67-4b53-8223-5601d0acb1e1",
+      "name": "Fetch glossary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": false,
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "0e0651f7-35a3-40de-a031-f030e97da32c",
+      "name": "Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const BASE = \"https://api.lokalise.com/api2\";\nconst PID = \"31393214664f295f94dd86.76792605\";\nconst PAGES_TO_SCAN = 3;\nconst LANGS = [{iso:\"da\",id:767},{iso:\"de\",id:666},{iso:\"et\",id:10154},{iso:\"fr\",id:673},{iso:\"it\",id:734},{iso:\"lt\",id:10152},{iso:\"lv\",id:10153},{iso:\"nl\",id:737},{iso:\"no\",id:759},{iso:\"pl\",id:748},{iso:\"pt\",id:708},{iso:\"sv\",id:754},{iso:\"th\",id:753}];\nconst out = [];\nfor (const L of LANGS) {\n  for (let p = 1; p <= PAGES_TO_SCAN; p++) {\n    out.push({ json: { iso: L.iso, langId: L.id, page: p, pid: PID,\n      url: BASE + \"/projects/\" + PID + \"/keys?limit=200&page=\" + p\n        + \"&include_translations=1&filter_untranslated=1&filter_translation_lang_ids=640,\" + L.id } });\n  }\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "566a465f-84f4-4b53-847d-e07dba7cacb0",
+      "name": "Fetch keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": false,
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "7f438474-4d97-42b2-9d33-9c5798b5419c",
+      "name": "Build prompts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const CHUNK = 25;\nconst MAX_BATCHES = 40;\nconst MODEL = \"gpt-4o\";\nconst NL = String.fromCharCode(10);\n\nconst SHARED = [\n\"PRODUCT CONTEXT - Personality.co. A self-knowledge product: personality-type reports, trait reports (bipolar traits, OCD, sociopathy, psychopathy, neurodivergence, anxiety), archetype profiles and Enneagram content. Register is warm, direct, non-clinical self-care advice. Never diagnostic, never clinical-sounding, never anything that reads as replacing therapy. Trait levels describe tendencies, not conditions.\",\n\"The test asks the user to select a gender at the start, and then serves either the masculine or the feminine archetype set. Both sets are live in production. Report names such as Male Archetype Report and Female Archetype Report are PRODUCT NAMES and keep the capitalisation your language gives to product names.\",\n\"Describe a personality type as a group and name the group rather than using a bare pronoun. Lead with the strength before the limitation. The test has no questions to answer - use the product framing of statements or prompts.\",\n\"KEY NAMESPACE DETERMINES REGISTER. components::members::profile::CODE::level_N::* is trait-report body prose: full sentences with final punctuation. A key ending ::name is a short label: no final period. ::growth_and_balance::N::title is a heading: no final period. ::content::start and ::content::end are the lead-in and closing sentence around a list: keep the trailing colon or full stop exactly as in the source. ::content::list::N is a bullet fragment: never expand it into a full sentence and add no final period unless the source has one. Match the sub-register of each list. components::modals::* and components::global::* are UI strings. email_templates::* is email copy. pages::landing::* and pages::get_results::* are marketing copy and may be freer.\",\n\"ARCHETYPE GENDER. Keys prefixed ma_ are the MASCULINE archetype set. The unprefixed set - maiden, queen, mystic, nurturer, lover, rebel, sage, warrior - is FEMININE. Four names are identical in English across both sets: The Lover, The Rebel, The Sage, The Warrior. Where the language marks gender, render a ma_ key in the masculine and an unprefixed key in the feminine. Where the language does not mark gender, translate faithfully and do not invent a distinction. Archetype names must be TRANSLATED, never left in English.\",\n\"TAGS INSIDE WORDS. Some strings contain the empty pair <nonLinkPeriod></nonLinkPeriod> in the middle of the brand name, as in personality<nonLinkPeriod></nonLinkPeriod>co. It renders the dot in personality.co. You MUST reproduce that tag pair in exactly the same position inside the brand name in your translation. Do not write personality.co as plain text and do not drop the tags.\",\n\"LOANWORDS. Some single-word UI labels are the same word in the target language - Stress, Timer, Checklist and similar are borrowed wholesale into the Germanic and several other languages. Where the correct translation genuinely is the English word, use it.\",\n\"WHITESPACE. Some source strings end with a single trailing space because they concatenate with a list or another fragment at runtime. If the source ends with a space, your translation MUST end with a space too. If the source does not, yours must not either.\",\n\"CAPITALISATION - THE MOST FREQUENT FAILURE. The English source writes headings and short labels in Title Case With Every Word Capitalised. That is an English convention and must NEVER be carried across. The strings most at risk are the short ones - keys ending ::name and ::title. Treat every such heading as prose: apply your language's ordinary capitalisation rules to it exactly as if it appeared mid-paragraph. Worked examples are in your style guide below. Proper nouns, brand names and product or report names keep their capitals.\",\n\"HARD RULES. Copy every placeholder exactly and never translate a placeholder name. Copy every HTML tag and attribute exactly, adding and removing none. Never use the ellipsis character or the non-breaking hyphen U+2011; where the source has three periods, write three periods. Never invent content - if the source is a fragment the translation stays a fragment. The glossary overrides the style guide. Return the translation only, with no commentary.\"\n].join(\" \");\n\nconst G = {\nda: \"Danish. Address the user as du, never De. Informal, helpful, engaging yet professional; active voice. Clarity over literalness - rephrase freely so it reads as Danish. Avoid noun-heavy phrasing and over-use of possessive pronouns. Exclamation marks and superlatives sparingly. Gender-neutral wording where possible, so ophavsperson rather than ophavsmand. CAPITALISATION: normal Danish orthography - a capital on the first word only, plus proper nouns and product names. Danish does NOT capitalise nationality adjectives, language names, weekdays or months. WORKED EXAMPLES for headings: Moderate Emotional Detachment becomes Moderat folelsesmaessig distance, NOT Moderat Folelsesmaessig Distance. Low Empathy and Emotional Responsiveness becomes Lav empati og folelsesmaessig responsivitet. Buttons and CTAs: imperative. Descriptive headlines: infinitive. UI element names: capitalise the first letter only and use NO quotation marks even if the source has them. QUOTES: straight ASCII double quotation marks. Traditional comma. Full stop on complete sentences, none in headlines. Hyphen for ranges, never an em dash.\",\nde: \"German. Duzen everywhere including emails, system messages and legal text; never Sie. du, dir, dich and dein lowercase except sentence-initial. Generisches Maskulin - no gender star, no gender colon, no Binnen-I, no double naming. Short sentences, not nested clauses. Neue Deutsche Rechtschreibung with the sharp s, not the Swiss ss. CAPITALISATION: normal German orthography - ALL nouns and nominalised forms are capitalised, while adjectives, verbs, adverbs and pronouns stay lowercase unless sentence-initial. Do NOT copy English title case. WORKED EXAMPLES: Controlled Emotional Experience becomes Kontrolliertes emotionales Erleben, NOT Kontrolliertes Emotionales Erleben. Increasing Strategic Awareness becomes Wachsendes strategisches Bewusstsein. German low-high quotation marks only, and the sentence period goes OUTSIDE the closing quote. Plain spaces only - no U+00A0 anywhere. Konto not Account; E-Mail; QR-Code hyphenated including in compounds. In this product use Mitgliedschaft, not Abonnement. Brand names never translated or inflected. Keep English only where established: Dashboard, Support, Upload, Download, Stress. Decimal comma; dates as 3. Maerz 2025; price symbol after the number. Buttons and labels: infinitive. Full CTA sentences and instructions: du-imperative. No final period on labels, buttons or headings; a period on full sentences including error messages. Subordinate clauses with um zu, indem or damit need a preceding comma - prefer a coordinated und plus imperative instead.\",\net: \"Estonian. Address the user as sina. Informal yet professional, helpful and engaging; avoid colloquialisms. Prioritise clarity and readability - avoid long sentences and word-for-word rendering. Active voice. CAPITALISATION: normal Estonian orthography - a capital on the first word only, plus proper nouns and product names. Estonian does NOT capitalise nationality adjectives, language names, weekdays or months. WORKED EXAMPLES: Strong Emotional Detachment becomes Tugev emotsionaalne eemalolek, NOT Tugev Emotsionaalne Eemalolek. UI elements: capitalise the first letter AND enclose in Estonian low-high quotation marks. Buttons and CTAs: imperative. No full stop at the end of a headline. Hyphen in compounds, en dash in numeric ranges. Times in 24-hour format with a period separator.\",\nfr: \"French. Address the user as vous. Clear and concise, never literal - always reach for idiomatic phrasing. Exclamation marks only occasionally. Aim for gender-neutral epicene wording; where impossible and you are addressing the user directly, add the feminine mark in parentheses. CAPITALISATION - French does not work on the English title-case-versus-sentence-case axis and neither term applies. Apply French orthography: a capital on the first word of a sentence or heading, and on proper nouns. IN ADDITION, in a title or name that opens with a definite article (le, la, les), French capitalises the first substantive after that article, together with any adjective before it. WORKED EXAMPLES: Increasing Strategic Awareness becomes Conscience stratégique croissante, NOT Conscience Stratégique Croissante. But The Seeker of Possibility becomes Le Chercheur de possibilités, and The Great Transformation becomes La Grande Transformation. Archetype and personality-type names follow that article rule. Nationality adjectives, language names, weekdays and months stay lowercase. The nine Enneagram type names are lowercase; Enneagramme itself is capitalised. Capital letters ALWAYS carry their accents. Headers: imperative. Buttons: infinitive. Avoid long sentences, stacked adjectives and repetition. Prefer the definite article over possessive adjectives. Mandatory non-breaking space before a colon, semicolon, question mark and exclamation mark. French angle quotation marks with non-breaking spaces inside them; where the English closes a quoted sentence with a period inside the quotes, French keeps the period inside the guillemets too. Straight apostrophes. Never the ampersand - write et in full. Comma for decimals, non-breaking space as thousands separator and before the currency symbol. Headlines take no period. Numbers under ten spelled out unless the source uses numerals.\",\nit: \"Italian. Address the user informally as tu. Friendly, inclusive, respectful and optimistic. CTAs and buttons: imperative. Avoid long or complex sentences, stacked adjectives and repetition. Prefer wording that works for both genders by rephrasing; only where no periphrasis works, use the o/a form. CAPITALISATION: normal Italian orthography - a capital on the first word only, plus proper nouns and product names. Italian does NOT capitalise nationality adjectives, language names, weekdays or months. WORKED EXAMPLES: Controlled Emotional Experience becomes Esperienza emotiva controllata, NOT Esperienza Emotiva Controllata. Increasing Strategic Awareness becomes Consapevolezza strategica crescente. Lower Guilt Response becomes Risposta di colpa inferiore. Accented capitals always. High double quotation marks, with the period or comma OUTSIDE the quotes. Localise dates to DD/MM/YY and currency to the amount followed by the symbol with a decimal comma. Numbers one to ten spelled out where space allows. Keep the copy close to the source character count or shorter.\",\nlt: \"Lithuanian. Semi-formal - address the reader as jus, LOWERCASE j, never capitalised. Otherwise friendly and conversational, with short clear sentences. Translate creatively so the Lithuanian reads as if written from scratch. CAPITALISATION: normal Lithuanian orthography - a capital on the first word only, plus proper nouns and product names. Lithuanian does NOT capitalise nationality adjectives, language names, weekdays or months. WORKED EXAMPLES: Strong Emotional Detachment becomes Stiprus emocinis atsiribojimas, NOT Stiprus Emocinis Atsiribojimas. Buttons: infinitive. Lithuanian low-high quotation marks, period OUTSIDE the closing quote. Product names in quotation marks inside a sentence, none when standing alone. Decimal comma; currency symbol after the number with a non-breaking space. En dash, not em dash.\",\nlv: \"Latvian. Formal address - jus, LOWERCASE j, never capitalised. Avoid over-use of pronouns, especially possessives. Aim for a creative rendering that reads as an original Latvian text. CAPITALISATION: normal Latvian orthography - a capital on the first word only, plus proper nouns and product names. Latvian does NOT capitalise nationality adjectives, language names, weekdays or months. WORKED EXAMPLES: Strong Emotional Detachment becomes Speciga emocionala distancesanas, NOT Speciga Emocionala Distancesanas. Titles: substantive or imperative, never followed by a period. Buttons and links: infinitive. Progress messages: indicative. No quotation marks around references to UI elements unless the syntax demands it. En dashes, NEVER em dashes. Latvian curly quotation marks. Never use variable gender endings.\",\nnl: \"Dutch. Informal you - jij and jouw, not the formal u. Warm, welcoming, engaging, informal but still professional. Paraphrasing is permitted for better style. Dutch borrows many English UI words wholesale - Timers, Checklists, Stress stay as they are. CAPITALISATION - this locale gets it wrong more than any other, so apply it deliberately. Normal Dutch orthography: a capital on the first word only, plus proper nouns and product names. Dutch does not capitalise weekdays, months or language names, though nationality adjectives are capitalised. WORKED EXAMPLES, real errors to avoid: Strong Emotional Detachment becomes Sterke emotionele afstandelijkheid, NOT Sterke Emotionele Afstandelijkheid. Low Empathy and Emotional Responsiveness becomes Lage empathie en emotionele responsiviteit. Moderate Emotional Detachment becomes Gemiddelde emotionele afstandelijkheid. High Composure Under Pressure becomes Hoge kalmte onder druk. Flexible Boundaries and Rules becomes Flexibele grenzen en regels. Early Strategic Awareness becomes Vroege strategische bewustwording. CTAs: imperative. Buttons: infinitive. Follow Van Dale and Woordenlijst.org. Type names are not straightforward translations - follow the glossary.\",\nno: \"Norwegian. Address the user as du. The formal form to avoid is De - Norwegian has no singular ni, so never reason from Swedish here. Informal, helpful, engaging yet professional; active voice. Clarity and readability first. Avoid noun-heavy phrasing and over-use of possessive pronouns. Exclamation marks and superlatives sparingly. Gender-neutral wording where possible, so talsperson rather than talsmann. CAPITALISATION: normal Norwegian orthography - a capital on the first word only, plus proper nouns and product names. Norwegian does NOT capitalise nationality adjectives, language names, weekdays or months. WORKED EXAMPLES: Strong Emotional Detachment becomes Sterk emosjonell distanse, NOT Sterk Emosjonell Distanse. UI element names: capitalise the first letter only and use NO quotation marks even if the source has them. QUOTES: Norwegian angle quotation marks only. En dash for ranges. Buttons and CTAs: imperative. Descriptive headlines: infinitive. Full stop on complete sentences, none in headlines.\",\npl: \"Polish. Address the user in the second person singular. Prefer gender-neutral forms, using impersonal constructions where a gendered verb form would otherwise be needed. Avoid the English passive. Avoid exclamation marks. CAPITALISATION: normal Polish orthography - a capital on the first word only, plus proper nouns and product names. Polish does NOT capitalise nationality adjectives, language names, weekdays or months. WORKED EXAMPLES: Strong Emotional Detachment becomes Silny dystans emocjonalny, NOT Silny Dystans Emocjonalny. Do not copy English capitalisation in UI names. Polish low-high quotation marks, period OUTSIDE the closing quote. En dash rather than a hyphen where a dash is meant. Decimal comma. Non-breaking space every three digits above four figures and between a number and a unit; no space before a percent sign. Ordinals take a period after the numeral. Dates as DD/MM/YYYY; 24-hour clock.\",\npt: \"Portuguese, BRAZILIAN variety - not European. Use voce and seu, and Brazilian vocabulary: usuario not utilizador, assinatura not subscricao, arquivo not ficheiro, site not sitio, tela not ecra, baixar not descarregar, registro not registo, acessar not aceder. Post-1990-reform spelling: objetivo, atividade, contato, direcao, efetua. Tone is confident and helpful - authoritative, formal but friendly. CAPITALISATION: capitalise ONLY the first word of a header, title or button, plus proper nouns. Every other word goes lowercase, including adjectives and nouns. WORKED EXAMPLES: Very High Antisocial Traits becomes Tracos antissociais muito altos, NOT Tracos Antissociais Muito Altos. Attention and Focus Variability becomes Variabilidade de atencao e foco. Do not capitalise weekdays, months or language names. BUT PRODUCT AND REPORT NAMES KEEP THEIR CAPITALS: the brand Personality and Personality.co; the products Teste de Personalidade, Teste do Eneagrama, Teste de Carreira; the reports Relatorio de Personalidade, Relatorio de Arquetipo Masculino, Relatorio de Arquetipo Feminino, Relatorio de Tracos Neurodivergentes and the same pattern for any other Relatorio de X; the archetype names Arquetipo Masculino and Arquetipo Feminino; and Politica de Privacidade, Termos de Uso and Area de Membros. A bare reference to a test or a report is lowercase. Personality-type names keep their capitals as names. Write gender-neutrally and avoid parenthesised articles such as do(a). Dates as dd/mm/yyyy, long form as 17 de fevereiro de 2024. Decimal comma, thousands separated by a dot. Space between a number and its unit. Numbers one to ten spelled out in running text.\",\nsv: \"Swedish. Address the user as du, never the singular ni. Informal, helpful, engaging yet professional; active voice. Clarity and readability first. Avoid noun-heavy phrasing and over-use of possessive pronouns. Exclamation marks and superlatives sparingly. Gender-neutral wording where possible, so upphovsperson rather than upphovsman. CAPITALISATION: normal Swedish orthography - a capital on the first word only, plus proper nouns and product names. Swedish does NOT capitalise nationality adjectives, language names, weekdays or months. WORKED EXAMPLES: Strong Emotional Detachment becomes Stark emotionell distans, NOT Stark Emotionell Distans. UI element names: capitalise the first letter only and use NO quotation marks even if the source has them. QUOTES: the right-hand double quotation mark on BOTH sides. En dash for ranges. Buttons and CTAs: imperative. Descriptive headlines: infinitive. Full stop on complete sentences, none in headlines.\",\nth: \"Thai. Semi-formal, approachable and professional. Thai has no letter case, so capitalisation rules do not apply - but you must still TRANSLATE, never leave English words standing in the Thai text. Archetype names, trait names and clinical-sounding terms are all translated into Thai. The only English permitted is the product name Personality where it is used as the brand. To introduce a personality type use the aspect word followed by the number, and the person-of-type form when referring to someone of that type. Leave a space after the repetition mark and none before it. Passive constructions exist in Thai but must not feel unnatural. Arabic numerals for numbers, except where the English source writes one, two or three, then use the Thai word. Keep button and navigation wording consistent. Use straightforward Thai for technical terms, following Royal Society transliteration for loanwords. Thai does not end sentences with a period, so no terminal punctuation is added.\"\n};\n\nconst PUNCT_EXEMPT = { th: true, ko: true };\n\nconst gr = $('Fetch glossary').first().json || {};\nconst gb = gr.body !== undefined ? gr.body : gr;\nconst GLOSS = {};\nfor (const t of (gb.data || gb.glossary_terms || [])) {\n  const term = (t.term || '').trim();\n  if (term.length < 3) continue;\n  const noTx = t.translatable === false || t.forbidden === true;\n  for (const tr of (t.translations || [])) {\n    const iso = tr.langIso || tr.lang_iso;\n    if (!iso) continue;\n    if (!GLOSS[iso]) GLOSS[iso] = {};\n    if (noTx) GLOSS[iso][term] = \"KEEP IN ENGLISH, do not translate\";\n    else { const v = (tr.translation || '').trim(); if (v) GLOSS[iso][term] = v; }\n  }\n}\n\nconst items = $input.all();\nconst plans = $('Plan').all().map(p => p.json);\nconst byLang = {};\nconst JUNK = /^\\s*(<p>)?\\s*(test[\\s_0-9]*|test text|test_key|question|englishtext)\\s*(<\\/p>)?\\s*$/i;\nfor (let i = 0; i < items.length; i++) {\n  const r = items[i].json || {};\n  const b = r.body !== undefined ? r.body : r;\n  const P = plans[i];\n  if (!P || !Array.isArray(b.keys)) continue;\n  if (!byLang[P.iso]) byLang[P.iso] = { iso: P.iso, langId: P.langId, pid: P.pid, rows: [], seen: {} };\n  const A = byLang[P.iso];\n  for (const k of b.keys) {\n    if (k.is_archived) continue;\n    if (A.seen[k.key_id]) continue;\n    const kn = (k.key_name && (k.key_name.web || k.key_name.other)) || '';\n    if (!kn) continue;\n    let src = '', hasTarget = false, targetEmpty = false;\n    for (const t of (k.translations || [])) {\n      if (t.language_iso === 'en') { src = t.translation || ''; continue; }\n      if (t.language_iso === P.iso) { hasTarget = true; targetEmpty = !t.translation || String(t.translation).trim() === ''; }\n    }\n    if (!hasTarget || !targetEmpty) continue;\n    if (!String(src).trim()) continue;\n    if (JUNK.test(src)) continue;\n    A.seen[k.key_id] = true;\n    A.rows.push({ id: k.key_id, k: kn, s: src });\n  }\n}\n\nconst perLang = [];\nfor (const iso of Object.keys(byLang)) {\n  const L = byLang[iso];\n  const chunks = [];\n  for (let i = 0; i < L.rows.length; i += CHUNK) chunks.push(L.rows.slice(i, i + CHUNK));\n  perLang.push({ L: L, chunks: chunks });\n}\nconst ordered = [];\nconst depth = Math.max.apply(null, perLang.map(p => p.chunks.length).concat([0]));\nfor (let d = 0; d < depth && ordered.length < MAX_BATCHES; d++) {\n  for (const p of perLang) {\n    if (ordered.length >= MAX_BATCHES) break;\n    if (p.chunks[d]) ordered.push({ L: p.L, chunk: p.chunks[d] });\n  }\n}\n\nconst out = [];\nfor (const o of ordered) {\n  const iso = o.L.iso, chunk = o.chunk;\n  const gl = GLOSS[iso] || {};\n  const glLines = Object.keys(gl)\n    .filter(t => chunk.some(c => c.s.toLowerCase().indexOf(t.toLowerCase()) > -1))\n    .slice(0, 60)\n    .map(t => '- ' + t + ' = ' + gl[t]);\n  const system = SHARED + NL + NL + 'TARGET LANGUAGE STYLE GUIDE' + NL + (G[iso] || '')\n    + (glLines.length ? NL + NL + 'GLOSSARY, binding, overrides the style guide' + NL + glLines.join(NL) : '')\n    + NL + NL + 'Return ONLY a JSON object shaped {\"t\":[{\"i\":0,\"v\":\"translation\"}]} with exactly one entry per input item, in order, using the same i values.';\n  const user = JSON.stringify(chunk.map((c, n) => ({ i: n, key: c.k, src: c.s })));\n  out.push({ json: {\n    iso: iso, langId: o.L.langId, pid: o.L.pid,\n    ids: chunk.map(c => c.id), srcs: chunk.map(c => c.s), keys: chunk.map(c => c.k),\n    glossaryTermsUsed: glLines.length,\n    punctExempt: !!PUNCT_EXEMPT[iso],\n    body: { model: MODEL, temperature: 0.2,\n      response_format: { type: 'json_object' },\n      messages: [ { role: 'system', content: system }, { role: 'user', content: user } ] }\n  }});\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "7049a9af-a815-4e74-afb3-68ee2a2414ca",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const all = $input.all().map(i => i.json).filter(a => a && a.iso);\nconst perLang = {}; const reasons = {}; const samples = []; const apiErrors = [];\nlet req = 0, acc = 0, rej = 0, conf = 0, rep = 0;\nfor (const a of all) {\n  if (!perLang[a.iso]) perLang[a.iso] = { requested: 0, accepted: 0, rejected: 0, repaired: 0, confirmed: 0 };\n  const P = perLang[a.iso];\n  P.requested += a.requested || 0; P.accepted += a.accepted || 0;\n  P.rejected += a.rejected || 0; P.repaired += a.repaired || 0;\n  P.confirmed += a.confirmed_mt_to_review || 0;\n  req += a.requested || 0; acc += a.accepted || 0; rej += a.rejected || 0;\n  rep += a.repaired || 0; conf += a.confirmed_mt_to_review || 0;\n  for (const x of (a.rejects || [])) {\n    for (const rs of x.reasons) reasons[rs.split(':')[0]] = (reasons[rs.split(':')[0]] || 0) + 1;\n    if (samples.length < 30) samples.push({ iso: a.iso, key: x.key, src: x.src, out: x.out, reasons: x.reasons });\n  }\n  if (a.lokaliseStatus !== 200 || (a.lokaliseErrors || []).length || a.parseErr || a.rawError) {\n    apiErrors.push({ iso: a.iso, lokalise: a.lokaliseStatus, openai: a.openaiStatus, parseErr: a.parseErr, errors: a.lokaliseErrors, raw: a.rawError });\n  }\n}\nreturn [{ json: {\n  run_at: new Date().toISOString(),\n  batches: all.length, requested: req, accepted: acc, rejected: rej, repaired: rep,\n  confirmed_written_mt_to_review: conf,\n  reject_rate_pct: req ? Math.round(1000 * rej / req) / 10 : 0,\n  reject_reasons: reasons, per_language: perLang,\n  api_errors: apiErrors, reject_samples: samples\n} }];"
+      }
+    },
+    {
+      "id": "3d03c0e4-a23a-4f3b-a1da-fe76d4d202c2",
+      "name": "Generate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1344,
+        192
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "yra2iG8pnmCKhZIc",
+          "name": "Futuremedia - n8n project"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "d64de3a6-0372-42b8-a9db-8cf1712acc84",
+      "name": "Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const MT_TO_REVIEW = 29251;\nconst r = $input.first().json || {};\nconst b = r.body !== undefined ? r.body : r;\nconst ctx = $('Batch loop').first().json;\nconst iso = ctx.iso;\n\nconst PH = /%[sd]|%\\d+\\$[sd]|\\{\\{[^}]*\\}\\}|\\{[^}]*\\}|\\[%[^\\]]*\\]|%LANG_ISO%/g;\nconst TAG = /<[^>]+>/g;\nconst TRAILQ = /[\"'\\u00AB\\u00BB\\u201C\\u201D\\u201E\\u201F\\u2018\\u2019\\u201A\\u203A\\u2039]+$/;\nconst NONLATIN = { th: true, ko: true };\nconst NOCASECHECK = { de: true, fr: true, th: true, ko: true };\n// Product, report and archetype names keep their capitals in every locale, so\n// their component words must not count toward a title-case verdict.\nconst PROTECT = /^(Personality|Personality\\.co|Enneagram\\w*|Eneagrama|Enn[ée]agramm?e?|OCD|QR|PDF|DNT|Apple|Android|Google|Teste|Test|Rapport|Rapporto|Relat[óo]rio|Informe|Bericht|Arqu[ée]tipo|Arquetipo|Archetype|Ark[ei]typ\\w*|Arketipo|Feminino|Masculino|F[ée]minin\\w*|Masculin\\w*|Pol[íi]tica|Termos|[ÁA]rea|Privacidade|Uso|Membros|Carreira|Personalidade)$/;\nconst ALLOWED_LATIN = /^(Personality|Personality\\.co|OCD|QR|PDF|DNT|Apple|Android|Google|iOS|AI)$/i;\n// A source that names a product or report is exempt from the title-case check\n// entirely - its capitals are the product name, not English convention.\nconst PRODUCT_NAME_SRC = /\\b(Report|Archetype|Assessment|Test|Guide)\\b/;\n\nfunction ms(s, re) { return ((s || '').match(re) || []).slice().sort().join('|'); }\nfunction strip(s) { return String(s || '').replace(TAG, ' ').replace(PH, ' '); }\nfunction words(s) { return String(s || '').trim().split(/\\s+/).filter(Boolean).length; }\n// Strip trailing quotes THEN trim again: French closes with a space before the\n// guillemet, which would otherwise be read as the final character.\nfunction lastMeaningful(s) { return String(s || '').trim().replace(TRAILQ, '').trim().slice(-1); }\nfunction toks(s) { const o = []; const re = /\\S+/g; let m; while ((m = re.exec(String(s || ''))) !== null) o.push([m[0], m.index]); return o; }\nfunction core(t) { return t.replace(/^[^\\p{L}]+|[^\\p{L}]+$/gu, ''); }\nfunction isCap(w) { const f = w.charAt(0); return f === f.toUpperCase() && f !== f.toLowerCase(); }\nfunction starts(tk) {\n  const S = { 0: true };\n  for (let i = 1; i < tk.length; i++) {\n    const p = tk[i - 1][0];\n    if (/[.!?:;]$/.test(p) || /[\\u25cf\\u2022\\u25aa>]$/.test(p) || /^\\(\\s*[\\p{L}\\d]{1,3}\\s*\\)$/u.test(p) || /^\\d+[.)]$/.test(p) || /^<[^>]*>$/.test(p)) S[i] = true;\n  }\n  return S;\n}\nfunction capProfile(s) {\n  const tk = toks(strip(s)), S = starts(tk);\n  let caps = 0, wc = 0;\n  for (let i = 0; i < tk.length; i++) {\n    if (S[i]) continue;\n    const c = core(tk[i][0]);\n    if (!c || c.length < 2 || c === c.toUpperCase()) continue;\n    if (PROTECT.test(c)) continue;\n    wc++;\n    if (isCap(c)) caps++;\n  }\n  return { caps: caps, words: wc };\n}\n\nlet parsed = null, parseErr = null;\ntry { parsed = JSON.parse(((b.choices || [])[0] || {}).message.content); }\ncatch (e) { parseErr = String(e).slice(0, 200); }\n\nconst byIdx = {};\nfor (const e of (parsed && Array.isArray(parsed.t) ? parsed.t : [])) {\n  if (e && typeof e.i === 'number') byIdx[e.i] = e.v;\n}\n\nconst accepted = [], rejected = [], repaired = [];\nfor (let n = 0; n < ctx.ids.length; n++) {\n  const src = ctx.srcs[n], key = ctx.keys[n], id = ctx.ids[n];\n  let v = byIdx[n];\n  const fail = [];\n  const fixes = [];\n  if (typeof v !== 'string' || !v.trim()) fail.push('missing or empty');\n  else {\n    if (src.slice(-1) === ' ' && v.slice(-1) !== ' ') { v = v + ' '; fixes.push('restored trailing space'); }\n    else if (src.slice(-1) !== ' ' && v.slice(-1) === ' ') { v = v.replace(/\\s+$/, ''); fixes.push('trimmed trailing space'); }\n    if (src.charAt(0) === ' ' && v.charAt(0) !== ' ') { v = ' ' + v; fixes.push('restored leading space'); }\n    else if (src.charAt(0) !== ' ' && v.charAt(0) === ' ') { v = v.replace(/^\\s+/, ''); fixes.push('trimmed leading space'); }\n\n    if (ms(src, PH) !== ms(v, PH)) fail.push('placeholder mismatch');\n    if (ms(src, TAG) !== ms(v, TAG)) fail.push('html mismatch');\n    if (v.indexOf('\\u2011') > -1 || v.indexOf('\\u2026') > -1) fail.push('withdrawn character');\n    if (v.trim() === src.trim() && words(src) >= 2) fail.push('untranslated passthrough');\n    if (NONLATIN[iso]) {\n      const runs = strip(v).match(/[A-Za-z][A-Za-z.\\-]{2,}/g) || [];\n      const bad = runs.filter(x => !ALLOWED_LATIN.test(x.replace(/[.\\-]+$/, '')));\n      if (bad.length) fail.push('untranslated Latin text: ' + bad.slice(0, 4).join(' '));\n    }\n    if (!NOCASECHECK[iso] && !PRODUCT_NAME_SRC.test(src)) {\n      const S = capProfile(src), T = capProfile(v);\n      const srcTitle = S.caps >= 2 && S.words >= 2 && S.caps / S.words >= 0.5;\n      if (srcTitle && T.caps >= 2 && T.words >= 2 && T.caps / T.words >= 0.5) fail.push('English title case carried over');\n    }\n    const se = lastMeaningful(src);\n    const ve = lastMeaningful(v);\n    if (!ctx.punctExempt) {\n      if ((se === '.' || se === ':') && ve !== se) fail.push('terminal punctuation dropped');\n      if ('.:'.indexOf(se) === -1 && '.:'.indexOf(ve) > -1) fail.push('terminal punctuation added');\n    }\n    if (v.length > Math.max(400, src.length * 3.5)) fail.push('length runaway');\n  }\n  if (fail.length) rejected.push({ key_id: id, key: key, src: src.slice(0, 140), out: (typeof v === 'string' ? v.slice(0, 140) : null), reasons: fail });\n  else {\n    accepted.push({ key_id: id, translation: v });\n    if (fixes.length) repaired.push({ key_id: id, key: key, fixes: fixes });\n  }\n}\n\nconst payload = { keys: accepted.map(a => ({\n  key_id: a.key_id,\n  translations: [{ language_iso: iso, translation: a.translation,\n    is_reviewed: false, is_fuzzy: true, custom_translation_status_ids: [MT_TO_REVIEW] }]\n})) };\n\nreturn [{ json: {\n  iso: iso, pid: ctx.pid, glossaryTermsUsed: ctx.glossaryTermsUsed,\n  requested: ctx.ids.length, accepted: accepted.length, rejected: rejected.length,\n  repaired: repaired.length, repairs: repaired.slice(0, 10),\n  parseErr: parseErr, openaiStatus: r.statusCode, rejects: rejected,\n  url: 'https://api.lokalise.com/api2/projects/' + ctx.pid + '/keys',\n  payload: accepted.length ? payload : { keys: [] }\n} }];"
+      }
+    },
+    {
+      "id": "5a5bf55f-31db-499c-bb32-0f3472266ce1",
+      "name": "Write Lokalise",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1792,
+        192
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1500
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "7a51f279-4841-4c35-88a8-f5767ef28bc5",
+      "name": "Tally",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        272
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const r = $input.first().json || {};\nconst b = r.body !== undefined ? r.body : r;\nconst v = $('Validate').first().json;\nconst keys = Array.isArray(b.keys) ? b.keys : [];\nlet confirmed = 0;\nfor (const k of keys) {\n  for (const t of (k.translations || [])) {\n    if (t.language_iso !== v.iso) continue;\n    const st = (t.custom_translation_statuses || []).map(s => s.status_id);\n    if (t.translation && t.is_fuzzy === true && st.indexOf(29251) > -1) confirmed++;\n  }\n}\nreturn [{ json: {\n  iso: v.iso, requested: v.requested, accepted: v.accepted, rejected: v.rejected,\n  repaired: v.repaired, glossaryTermsUsed: v.glossaryTermsUsed, keys_returned: keys.length,\n  confirmed_mt_to_review: confirmed, openaiStatus: v.openaiStatus, parseErr: v.parseErr,\n  lokaliseStatus: r.statusCode, lokaliseErrors: Array.isArray(b.errors) ? b.errors : [],\n  rawError: (v.accepted > 0 && keys.length === 0) ? JSON.stringify(b).slice(0, 400) : null,\n  rejects: v.rejects\n} }];"
+      }
+    },
+    {
+      "id": "4ef61923-6ac5-4ca7-b945-80ba3b23c809",
+      "name": "Batch loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1120,
+        192
+      ],
+      "parameters": {
+        "batchSize": 1
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch glossary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch glossary": {
+      "main": [
+        [
+          {
+            "node": "Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan": {
+      "main": [
+        [
+          {
+            "node": "Fetch keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch keys": {
+      "main": [
+        [
+          {
+            "node": "Build prompts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build prompts": {
+      "main": [
+        [
+          {
+            "node": "Batch loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate": {
+      "main": [
+        [
+          {
+            "node": "Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate": {
+      "main": [
+        [
+          {
+            "node": "Write Lokalise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Lokalise": {
+      "main": [
+        [
+          {
+            "node": "Tally",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tally": {
+      "main": [
+        [
+          {
+            "node": "Batch loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch loop": {
+      "main": [
+        [
+          {
+            "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "ReavQOPwH81A0OW2",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-08T09:33:44.322Z",
+      "updatedAt": "2026-09-08T09:33:44.322Z"
+    }
+  ],
+  "activeVersion": null
+}
