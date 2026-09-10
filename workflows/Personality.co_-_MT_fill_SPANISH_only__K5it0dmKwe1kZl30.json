@@ -1,0 +1,421 @@
+{
+  "id": "K5it0dmKwe1kZl30",
+  "name": "Personality.co - MT fill SPANISH only",
+  "description": "WRITES. Spanish-only MT fill for Personality.co. Prompt built from the thin Spanish style guide plus conventions derived from 120 reviewed z_human EN/ES pairs, with 22 approved pairs inlined as translation memory and the live Spanish glossary. Adds a Span",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-09T07:16:45.370Z",
+  "updatedAt": "2026-09-09T07:16:45.370Z",
+  "isArchived": false,
+  "versionId": "6ee11623-0ad2-46df-b9f9-ce5cccf710d9",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "697270b6-5185-4c56-bfbc-e8570cc2f876",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "aa11aec1-dbc2-46a6-bce8-783e9ed112db",
+      "name": "Fetch glossary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": false,
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "1ea7725a-11d3-4792-9618-46060af8523b",
+      "name": "Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const BASE = \"https://api.lokalise.com/api2\";\nconst PID = \"31393214664f295f94dd86.76792605\";\nconst PAGES_TO_SCAN = 8;\nconst out = [];\nfor (let p = 1; p <= PAGES_TO_SCAN; p++) {\n  out.push({ json: { iso: 'es', langId: 1056, page: p, pid: PID,\n    url: BASE + \"/projects/\" + PID + \"/keys?limit=200&page=\" + p\n      + \"&include_translations=1&filter_untranslated=1&filter_translation_lang_ids=640,1056\" } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "6f648056-a59d-480f-b5a9-0a73f7097611",
+      "name": "Fetch keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": false,
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "4d4ba5f1-4d0e-499d-a7ea-a9516b771800",
+      "name": "Build prompts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const CHUNK = 25;\nconst MAX_BATCHES = 40;\nconst MODEL = \"gpt-4o\";\nconst NL = String.fromCharCode(10);\n\nconst SHARED = [\n\"PRODUCT CONTEXT - Personality.co. A self-knowledge product: personality-type reports, trait reports (bipolar traits, OCD, sociopathy, psychopathy, neurodivergence, anxiety), archetype profiles and Enneagram content. Register is warm, direct, non-clinical self-care advice. Never diagnostic, never clinical-sounding, never anything that reads as replacing therapy. Trait levels describe tendencies, not conditions.\",\n\"The test asks the user to select a gender at the start and then serves either the masculine or the feminine archetype set. Both sets are live. A source of the form The plus a capitalised noun phrase - The King, The Problem Solver, The Deep Worker - is the NAME of an archetype and is translated as a name, keeping a capital on the substantive.\",\n\"KEY NAMESPACE DETERMINES REGISTER. components::members::profile::CODE::level_N::* is trait-report body prose: full sentences with final punctuation. A key ending ::name is a short label: no final period. ::growth_and_balance::N::title is a heading: no final period. ::content::start and ::content::end are the lead-in and closing sentence around a list: keep the trailing colon or full stop exactly as in the source. ::content::list::N is a bullet fragment: never expand it into a full sentence and add no final period unless the source has one. components::modals::* and components::global::* are UI strings. email_templates::* is email copy. pages::landing::* and pages::get_results::* are marketing copy and may be freer.\",\n\"TAGS INSIDE WORDS. Some strings contain the empty pair <nonLinkPeriod></nonLinkPeriod> inside the brand name, as in personality<nonLinkPeriod></nonLinkPeriod>co. Reproduce that tag pair in exactly the same position. Do not write personality.co as plain text and do not drop the tags.\",\n\"WHITESPACE. Some source strings begin or end with a single space because they concatenate with another fragment at runtime. Reproduce leading and trailing spaces exactly as the source has them.\",\n\"HARD RULES. Copy every placeholder exactly and never translate a placeholder name. Copy every HTML tag and attribute exactly, adding and removing none. Never use the ellipsis character or the non-breaking hyphen U+2011; where the source has three periods, write three periods. Never invent content - if the source is a fragment the translation stays a fragment. The glossary overrides everything below it. Return the translation only, with no commentary.\"\n].join(\" \");\n\nconst ES_GUIDE = [\n\"TARGET LANGUAGE: SPANISH (es). Neutral European Spanish.\",\n\"REGISTER. Address the user informally as tu, never usted and never vosotros. Clear, direct and professional while staying simple and easy to understand; natural, friendly and engaging. Prioritise clarity, naturalness and accuracy over literal rendering - adapt the wording so it reads as native Spanish while preserving the meaning. Active voice. Colloquial expressions are acceptable, and so are abbreviations. Follow RAE and Fundeu where in doubt.\",\n\"PUNCTUATION - MANDATORY AND MOST OFTEN MISSED. Spanish opens questions with an inverted question mark and exclamations with an inverted exclamation mark. Every question must be written as an opening inverted question mark then the text then a closing question mark. Every exclamation likewise. This applies mid-sentence too: where the English reads Self-Esteem Guide: Build a Stronger You! the Spanish reads Guia de autoestima: then the inverted exclamation mark then Crea un yo mas fuerte and the closing exclamation mark. Never write a Spanish question or exclamation without its opening inverted mark.\",\n\"QUOTES. Straight double quotation marks. Do not use angle quotes and do not use curly quotes.\",\n\"NUMBERS. Period as the thousands separator, so 500.000 not 500,000. Comma for decimals.\",\n\"CAPITALISATION. Spanish sentence case: a capital on the first word only, plus proper nouns. Spanish does NOT capitalise nationality adjectives, language names, weekdays or months. Do not carry across the English title case. Worked examples from approved translations: Why Self-Esteem Matters becomes Por que es importante la autoestima. Goal-Setting and Planning Guide becomes Guia para definir objetivos y planificar. Progress Tracking Journal becomes Diario de seguimiento. Emotional Intelligence Development Toolkit becomes Herramientas para el desarrollo de la inteligencia emocional. EXCEPTION - the names of products and packages keep a capital on their first word: la Guia de autoestima, la Guia de crecimiento personal, el Informe de personalidad. A bare reference stays lowercase: el paquete de orientacion profesional. Archetype and personality-type names keep their capitals as names. In legal text El Sitio is a capitalised defined term.\",\n\"HEADINGS AND BUTTONS. Button labels take the infinitive: Get My Results becomes Obtener mis resultados, Download my Report becomes Descargar mi informe, Start ADHD Test becomes Iniciar test de TDAH. Instructional headings also take the infinitive: Set SMART Goals for Success becomes Definir objetivos SMART para alcanzar el exito, Align Your Work with Your Values becomes Hacer que tu trabajo refleje tus valores, Building Meaningful Relationships becomes Establecer relaciones significativas. But a true call to action addressed to the reader takes the tu imperative: Achieve Your Goals Faster becomes Alcanza tus objetivos mas rapido, Click the button below becomes Haz clic en el boton.\",\n\"TERMINOLOGY from approved translations. Keep test in English in product contexts - nuestro test, test de TDAH - though legal text uses prueba. Report is informe. Enneagram is eneagrama, lowercase. Keep mindfulness in English. Email address is correo electronico. Something went wrong becomes Algo ha salido mal.\",\n\"GENDER. Write gender-neutrally where the subject is the reader. BUT in testimonials the job title agrees with the gender of the named person: Amanda K. - Project Coordinator becomes Amanda K. - Coordinadora de proyectos, while Mark T. - Graphic Designer becomes Mark T. - Disenador grafico. Jessica H. - Project Manager becomes Jessica H. - Gestora de proyectos. David L. - Recent Graduate becomes David L. - Recien licenciado.\"\n].join(\" \" + NL);\n\nconst TM = [\n[\"Uncover your exact personality type by completing our test.\", \"Descubre tu tipo de personalidad exacto al completar nuestro test.\"],\n[\"Get My Results\", \"Obtener mis resultados\"],\n[\"Download my Report\", \"Descargar mi informe\"],\n[\"Start ADHD Test\", \"Iniciar test de TDAH\"],\n[\"Trusted by over 500 thousand people worldwide\", \"Mas de 500.000 personas de todo el mundo confian en nosotros\"],\n[\"Why Self-Esteem Matters\", \"Por que es importante la autoestima\"],\n[\"Why Career Growth Matters\", \"Por que es importante el crecimiento profesional\"],\n[\"What's Included in the Career Guidance Package?\", \"¿Que incluye el paquete de orientacion profesional?\"],\n[\"Self-Esteem Guide: Build a Stronger You!\", \"Guia de autoestima: ¡Crea un yo mas fuerte!\"],\n[\"Personal Growth Guidance: Unlock Your Best Self Today!\", \"Guia de crecimiento personal: ¡Encuentra tu mejor version!\"],\n[\"Set SMART Goals for Success:\", \"Definir objetivos SMART para alcanzar el exito:\"],\n[\"Align Your Work with Your Values:\", \"Hacer que tu trabajo refleje tus valores:\"],\n[\"Achieve Your Goals Faster with Expert Career Guidance\", \"Alcanza tus objetivos mas rapido mediante la orientacion profesional\"],\n[\"3. Goal-Setting and Planning Guide\", \"3. Guia para definir objetivos y planificar\"],\n[\"5. Progress Tracking Journal\", \"5. Diario de seguimiento\"],\n[\"2. Personalized Career Assessment\", \"2. Evaluacion profesional personalizada\"],\n[\"Struggle with Vulnerability and Emotional Expression\", \"Lucha contra la vulnerabilidad y la expresion emocional\"],\n[\"Your message has been sent successfully! Our team will get back to you shortly.\", \"El mensaje se ha enviado correctamente. Nuestro equipo se pondra en contacto contigo en breve.\"],\n[\"Something went wrong, please try again.\", \"Algo ha salido mal, intentalo de nuevo.\"],\n[\"Email address\", \"Correo electronico\"],\n[\"Amanda K. - Project Coordinator\", \"Amanda K. - Coordinadora de proyectos\"],\n[\"Mark T. - Graphic Designer\", \"Mark T. - Disenador grafico\"]\n].map(p => 'EN: ' + p[0] + NL + 'ES: ' + p[1]).join(NL + NL);\n\nconst gr = $('Fetch glossary').first().json || {};\nconst gb = gr.body !== undefined ? gr.body : gr;\nconst GLOSS = {};\nfor (const t of (gb.data || gb.glossary_terms || [])) {\n  const term = (t.term || '').trim();\n  if (term.length < 3) continue;\n  const noTx = t.translatable === false || t.forbidden === true;\n  for (const tr of (t.translations || [])) {\n    const iso = tr.langIso || tr.lang_iso;\n    if (iso !== 'es') continue;\n    if (noTx) GLOSS[term] = \"KEEP IN ENGLISH, do not translate\";\n    else { const v = (tr.translation || '').trim(); if (v) GLOSS[term] = v; }\n  }\n}\n\nconst JUNK = /^\\s*(<p>)?\\s*(test[\\s_0-9]*|test text|test_key|question|englishtext)\\s*(<\\/p>)?\\s*$/i;\nconst rows = []; const seen = {};\nfor (const it of $input.all()) {\n  const r = it.json || {};\n  const b = r.body !== undefined ? r.body : r;\n  if (!Array.isArray(b.keys)) continue;\n  for (const k of b.keys) {\n    if (k.is_archived) continue;\n    if (seen[k.key_id]) continue;\n    const kn = (k.key_name && (k.key_name.web || k.key_name.other)) || '';\n    if (!kn) continue;\n    let src = '', hasEs = false, esEmpty = false;\n    for (const t of (k.translations || [])) {\n      if (t.language_iso === 'en') { src = t.translation || ''; continue; }\n      if (t.language_iso === 'es') { hasEs = true; esEmpty = !t.translation || String(t.translation).trim() === ''; }\n    }\n    if (!hasEs || !esEmpty) continue;\n    if (!String(src).trim()) continue;\n    if (JUNK.test(src)) continue;\n    seen[k.key_id] = true;\n    rows.push({ id: k.key_id, k: kn, s: src });\n  }\n}\n\nconst out = [];\nfor (let i = 0; i < rows.length && out.length < MAX_BATCHES; i += CHUNK) {\n  const chunk = rows.slice(i, i + CHUNK);\n  const glLines = Object.keys(GLOSS)\n    .filter(t => chunk.some(c => c.s.toLowerCase().indexOf(t.toLowerCase()) > -1))\n    .slice(0, 60)\n    .map(t => '- ' + t + ' = ' + GLOSS[t]);\n  const system = SHARED + NL + NL + ES_GUIDE\n    + NL + NL + 'APPROVED TRANSLATIONS FROM THIS PROJECT - follow their conventions exactly' + NL + TM\n    + (glLines.length ? NL + NL + 'GLOSSARY, binding, overrides everything above' + NL + glLines.join(NL) : '')\n    + NL + NL + 'Return ONLY a JSON object shaped {\"t\":[{\"i\":0,\"v\":\"translation\"}]} with exactly one entry per input item, in order, using the same i values.';\n  const user = JSON.stringify(chunk.map((c, n) => ({ i: n, key: c.k, src: c.s })));\n  out.push({ json: {\n    iso: 'es', langId: 1056, pid: '31393214664f295f94dd86.76792605',\n    ids: chunk.map(c => c.id), srcs: chunk.map(c => c.s), keys: chunk.map(c => c.k),\n    glossaryTermsUsed: glLines.length,\n    available_rows: rows.length,\n    body: { model: MODEL, temperature: 0.2,\n      response_format: { type: 'json_object' },\n      messages: [ { role: 'system', content: system }, { role: 'user', content: user } ] }\n  }});\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "5c5fddf5-c584-429b-a79c-93b92c89b4cd",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const all = $input.all().map(i => i.json).filter(a => a && a.iso);\nconst reasons = {}; const samples = []; const apiErrors = [];\nlet req = 0, acc = 0, rej = 0, conf = 0, rep = 0, avail = 0;\nfor (const a of all) {\n  req += a.requested || 0; acc += a.accepted || 0; rej += a.rejected || 0;\n  rep += a.repaired || 0; conf += a.confirmed_mt_to_review || 0;\n  avail = a.available_rows || avail;\n  for (const x of (a.rejects || [])) {\n    for (const rs of x.reasons) reasons[rs.split(':')[0]] = (reasons[rs.split(':')[0]] || 0) + 1;\n    if (samples.length < 25) samples.push({ key: x.key, src: x.src, out: x.out, reasons: x.reasons });\n  }\n  if ((a.lokaliseStatus !== 200 && a.lokaliseStatus !== 'skipped - nothing accepted') || (a.lokaliseErrors || []).length || a.parseErr) {\n    apiErrors.push({ lokalise: a.lokaliseStatus, openai: a.openaiStatus, parseErr: a.parseErr, errors: a.lokaliseErrors });\n  }\n}\nreturn [{ json: {\n  run_at: new Date().toISOString(), locale: 'es',\n  batches: all.length, rows_available_in_window: avail,\n  requested: req, accepted: acc, rejected: rej, repaired: rep,\n  confirmed_written_mt_to_review: conf,\n  reject_rate_pct: req ? Math.round(1000 * rej / req) / 10 : 0,\n  reject_reasons: reasons, api_errors: apiErrors, reject_samples: samples\n} }];"
+      }
+    },
+    {
+      "id": "5ae8bbdf-0f53-4a16-8b7b-0bb6a5f841ca",
+      "name": "Generate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1344,
+        192
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "yra2iG8pnmCKhZIc",
+          "name": "Futuremedia - n8n project"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "f8032abb-2fa3-4a98-8d31-f19f4881ea1e",
+      "name": "Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const MT_TO_REVIEW = 29251;\nconst r = $input.first().json || {};\nconst b = r.body !== undefined ? r.body : r;\nconst ctx = $('Batch loop').first().json;\n\nconst PH = /%[sd]|%\\d+\\$[sd]|\\{\\{[^}]*\\}\\}|\\{[^}]*\\}|\\[%[^\\]]*\\]|%LANG_ISO%/g;\nconst TAG = /<[^>]+>/g;\nconst TRAILQ = /[\"'\\u00AB\\u00BB\\u201C\\u201D\\u201E\\u201F\\u2018\\u2019\\u201A\\u203A\\u2039]+$/;\nconst PROTECT = /^(Personality|Personality\\.co|Enneagram\\w*|Eneagrama|OCD|TDAH|QR|PDF|DNT|Apple|Android|Google|SMART|Gu[íi]a|Informe|Test|Sitio|Pol[íi]tica|T[ée]rminos|[ÁA]rea|Privacidad|Personalidad|Arquetipo|Femenino|Masculino)$/;\nconst PRODUCT_NAME_SRC = /\\b(Report|Archetype|Assessment|Test|Guide|Package|Toolkit|Workbook|Journal)\\b/;\nconst NAME_PATTERN = /^\\s*(<[^>]*>\\s*)?The\\s+\\p{Lu}/u;\n\nfunction ms(s, re) { return ((s || '').match(re) || []).slice().sort().join('|'); }\nfunction strip(s) { return String(s || '').replace(TAG, ' ').replace(PH, ' '); }\nfunction words(s) { return String(s || '').trim().split(/\\s+/).filter(Boolean).length; }\nfunction lastMeaningful(s) { return String(s || '').trim().replace(TRAILQ, '').trim().slice(-1); }\nfunction toks(s) { const o = []; const re = /\\S+/g; let m; while ((m = re.exec(String(s || ''))) !== null) o.push([m[0], m.index]); return o; }\nfunction core(t) { return t.replace(/^[^\\p{L}]+|[^\\p{L}]+$/gu, ''); }\nfunction isCap(w) { const f = w.charAt(0); return f === f.toUpperCase() && f !== f.toLowerCase(); }\nfunction starts(tk) {\n  const S = { 0: true };\n  for (let i = 1; i < tk.length; i++) {\n    const p = tk[i - 1][0];\n    if (/[.!?:;]$/.test(p) || /[\\u25cf\\u2022\\u25aa>]$/.test(p) || /^\\(\\s*[\\p{L}\\d]{1,3}\\s*\\)$/u.test(p) || /^\\d+[.)]$/.test(p) || /^<[^>]*>$/.test(p)) S[i] = true;\n  }\n  return S;\n}\nfunction capProfile(s) {\n  const tk = toks(strip(s)), S = starts(tk);\n  let caps = 0, wc = 0;\n  for (let i = 0; i < tk.length; i++) {\n    if (S[i]) continue;\n    const c = core(tk[i][0]);\n    if (!c || c.length < 2 || c === c.toUpperCase()) continue;\n    if (PROTECT.test(c)) continue;\n    wc++;\n    if (isCap(c)) caps++;\n  }\n  return { caps: caps, words: wc };\n}\n\nlet parsed = null, parseErr = null;\ntry { parsed = JSON.parse(((b.choices || [])[0] || {}).message.content); }\ncatch (e) { parseErr = String(e).slice(0, 200); }\n\nconst byIdx = {};\nfor (const e of (parsed && Array.isArray(parsed.t) ? parsed.t : [])) {\n  if (e && typeof e.i === 'number') byIdx[e.i] = e.v;\n}\n\nconst accepted = [], rejected = [], repaired = [];\nfor (let n = 0; n < ctx.ids.length; n++) {\n  const src = ctx.srcs[n], key = ctx.keys[n], id = ctx.ids[n];\n  let v = byIdx[n];\n  const fail = [];\n  const fixes = [];\n  if (typeof v !== 'string' || !v.trim()) fail.push('missing or empty');\n  else {\n    if (src.slice(-1) === ' ' && v.slice(-1) !== ' ') { v = v + ' '; fixes.push('restored trailing space'); }\n    else if (src.slice(-1) !== ' ' && v.slice(-1) === ' ') { v = v.replace(/\\s+$/, ''); fixes.push('trimmed trailing space'); }\n    if (src.charAt(0) === ' ' && v.charAt(0) !== ' ') { v = ' ' + v; fixes.push('restored leading space'); }\n    else if (src.charAt(0) !== ' ' && v.charAt(0) === ' ') { v = v.replace(/^\\s+/, ''); fixes.push('trimmed leading space'); }\n\n    if (ms(src, PH) !== ms(v, PH)) fail.push('placeholder mismatch');\n    if (ms(src, TAG) !== ms(v, TAG)) fail.push('html mismatch');\n    if (v.indexOf('\\u2011') > -1 || v.indexOf('\\u2026') > -1) fail.push('withdrawn character');\n    if (v.trim() === src.trim() && words(src) >= 2) fail.push('untranslated passthrough');\n\n    // Spanish-specific: a question or exclamation must carry its opening inverted mark.\n    const plain = strip(v);\n    if (/\\?\\s*$/.test(plain.trim()) && plain.indexOf('\\u00BF') === -1) fail.push('missing opening inverted question mark');\n    if (/!\\s*$/.test(plain.trim()) && plain.indexOf('\\u00A1') === -1) fail.push('missing opening inverted exclamation mark');\n\n    if (!PRODUCT_NAME_SRC.test(src) && !NAME_PATTERN.test(src)) {\n      const S = capProfile(src), T = capProfile(v);\n      const srcTitle = S.caps >= 2 && S.words >= 2 && S.caps / S.words >= 0.5;\n      if (srcTitle && T.caps >= 2 && T.words >= 2 && T.caps / T.words >= 0.5) fail.push('English title case carried over');\n    }\n    const se = lastMeaningful(src);\n    const ve = lastMeaningful(v);\n    if ((se === '.' || se === ':') && ve !== se) fail.push('terminal punctuation dropped');\n    if ('.:'.indexOf(se) === -1 && '.:'.indexOf(ve) > -1) fail.push('terminal punctuation added');\n    if (v.length > Math.max(400, src.length * 3.5)) fail.push('length runaway');\n  }\n  if (fail.length) rejected.push({ key_id: id, key: key, src: src.slice(0, 140), out: (typeof v === 'string' ? v.slice(0, 140) : null), reasons: fail });\n  else {\n    accepted.push({ key_id: id, translation: v });\n    if (fixes.length) repaired.push({ key_id: id, key: key, fixes: fixes });\n  }\n}\n\nconst payload = { keys: accepted.map(a => ({\n  key_id: a.key_id,\n  translations: [{ language_iso: 'es', translation: a.translation,\n    is_reviewed: false, is_fuzzy: true, custom_translation_status_ids: [MT_TO_REVIEW] }]\n})) };\n\nreturn [{ json: {\n  iso: 'es', pid: ctx.pid, glossaryTermsUsed: ctx.glossaryTermsUsed, available_rows: ctx.available_rows,\n  requested: ctx.ids.length, accepted: accepted.length, rejected: rejected.length,\n  repaired: repaired.length,\n  parseErr: parseErr, openaiStatus: r.statusCode, rejects: rejected,\n  skipWrite: accepted.length === 0,\n  url: 'https://api.lokalise.com/api2/projects/' + ctx.pid + '/keys',\n  payload: accepted.length ? payload : { keys: [] }\n} }];"
+      }
+    },
+    {
+      "id": "460d14d5-fd61-4a91-9d53-63a4c1007762",
+      "name": "Write Lokalise",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1792,
+        192
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1500
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "3d11d41e-2369-4f89-9c1f-863babfb480f",
+      "name": "Tally",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        272
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const r = $input.first().json || {};\nconst b = r.body !== undefined ? r.body : r;\nconst v = $('Validate').first().json;\nconst keys = Array.isArray(b.keys) ? b.keys : [];\nlet confirmed = 0;\nfor (const k of keys) {\n  for (const t of (k.translations || [])) {\n    if (t.language_iso !== 'es') continue;\n    const st = (t.custom_translation_statuses || []).map(s => s.status_id);\n    if (t.translation && t.is_fuzzy === true && st.indexOf(29251) > -1) confirmed++;\n  }\n}\nreturn [{ json: {\n  iso: 'es', requested: v.requested, accepted: v.accepted, rejected: v.rejected,\n  repaired: v.repaired, glossaryTermsUsed: v.glossaryTermsUsed, available_rows: v.available_rows,\n  keys_returned: keys.length, confirmed_mt_to_review: confirmed,\n  openaiStatus: v.openaiStatus, parseErr: v.parseErr,\n  lokaliseStatus: v.skipWrite ? 'skipped - nothing accepted' : r.statusCode,\n  lokaliseErrors: Array.isArray(b.errors) ? b.errors : [],\n  rejects: v.rejects\n} }];"
+      }
+    },
+    {
+      "id": "a1396b0d-dd51-4d11-a418-4941d7b96809",
+      "name": "Batch loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1120,
+        192
+      ],
+      "parameters": {
+        "batchSize": 1
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch glossary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch glossary": {
+      "main": [
+        [
+          {
+            "node": "Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan": {
+      "main": [
+        [
+          {
+            "node": "Fetch keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch keys": {
+      "main": [
+        [
+          {
+            "node": "Build prompts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build prompts": {
+      "main": [
+        [
+          {
+            "node": "Batch loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate": {
+      "main": [
+        [
+          {
+            "node": "Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate": {
+      "main": [
+        [
+          {
+            "node": "Write Lokalise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Lokalise": {
+      "main": [
+        [
+          {
+            "node": "Tally",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tally": {
+      "main": [
+        [
+          {
+            "node": "Batch loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch loop": {
+      "main": [
+        [
+          {
+            "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "K5it0dmKwe1kZl30",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-09T07:16:45.372Z",
+      "updatedAt": "2026-09-09T07:16:45.372Z"
+    }
+  ],
+  "activeVersion": null
+}
