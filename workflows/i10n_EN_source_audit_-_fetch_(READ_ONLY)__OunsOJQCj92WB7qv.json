@@ -1,0 +1,196 @@
+{
+  "id": "OunsOJQCj92WB7qv",
+  "name": "i10n EN source audit - fetch (READ ONLY)",
+  "description": "READ-ONLY fetch for the i10n-en-source-audit skill. GET only, no body, no write endpoints. Config selects projects | languages | keys; Fetch paginates by cursor; Shape returns {k, en, description} rows. Dedicated to this skill - do not share.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-11T08:17:00.783Z",
+  "updatedAt": "2026-09-11T14:51:07.764Z",
+  "isArchived": false,
+  "versionId": "fdd36299-942a-4063-a041-f732248268a1",
+  "versionCounter": 16,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "6daa3ffc-b979-4280-ae31-ce676c090d32",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// READ-ONLY. Only GET urls may be built here. Never add a method,\n// a body, or any Lokalise write endpoint to this workflow.\nconst CFG = {\n  mode: 'keys',                 // 'projects' | 'languages' | 'keys'\n  project_id: '31393214664f295f94dd86.76792605',   // Personality.co\n  filter_tags: ''               // e.g. 'z_human'\n};\n\nconst BASE = 'https://api.lokalise.com/api2';\n\nif (CFG.mode === 'projects') {\n  return [{ json: { mode: 'projects', url: BASE + '/projects?limit=100' } }];\n}\nif (!CFG.project_id) { throw new Error('project_id is required for mode ' + CFG.mode); }\nif (CFG.mode === 'languages') {\n  return [{ json: { mode: 'languages', url: BASE + '/projects/' + CFG.project_id + '/languages?limit=500' } }];\n}\n// include_translations=1 is required: the EN source arrives inside the\n// translations array, and dropping it returns rows with no source at all.\n// filter_translation_lang_ids=640 restricts that array to EN only. 640 is the\n// EN source id in every project in this account; on a ~17k-key project the\n// unrestricted form returns all 30 locales and the execution OOMs.\n// If Lokalise ever rejects 640 for a project it 400s the WHOLE request, which\n// Shape surfaces as an entry in errors[] rather than a short clean page.\nlet qs = 'include_translations=1&disable_references=1&limit=500&pagination=cursor&filter_translation_lang_ids=640';\nif (CFG.filter_tags) { qs += '&filter_tags=' + encodeURIComponent(CFG.filter_tags); }\nreturn [{ json: { mode: 'keys', url: BASE + '/projects/' + CFG.project_id + '/keys?' + qs } }];"
+      },
+      "id": "0f34c9be-791a-4d04-8980-e802e6b0efa8",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "parameters": {
+                "parameters": [
+                  {
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 200,
+              "requestInterval": 700
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "e5f6c4e3-4718-4e9f-bde4-7c4c6bbbd9c9",
+      "name": "Fetch Lokalise",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// One compact row per key: { k, en, description }.\n// Asserts body.keys is an array on every page — a 429 or a scope error comes\n// back as a 200-shaped body with no keys array, and silently reporting on\n// 0 rows is the worst way for an audit to fail.\nconst pages = $input.all();\nconst rows = [];\nconst errors = [];\nlet keysSeen = 0, sourceMissing = 0, mode = 'keys', totalCount = null;\n\nfor (const p of pages) {\n  const r = p.json || {};\n  const body = (r.body !== undefined ? r.body : r) || {};\n  const status = r.statusCode;\n  const h = r.headers || {};\n  if (h['x-pagination-total-count']) { totalCount = Number(h['x-pagination-total-count']); }\n\n  if (body.projects) {\n    mode = 'projects';\n    for (const pr of body.projects) {\n      rows.push({ k: pr.project_id, en: pr.name, description: String((pr.statistics && pr.statistics.keys_total) || '') });\n    }\n    continue;\n  }\n  if (body.languages) {\n    mode = 'languages';\n    for (const l of body.languages) { rows.push({ k: String(l.lang_id), en: l.lang_iso, description: l.lang_name }); }\n    continue;\n  }\n  if (!Array.isArray(body.keys)) {\n    errors.push({ statusCode: status, body: JSON.stringify(body).slice(0, 300) });\n    continue;\n  }\n  for (const key of body.keys) {\n    keysSeen++;\n    const tr = Array.isArray(key.translations) ? key.translations : [];\n    const en = tr.find(function (t) { return t.language_iso === 'en'; });\n    const name = typeof key.key_name === 'object' ? (key.key_name.web || key.key_name.other || '') : key.key_name;\n    if (!en || en.translation === undefined || en.translation === null || en.translation === '') { sourceMissing++; continue; }\n    rows.push({ k: name, en: en.translation, description: key.description || '' });\n  }\n}\n\n// server_total is what the API says exists. Compare it against rows_kept before\n// trusting any report: a short page that looks clean is the failure mode this\n// whole workflow is built to avoid.\nconst out = { mode: mode, keys_seen: keysSeen, rows_kept: rows.length, server_total: totalCount, source_missing: sourceMissing, pages: pages.length, errors: errors, rows: rows };\nif (totalCount !== null && mode !== 'keys' && rows.length !== totalCount) {\n  out.warning = 'server says ' + totalCount + ' but ' + rows.length + ' came back — do not report as complete';\n}\nreturn [{ json: out }];"
+      },
+      "id": "c1caa240-c534-4ef8-8c8a-7e18a8b7f68f",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## READ ONLY — do not add writes\n\nDedicated to the i10n-en-source-audit skill. Do NOT share it with other jobs\nand do NOT edit it mid-run: the old shared workflow was overwritten between\nruns and an audit read a different project than it reported on.\n\nRules for this workflow:\n- GET only. No method other than GET, no body, no form parameters.\n- Attach ONLY the read-only Lokalise credential. The read-write token\n  (Lokalise access token read-write) must never be selected here.\n- Credential type is Templated Custom Auth. Its JSON is:\n  {\"headers\":{\"X-Api-Token\":\"{{api_key}}\"}}\n- Keep pagination=cursor in the query string, or you silently get page 1.\n- Compare keys_seen against the project's key count before trusting a run.\n\nThe skill runs scripts/assert_readonly.py against this workflow before every\nfetch and stops if any of the above is violated.",
+        "height": 224,
+        "width": 400,
+        "color": 3
+      },
+      "id": "f7b042ec-cde3-4ac1-b831-dbe433b20170",
+      "name": "Sticky Note 7ac1a8f9",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        -272
+      ]
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lokalise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lokalise": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "pinData": {},
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "OunsOJQCj92WB7qv",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-11T08:17:00.791Z",
+      "updatedAt": "2026-09-11T08:17:00.791Z"
+    }
+  ],
+  "activeVersion": null
+}
