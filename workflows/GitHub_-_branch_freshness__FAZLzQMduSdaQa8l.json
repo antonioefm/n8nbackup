@@ -1,0 +1,274 @@
+{
+  "id": "FAZLzQMduSdaQa8l",
+  "name": "GitHub - branch freshness",
+  "description": "Read-only: last-commit date and sha for each repo's default branch plus develop/dev/staging/stage, to tell active dev branches from stale ones.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-14T12:09:00.548Z",
+  "updatedAt": "2026-09-14T12:09:04.630Z",
+  "isArchived": false,
+  "versionId": "90f0fc14-a5c7-485d-800c-c5eeac2c9cf2",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "16a2caa4-6db0-437b-ab8a-01dae733da45",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "b6fb618f-6ed2-4f7d-a4e3-561af83bedfe",
+      "name": "List Org Repos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.github.com/orgs/QR-CODE-App/repos",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "per_page",
+              "value": "100"
+            },
+            {
+              "name": "type",
+              "value": "all"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "6e76f238-7991-4c75-91e3-02984928d1af",
+      "name": "Build Repo x Branch Pairs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const CANDIDATES = ['develop', 'dev', 'staging', 'stage'];\nconst out = [];\nfor (const it of $input.all()) {\n  const r = it.json;\n  if (!r || !r.name) continue;\n  const def = r.default_branch || 'main';\n  const branches = [def];\n  for (const c of CANDIDATES) if (!branches.includes(c)) branches.push(c);\n  for (const b of branches) {\n    out.push({ json: { repo: r.name, branch: b, is_default: b === def, default_branch: def }});\n  }\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "06f73fa0-b5aa-4fd2-80e7-2f93ac1f7ecc",
+      "name": "Summarize Branches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const rows = $input.all().map(i => i.json).filter(r => r.exists);\nconst now = Date.now();\nconst byRepo = {};\nfor (const r of rows) {\n  const days = r.last_commit ? Math.round((now - new Date(r.last_commit).getTime()) / 86400000) : null;\n  byRepo[r.repo] = byRepo[r.repo] || [];\n  byRepo[r.repo].push({ branch: r.branch, is_default: r.is_default, last_commit: r.last_commit, age_days: days, sha: r.sha, subject: r.subject });\n}\nconst out = [];\nfor (const repo of Object.keys(byRepo).sort()) {\n  const b = byRepo[repo].sort((x,y) => (y.is_default - x.is_default) || x.branch.localeCompare(y.branch));\n  out.push({ repo: repo, branches: b });\n}\nreturn [{ json: { repos: out.length, detail: out } }];"
+      }
+    },
+    {
+      "id": "f061d4dc-a22d-4109-81d5-ccf56b4433e9",
+      "name": "Get Branch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/QR-CODE-App/{{ $json.repo }}/branches/{{ $json.branch }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "583fbf52-6a01-4463-a4f3-a326890cbe9a",
+      "name": "Shape Branch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        272
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const meta = $('Loop Pairs').first().json;\nconst res = $input.first().json || {};\nconst status = res.statusCode || 0;\nconst body = res.body || {};\nconst c = (body.commit && body.commit.commit) || {};\nconst date = (c.committer && c.committer.date) || (c.author && c.author.date) || null;\nreturn [{ json: {\n  repo: meta.repo,\n  branch: meta.branch,\n  is_default: meta.is_default,\n  default_branch: meta.default_branch,\n  exists: status === 200,\n  last_commit: date,\n  sha: (body.commit && body.commit.sha) ? body.commit.sha.slice(0,7) : null,\n  subject: c.message ? String(c.message).split('\\n')[0].slice(0,90) : null\n}}];"
+      }
+    },
+    {
+      "id": "b2b27ff8-4ab5-440b-9418-f14ea9b7ce6d",
+      "name": "Loop Pairs",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "List Org Repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Org Repos": {
+      "main": [
+        [
+          {
+            "node": "Build Repo x Branch Pairs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Repo x Branch Pairs": {
+      "main": [
+        [
+          {
+            "node": "Loop Pairs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Branch": {
+      "main": [
+        [
+          {
+            "node": "Shape Branch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape Branch": {
+      "main": [
+        [
+          {
+            "node": "Loop Pairs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Pairs": {
+      "main": [
+        [
+          {
+            "node": "Summarize Branches",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Branch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "FAZLzQMduSdaQa8l",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-14T12:09:00.550Z",
+      "updatedAt": "2026-09-14T12:09:00.550Z"
+    }
+  ],
+  "activeVersion": null
+}
