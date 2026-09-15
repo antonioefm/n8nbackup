@@ -5,10 +5,10 @@
   "active": true,
   "activeVersionId": "f41e5850-0db9-4959-9fec-3a1cc262962e",
   "createdAt": "2026-08-25T14:21:47.763Z",
-  "updatedAt": "2026-08-27T15:14:07.667Z",
+  "updatedAt": "2026-09-14T14:13:06.382Z",
   "isArchived": false,
-  "versionId": "f41e5850-0db9-4959-9fec-3a1cc262962e",
-  "versionCounter": 17,
+  "versionId": "f77962b3-49a3-4550-8289-275bfc2fd8a1",
+  "versionCounter": 18,
   "sourceWorkflowId": null,
   "triggerCount": 0,
   "nodes": [
@@ -1397,6 +1397,242 @@
         496
       ],
       "notes": "Builds the PUT body natively so the category field can be set alongside status. Skips the category field if either the field id or the per-brand value is unconfigured."
+    },
+    {
+      "id": "e3ffb441-224a-49f8-8e21-c67c3b0d5cde",
+      "name": "High risk check enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2400,
+        1900
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "hr-enabled",
+              "leftValue": "={{ $('Get Project Config').first().json.high_risk_check_enabled === true }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "notes": "cs_project_config.high_risk_check_enabled. Empty or false = OFF (opt-in), same convention as spam_check_enabled and dedupe_merge_enabled."
+    },
+    {
+      "id": "62fe6cad-488b-4e66-9797-a0138e051652",
+      "name": "Get High Risk Keywords",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2624,
+        1900
+      ],
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "cachedResultName": "cs_high_risk_keywords",
+          "mode": "list",
+          "value": "H0oFIJNTlQgUVrk5"
+        },
+        "operation": "get",
+        "returnAll": true
+      },
+      "notes": "cs_high_risk_keywords. GLOBAL - no project_key column. The same phrase list applies to every brand; only the check itself is per-project."
+    },
+    {
+      "id": "afd2102b-a515-440e-b332-f161755407e1",
+      "name": "Match High Risk Keywords",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2848,
+        1900
+      ],
+      "parameters": {
+        "jsCode": "// === High risk keyword matching ===\n// Mode: \"Run Once for All Items\". Input = rows from Get High Risk Keywords.\n\nconst ticket = $('Get ticket status').first().json.ticket || {};\n\n// Tier precedence. Lower rank wins. C (safety) outranks A (commercial threat),\n// which outranks B (conduct). This mirrors the queue urgency: safety-review,\n// then Priority, then Standard. A ticket matching several tiers is labelled with\n// the highest-risk one.\nconst TIER_RANK = { C: 0, A: 1, B: 2 };\n\nconst TIER_TAG = {\n  A: 'high-risk-legal-financial',\n  B: 'high-risk-conduct',\n  C: 'high-risk-safety-critical'\n};\n\nconst TIER_QUEUE = {\n  A: 'Priority',\n  B: 'Standard',\n  C: 'safety-review'\n};\n\nconst TIER_LABEL = {\n  A: 'Commercial threat',\n  B: 'Hostility / repeat / account',\n  C: 'Safety / duty of care'\n};\n\n// Lowercase, reduce every non-alphanumeric run to a single space, collapse, trim.\n// Applied identically to the ticket text and to each keyword, so \"didn't sign up\"\n// in the sheet matches \"didn't sign up\" and \"didnt sign up\" in a ticket.\nfunction normalise(text) {\n  return String(text == null ? '' : text)\n    .toLowerCase()\n    .replace(/[^a-z0-9]+/g, ' ')\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\n\nfunction escapeRe(text) {\n  return String(text).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n}\n\n// Deliberately NOT stripping quoted history, unlike the wrong-brand matcher.\n// This is a duty-of-care check and over-matching is the preferred failure mode.\nconst haystack = normalise(\n  String(ticket.subject == null ? '' : ticket.subject) + ' ' +\n  String(ticket.description == null ? '' : ticket.description)\n);\n\nconst rows = $input.all();\n\n// TOKEN-SEQUENCE MATCHING. The keyword must occupy whole tokens in the haystack.\n// A two-word phrase must match as a consecutive run: \"several emails\" fires on\n// \"several emails\" but never on \"several\" or \"emails\" alone, and never on\n// \"several other emails\".\n//\n// Do NOT add space-insensitive fallback matching. A despaced variant of this\n// caused two customers to be publicly told our product was not ours on\n// 2026-09-09 (Personality tickets 685429 and 685459).\nconst matches = [];\n\nfor (const r of rows) {\n  const row = r.json || {};\n\n  // Fail-open on active: only an explicit negative disables a row, so a null\n  // (never set) counts as active.\n  const isActive = !(row.active === false || row.active === 0\n    || row.active === 'false' || row.active === '0' || row.active === 'no');\n  if (!isActive) continue;\n\n  const needle = normalise(row.keyword);\n  if (!needle) continue;\n\n  const tier = String(row.tier == null ? '' : row.tier).trim().toUpperCase();\n  if (!(tier in TIER_RANK)) continue;\n\n  const re = new RegExp('(^| )' + escapeRe(needle) + '( |$)');\n\n  if (re.test(haystack)) {\n    matches.push({\n      keyword: row.keyword,\n      normalised: needle,\n      tier: tier,\n      category: String(row.category == null ? '' : row.category)\n    });\n  }\n}\n\n// Highest-risk tier first, then longest (most specific) phrase within that tier.\nmatches.sort((a, b) => {\n  const r = TIER_RANK[a.tier] - TIER_RANK[b.tier];\n  if (r !== 0) return r;\n  return b.normalised.length - a.normalised.length;\n});\n\nconst winner = matches.length ? matches[0] : null;\n\nreturn [{\n  json: {\n    high_risk_matched: matches.length > 0,\n    match_count: matches.length,\n    tier: winner ? winner.tier : null,\n    tier_label: winner ? TIER_LABEL[winner.tier] : null,\n    category: winner ? winner.category : null,\n    queue: winner ? TIER_QUEUE[winner.tier] : null,\n    tag: winner ? TIER_TAG[winner.tier] : null,\n    primary_match: winner ? winner.keyword : null,\n    matched_keywords: matches.map(m => m.keyword),\n    matched_detail: matches.map(m => m.tier + '/' + m.category + ': ' + m.keyword),\n    tiers_matched: matches.map(m => m.tier).filter((t, i, a) => a.indexOf(t) === i),\n    rows_checked: rows.length,\n    haystack_chars: haystack.length\n  }\n}];"
+      }
+    },
+    {
+      "id": "72d23407-6448-4022-a21d-3244b716d907",
+      "name": "High risk match?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3072,
+        1900
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "hr-matched",
+              "leftValue": "={{ $json.high_risk_matched }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "d834fab4-6a35-4130-bff0-5207346bdf58",
+      "name": "Build high risk payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3296,
+        1744
+      ],
+      "parameters": {
+        "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\nconst m = $('Match High Risk Keywords').first().json;\n\nconst ticketId = trig.body['ticket.id'];\n\n// cs_project_config.high_risk_enforce\n//   OFF (default) = monitoring. Tag + internal note only, automation continues.\n//                   Use this to size the volume per tier before committing staff.\n//   ON            = tag + note + status open + allow_automation _no_, automation stops.\nconst flag = cfg.high_risk_enforce;\nconst enforce = (flag === true || flag === 1 || flag === 'true' || flag === '1' || flag === 'yes');\n\nconst lines = [\n  'Note: This ticket matched the high-risk keyword list.',\n  '',\n  'Tier: ' + m.tier + ' - ' + m.tier_label,\n  'Category: ' + m.category,\n  'Queue: ' + m.queue,\n  'Tag applied: ' + m.tag,\n  'Matched phrase: \"' + m.primary_match + '\"'\n];\n\nif (m.match_count > 1) {\n  lines.push('');\n  lines.push('All ' + m.match_count + ' matches:');\n  for (const d of m.matched_detail) {\n    lines.push('  - ' + d);\n  }\n}\n\nlines.push('');\n\nif (enforce) {\n  lines.push('Automation has been stopped and no reply was sent to the customer.');\n  lines.push('Please pick this ticket up from the ' + m.queue + ' queue and handle it manually.');\n} else {\n  lines.push('MONITORING MODE: the ticket was tagged and this note added, but automation was NOT stopped.');\n  lines.push('The bot may still reply to this customer. No agent action is required unless the reply is wrong.');\n}\n\nconst noteBody = lines.join('\\n');\n\n// additional_tags so existing tags are not clobbered.\nconst ticket = {\n  additional_tags: [m.tag],\n  comment: { public: false, body: noteBody }\n};\n\nif (enforce) {\n  // Setting to open is not a solve transition, so Zendesk does not enforce\n  // required custom fields here and the category does not need to ride along.\n  const openStatusId = Number(cfg.ticket_custom_status_open_id);\n  if (Number.isFinite(openStatusId) && openStatusId > 0) {\n    ticket.custom_status_id = openStatusId;\n  }\n\n  // Stop the 2nd-message automation from re-engaging when the customer replies.\n  const allowFieldId = Number(cfg.ticket_field_allow_automation);\n  if (Number.isFinite(allowFieldId) && allowFieldId > 0) {\n    ticket.custom_fields = [{ id: allowFieldId, value: '_no_' }];\n  }\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    enforce: enforce,\n    tier: m.tier,\n    queue: m.queue,\n    tag: m.tag,\n    primary_match: m.primary_match,\n    match_count: m.match_count,\n    note_body: noteBody,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
+      },
+      "notes": "Builds the PUT natively so the tag, note, status and allow-automation field go in one request. In monitoring mode only the tag and note are sent - no status change, no allow_automation change, and the ticket continues into automation."
+    },
+    {
+      "id": "4b7b7a7a-8271-46f9-a664-1291b41b3a7a",
+      "name": "Zendesk: Flag high risk",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        3520,
+        1744
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "jsonBody": "={{ JSON.stringify($json.zendesk_body) }}",
+        "method": "PUT",
+        "nodeCredentialType": "zendeskApi",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $json.ticket_id }}"
+      },
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      }
+    },
+    {
+      "id": "264ba952-f080-4479-833c-61ec9ce45271",
+      "name": "High risk enforce?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3744,
+        1744
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "hr-enforce",
+              "leftValue": "={{ $('Build high risk payload').first().json.enforce }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "notes": "True = stop automation. False = monitoring mode, fall through to the spam gate and carry on as normal."
+    },
+    {
+      "id": "8f989a3e-12fa-4094-9fad-17c402b3fc80",
+      "name": "Do not proceed (high risk)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3968,
+        1616
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "hr-dnp-p",
+              "name": "proceedWithAutomation",
+              "type": "boolean",
+              "value": false
+            },
+            {
+              "id": "hr-dnp-r",
+              "name": "fail_reason",
+              "type": "string",
+              "value": "high_risk_keyword"
+            },
+            {
+              "id": "hr-dnp-t",
+              "name": "high_risk_tier",
+              "type": "string",
+              "value": "={{ $('Build high risk payload').first().json.tier }}"
+            },
+            {
+              "id": "hr-dnp-q",
+              "name": "high_risk_queue",
+              "type": "string",
+              "value": "={{ $('Build high risk payload').first().json.queue }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Same return shape as every other terminal - the calling workflow needs no change. The note and status were already written by Zendesk: Flag high risk, so this does NOT route through the shared loud-fail path."
+    },
+    {
+      "id": "ef3d25a8-f5a7-43cb-a092-ab7e344e927a",
+      "name": "Sticky High Risk",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2360,
+        2100
+      ],
+      "parameters": {
+        "color": 3,
+        "content": "## 1d) High-risk keyword check\n\nRuns after the blocklist and auto-solve tables, and **before the spam gate and the dedupe merge** - both of those solve or close the ticket silently, and a legal threat or a self-harm mention must never disappear that way.\n\n**Table:** `cs_high_risk_keywords`. Global, no `project_key` - one phrase list for every brand. Rows are switched on and off with `active`.\n\n**Matching:** normalise both sides, then token-sequence match anchored with `(^| )needle( |$)`. A multi-word phrase must match as a consecutive run, so `several emails` never fires on `several` alone.\n\n**Tier precedence C > A > B**, matching queue urgency (safety-review, Priority, Standard). A ticket matching several tiers takes the highest-risk one. Every match is listed in the note, not just the winner.\n\n**Two independent switches in cs_project_config:**\n- `high_risk_check_enabled` - master on/off, per project, opt-in\n- `high_risk_enforce` - OFF = monitoring (tag + note only, bot still replies), ON = tag + note + status open + `allow_automation _no_` + automation stops\n\nStart with enforce OFF to size the daily volume per tier before committing staff to the queues. Tier B profanity in particular could pull a large share of ordinary refund tickets out of automation.",
+        "height": 460,
+        "width": 460
+      }
     }
   ],
   "connections": {
@@ -1790,7 +2026,7 @@
         ],
         [
           {
-            "node": "Spam check enabled?",
+            "node": "High risk check enabled?",
             "type": "main",
             "index": 0
           }
@@ -1915,6 +2151,104 @@
         [
           {
             "node": "Zendesk: Solve silently",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High risk check enabled?": {
+      "main": [
+        [
+          {
+            "node": "Get High Risk Keywords",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Spam check enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get High Risk Keywords": {
+      "main": [
+        [
+          {
+            "node": "Match High Risk Keywords",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match High Risk Keywords": {
+      "main": [
+        [
+          {
+            "node": "High risk match?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High risk match?": {
+      "main": [
+        [
+          {
+            "node": "Build high risk payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Spam check enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build high risk payload": {
+      "main": [
+        [
+          {
+            "node": "Zendesk: Flag high risk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk: Flag high risk": {
+      "main": [
+        [
+          {
+            "node": "High risk enforce?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High risk enforce?": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed (high risk)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Spam check enabled?",
             "type": "main",
             "index": 0
           }
