@@ -1,0 +1,505 @@
+{
+  "id": "DzHNTyh585weiSp9",
+  "name": "Lokalise - weekly localization status (v2)",
+  "description": "Weekly localization status for Confluence. Read-only. Scans the QR-CODE-App GitHub org for committed locale files, pulls Lokalise per-project language progress and string status, joins them, and renders an HTML table sorted alphabetically. Excludes html/l",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-15T08:55:47.489Z",
+  "updatedAt": "2026-09-15T09:23:04.266Z",
+  "isArchived": false,
+  "versionId": "342666e9-3751-4c5d-a5d9-c41eee2814dd",
+  "versionCounter": 5,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "531150e7-c6ae-4fd2-8427-8005fdd359ca",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        368
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "5ec80535-0552-405e-974e-fcae14ce4fe4",
+      "name": "GH List Repos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        368
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.github.com/orgs/QR-CODE-App/repos",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "per_page",
+              "value": "100"
+            },
+            {
+              "name": "type",
+              "value": "all"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "c7cbaaa2-ad8a-465b-a53e-30c97f43d00a",
+      "name": "GH Expand",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        368
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "return $input.all().filter(i => i.json && i.json.name).map(i => ({ json: {\n  repo: i.json.name, default_branch: i.json.default_branch || 'main'\n}}));"
+      }
+    },
+    {
+      "id": "8dcdb2b5-f1d7-4326-966a-00e71f1d9de1",
+      "name": "Repo Map",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const map = {};\nfor (const it of $input.all()) {\n  const j = it.json;\n  if (!j || !j.repo) continue;\n  map[j.repo] = { locales: j.locales || [], roots: j.roots || {} };\n}\nreturn [{ json: { map: map, repo_count: Object.keys(map).length } }];"
+      }
+    },
+    {
+      "id": "b166fc81-3f36-4602-855b-9f526cab1b70",
+      "name": "Lokalise List Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "100"
+            },
+            {
+              "name": "page",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "25ad9931-8073-4cff-9f09-48daf70843dc",
+      "name": "Lokalise Expand",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const r = $input.first().json || {};\nconst body = r.body || {};\nif (!Array.isArray(body.projects)) throw new Error('No projects array. Status ' + r.statusCode);\n\nconst DROP = [/html/i, /legal/i, /shared/i, /multiproject/i, /myevisa/i, /visahub/i, /^marketing$/i, /demo/i];\nreturn body.projects\n  .filter(p => !DROP.some(rx => rx.test(p.name || '')))\n  .map(p => ({ json: { project_id: p.project_id, name: p.name } }));"
+      }
+    },
+    {
+      "id": "b99c730c-a474-44c4-93b3-47c00101290a",
+      "name": "Build Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const PROJECT_TO_REPO = {\n  'Personality.co': 'personality-app::src/locale',\n  'Personality - Members area content': 'personality-app::src/locale-members',\n  'Chat AI - frontend': 'aichat-frontend',\n  'Chat AI (emails)': 'aichat-backend',\n  'Chatbot': 'chatbot-backend',\n  'Realchecker (FE)': 'realchecker-frontend',\n  'Realchecker (BE)': 'realchecker-backend',\n  'Mobitrace': 'mobitrace-frontend',\n  'Mobitrace - backend/emails': 'mobitrace-backend',\n  'My Image': 'myimage-frontend',\n  'My Image - Backend': 'myimage-backend',\n  'WAPP': 'mywapp-frontend',\n  'WAPP Backend (emails)': 'mywapp-backend',\n  'PDF Editor': 'pdfhelp-frontend',\n  'PDF Editor (BE- emails)': 'pdfhelp-backend',\n  'PDF Editor monorepo': 'pdfhelp-monorepo',\n  'My QR Code': 'qr-frontend',\n  'VIN Checker': 'vinchecker-frontend',\n  'ResumeWise': 'resumewise-frontend',\n  'ResumeWise - backend/emails': 'resumewise-backend',\n  'Love Language - Static': 'lovelanguage-frontend',\n  'Love Language  - Members areas DEV': 'lovelanguage-backend',\n  'Mindspree': 'mindspree-app',\n  'IQ test': 'iqtest-monorepo',\n  'BrainIQ Test': 'iqtest-monorepo',\n  'Unicopy': 'aichecker-frontend',\n  'Unicopy (backend)': 'aichecker-app'\n};\n\nconst PROJECT_TO_PRODUCT = {\n  'Chat AI - frontend': 'Chat AI',\n  'Chat AI (emails)': 'Chat AI',\n  'Chatbot': 'Chatbot',\n  'IQ test': 'IQ Test',\n  'BrainIQ Test': 'IQ Test',\n  'Love Language - Static': 'Love Language',\n  'Love Language  - Members areas DEV': 'Love Language',\n  'Mindspree': 'Mindspree',\n  'Mobitrace': 'Mobitrace',\n  'Mobitrace - backend/emails': 'Mobitrace',\n  'My Image': 'My Image',\n  'My Image - Backend': 'My Image',\n  'My QR Code': 'My QR Code',\n  'PDF Editor': 'PDF Editor',\n  'PDF Editor (BE- emails)': 'PDF Editor',\n  'PDF Editor monorepo': 'PDF Editor',\n  'Personality.co': 'Personality',\n  'Personality - Members area content': 'Personality',\n  'QRcreate': 'QRcreate',\n  'Realchecker (FE)': 'Realchecker',\n  'Realchecker (BE)': 'Realchecker',\n  'ResumeWise': 'ResumeWise',\n  'ResumeWise - backend/emails': 'ResumeWise',\n  'Unicopy': 'Unicopy',\n  'Unicopy (backend)': 'Unicopy',\n  'VIN Checker': 'VIN Checker',\n  'WAPP': 'WAPP',\n  'WAPP Backend (emails)': 'WAPP'\n};\n\nconst repoData = $('Repo Map').first().json.map || {};\nconst rows = $input.all().map(i => i.json).filter(r => r.http_status === 200);\n\nfunction repoLocales(spec) {\n  if (!spec) return null;\n  const [repo, root] = spec.split('::');\n  const entry = repoData[repo];\n  if (!entry) return null;\n  if (root) return entry.roots[root] || [];\n  return entry.locales || [];\n}\n\nconst supported = [];\nconst notInCode = [];\n\nfor (const r of rows) {\n  const spec = PROJECT_TO_REPO[r.name] || null;\n  const rl = repoLocales(spec);\n  const lokSet = r.targets.map(t => t.iso);\n  const base = {\n    product: PROJECT_TO_PRODUCT[r.name] || r.name,\n    project: r.name,\n    language_count: r.target_count,\n    locales: r.targets.map(t => t.progress < 100 ? t.iso + ' (' + t.progress + '%)' : t.iso).join(' ') || '-',\n    progress: r.avg_progress,\n    repo: spec ? spec.replace('::', ' / ') : '-'\n  };\n\n  if (!rl) {\n    notInCode.push(Object.assign({}, base, { missing: 'No repo identified', missing_count: null }));\n    continue;\n  }\n\n  const rset = rl.filter(l => l !== 'en');\n  const notInRepo = lokSet.filter(l => !rset.includes(l));\n  const notInLok = rset.filter(l => !lokSet.includes(l));\n\n  if (notInRepo.length) {\n    notInCode.push(Object.assign({}, base, { missing: notInRepo.join(' '), missing_count: notInRepo.length }));\n  } else {\n    supported.push(Object.assign({}, base, {\n      note: notInLok.length ? 'in code but not in Lokalise: ' + notInLok.join(' ') : 'match'\n    }));\n  }\n}\n\nfunction byProduct(a, b) {\n  return a.product.localeCompare(b.product, 'en', { sensitivity: 'base' })\n      || a.project.localeCompare(b.project, 'en', { sensitivity: 'base' });\n}\nsupported.sort(byProduct);\nnotInCode.sort(byProduct);\n\nfunction esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }\n\nfunction table(head, list, lastCol) {\n  let h = '<table><tbody><tr>' + head.map(x => '<th>' + x + '</th>').join('') + '</tr>';\n  let prev = null;\n  for (const o of list) {\n    const first = o.product !== prev;\n    prev = o.product;\n    h += '<tr>' +\n      '<td>' + (first ? '<strong>' + esc(o.product) + '</strong>' : '') + '</td>' +\n      '<td>' + esc(o.project) + '</td>' +\n      '<td>' + o.language_count + '</td>' +\n      '<td>' + esc(o.locales) + '</td>' +\n      '<td>' + o.progress + '%</td>' +\n      '<td>' + esc(o.repo) + '</td>' +\n      '<td>' + esc(lastCol(o)) + '</td>' +\n    '</tr>';\n  }\n  return h + '</tbody></table>';\n}\n\nlet html = '<p>Generated ' + new Date().toISOString().slice(0,10) + ' from Lokalise and the QR-CODE-App GitHub org. Excludes html/legal, shared, demo and internal projects.</p>';\nhtml += '<h2>Localization status</h2>';\nhtml += table(['Product','Project','Languages','Locales','Completed','Repo','Notes'], supported, o => o.note);\nhtml += '<h2>Not yet supported in the code</h2>';\nhtml += '<p>Translated in Lokalise but the locale files are absent from the repository, so these languages cannot ship.</p>';\nhtml += table(['Product','Project','Languages','Locales','Completed','Repo','Missing from repo'], notInCode,\n  o => o.missing_count ? o.missing_count + ': ' + o.missing : o.missing);\n\nreturn [{ json: {\n  generated_at: new Date().toISOString(),\n  repos_scanned: Object.keys(repoData).length,\n  supported_count: supported.length,\n  not_in_code_count: notInCode.length,\n  supported: supported,\n  not_in_code: notInCode,\n  html: html\n}}];"
+      }
+    },
+    {
+      "id": "f5d670da-c5a9-4f8d-902c-45b7c7704e16",
+      "name": "Lokalise Get Stats",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1792,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "batching": {
+          "batch": {
+            "batchInterval": 1200,
+            "batchSize": 1
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "b726c7c1-5b93-45eb-ad61-3fd736ce93e5",
+      "name": "Lokalise Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        272
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const meta = $('Lokalise Loop').first().json;\nconst r = $input.first().json || {};\nconst body = r.body || {};\nconst st = body.statistics || {};\nconst qa = st.qa_issues || {};\nconst EXCLUDE = new Set(['ps', 'pst', 'cus', 'pt_old']);\n\nconst base = body.base_language_iso || 'en';\nconst targets = (Array.isArray(st.languages) ? st.languages : [])\n  .filter(l => !EXCLUDE.has(l.language_iso) && l.language_iso !== base)\n  .map(l => ({ iso: l.language_iso, progress: l.progress }))\n  .sort((a,b) => a.iso.localeCompare(b.iso));\n\nconst avg = targets.length ? Math.round(targets.reduce((s,l) => s + l.progress, 0) / targets.length) : 0;\n\nreturn [{ json: {\n  project_id: meta.project_id,\n  name: body.name || meta.name,\n  http_status: r.statusCode,\n  base_iso: base,\n  target_count: targets.length,\n  avg_progress: avg,\n  not_reviewed: qa.not_reviewed || 0,\n  unverified: qa.unverified || 0,\n  targets: targets\n}}];"
+      }
+    },
+    {
+      "id": "8ac7a0a9-e2b7-44ce-86a3-a12cc879b3f9",
+      "name": "Lokalise Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1568,
+        96
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "d05e044b-a34f-4edb-abcd-29a2be58c517",
+      "name": "GH Get Tree",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        288
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/QR-CODE-App/{{ $json.repo }}/git/trees/{{ $json.default_branch }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "recursive",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "a9992848-775e-434f-9180-f0e01e20192b",
+      "name": "GH Extract Locales",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        432
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const meta = $('GH Loop').first().json;\nconst res = $input.first().json || {};\nconst body = res.body || {};\nconst tree = Array.isArray(body.tree) ? body.tree : [];\n\nconst LOCALE_DIR = /^(locales?|i18n|lang|langs|languages|messages|translations?|intl)([-_][a-z0-9]+)?$/i;\nconst EXT = /\\.(json|ts|tsx|js|mjs|cjs|ya?ml|po|pot|mo|properties|xlf|xliff|arb|strings|resx)$/i;\nconst ISO = new Set(('aa ab ae af ak am an ar as av ay az ba be bg bh bi bm bn bo br bs ca ce ch co cr cs cu cv cy ' +\n 'da de dv dz ee el en eo es et eu fa ff fi fj fo fr fy ga gd gl gn gu gv ha he hi ho hr ht hu hy hz ia id ie ig ' +\n 'ii ik io is it iu ja jv ka kg ki kj kk kl km kn ko kr ks ku kv kw ky la lb lg li ln lo lt lu lv mg mh mi mk ml ' +\n 'mn mr ms mt my na nb nd ne ng nl nn no nr nv ny oc oj om or os pa pi pl ps pt qu rm rn ro ru rw sa sc sd se sg ' +\n 'si sk sl sm sn so sq sr ss st su sv sw ta te tg th ti tk tl tn to tr ts tt tw ty ug uk ur uz ve vi vo wa wo xh ' +\n 'yi yo za zh zu fil ceb haw kab pst cus').split(/\\s+/));\nconst SKIP = new Set(['ps', 'pst', 'cus', 'pt_old', 'pt_BR']);\n\nfunction isLocaleToken(tok) {\n  const t = String(tok).toLowerCase();\n  const m = t.match(/^([a-z]{2,3})(?:[-_]([a-z]{2,4}))?$/);\n  if (!m) return null;\n  if (!ISO.has(m[1])) return null;\n  return m[2] ? m[1] + '_' + m[2].toUpperCase() : m[1];\n}\n\nconst all = {};\nconst roots = {};\nfor (const n of tree) {\n  if (n.type !== 'blob') continue;\n  const p = n.path;\n  if (!p) continue;\n  if (/(^|\\/)(node_modules|dist|build|\\.next|vendor|coverage)(\\/|$)/i.test(p)) continue;\n  const parts = p.split('/');\n  let idx = -1;\n  for (let i = 0; i < parts.length - 1; i++) if (LOCALE_DIR.test(parts[i])) idx = i;\n  if (idx === -1) continue;\n  const rest = parts.slice(idx + 1);\n  if (!rest.length) continue;\n  let cand = rest[0];\n  if (rest.length === 1) {\n    if (!EXT.test(cand)) continue;\n    cand = cand.replace(EXT, '');\n  }\n  const loc = isLocaleToken(cand);\n  if (!loc || SKIP.has(loc)) continue;\n  all[loc] = true;\n  const root = parts.slice(0, idx + 1).join('/');\n  roots[root] = roots[root] || {};\n  roots[root][loc] = true;\n}\n\nconst rootMap = {};\nfor (const r of Object.keys(roots)) rootMap[r] = Object.keys(roots[r]).sort();\n\nreturn [{ json: { repo: meta.repo, locales: Object.keys(all).sort(), roots: rootMap } }];"
+      }
+    },
+    {
+      "id": "284086d7-5d14-4862-bf0c-1f7e68872412",
+      "name": "GH Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        672,
+        368
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "GH List Repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GH List Repos": {
+      "main": [
+        [
+          {
+            "node": "GH Expand",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GH Expand": {
+      "main": [
+        [
+          {
+            "node": "GH Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Repo Map": {
+      "main": [
+        [
+          {
+            "node": "Lokalise List Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lokalise List Projects": {
+      "main": [
+        [
+          {
+            "node": "Lokalise Expand",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lokalise Expand": {
+      "main": [
+        [
+          {
+            "node": "Lokalise Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lokalise Get Stats": {
+      "main": [
+        [
+          {
+            "node": "Lokalise Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lokalise Shape": {
+      "main": [
+        [
+          {
+            "node": "Lokalise Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lokalise Loop": {
+      "main": [
+        [
+          {
+            "node": "Build Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Lokalise Get Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GH Get Tree": {
+      "main": [
+        [
+          {
+            "node": "GH Extract Locales",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GH Extract Locales": {
+      "main": [
+        [
+          {
+            "node": "GH Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GH Loop": {
+      "main": [
+        [
+          {
+            "node": "Repo Map",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GH Get Tree",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "DzHNTyh585weiSp9",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-15T08:55:47.491Z",
+      "updatedAt": "2026-09-15T08:55:47.491Z"
+    }
+  ],
+  "activeVersion": null
+}
