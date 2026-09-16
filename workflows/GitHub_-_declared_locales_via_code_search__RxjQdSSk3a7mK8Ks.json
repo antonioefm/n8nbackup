@@ -1,0 +1,371 @@
+{
+  "id": "RxjQdSSk3a7mK8Ks",
+  "name": "GitHub - declared locales via code search",
+  "description": "Read-only: runs eight GitHub code searches across the QR-CODE-App org to locate in-code locale declarations, fetches each candidate file and parses the enabled locale list, flagging repos where two files disagree.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-15T09:31:49.108Z",
+  "updatedAt": "2026-09-15T09:35:59.221Z",
+  "isArchived": false,
+  "versionId": "44410c29-5871-4e15-8f49-126de9f84bd3",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "bfecbfe7-8e39-44be-b929-2fecac5abe9e",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        368
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "10ce8548-814a-41a2-90f6-f352d0af8b14",
+      "name": "Search Queries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        368
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const Q = [\n  'DEFAULT_LOCALE org:QR-CODE-App',\n  'SUPPORTED_LOCALES org:QR-CODE-App',\n  'AVAILABLE_LOCALES org:QR-CODE-App',\n  'availableLocales org:QR-CODE-App',\n  'supportedLocales org:QR-CODE-App',\n  'available_locales org:QR-CODE-App',\n  'localePrefix org:QR-CODE-App',\n  'defaultLocale org:QR-CODE-App'\n];\nreturn Q.map(q => ({ json: { q } }));"
+      }
+    },
+    {
+      "id": "056b8795-6a5f-4d46-b398-af35ddefc7f7",
+      "name": "Dedupe Files",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const seen = new Set();\nconst perRepo = {};\nfor (const it of $input.all()) {\n  const { repo, path } = it.json;\n  const k = repo + '::' + path;\n  if (seen.has(k)) continue;\n  seen.add(k);\n  perRepo[repo] = perRepo[repo] || [];\n  perRepo[repo].push(path);\n}\nconst out = [];\nfor (const repo of Object.keys(perRepo).sort()) {\n  const paths = perRepo[repo]\n    .sort((a,b) => {\n      const sa = /i18n|locale|lang|routing|config/i.test(a) ? 0 : 1;\n      const sb = /i18n|locale|lang|routing|config/i.test(b) ? 0 : 1;\n      return sa - sb || a.length - b.length;\n    })\n    .slice(0, 8);\n  for (const p of paths) out.push({ json: { repo, path: p } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "98963f8b-c238-4b49-a5ae-1907e5d6b7ae",
+      "name": "Summarize Declared",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const rows = $input.all().map(i => i.json).filter(r => r.count > 0 || r.env_driven);\nconst byRepo = {};\nfor (const r of rows) {\n  byRepo[r.repo] = byRepo[r.repo] || [];\n  byRepo[r.repo].push(r);\n}\nconst out = [];\nfor (const repo of Object.keys(byRepo).sort()) {\n  const files = byRepo[repo].sort((a,b) => b.count - a.count);\n  const literal = files.filter(f => f.count > 1 && !f.env_driven);\n  const env = files.filter(f => f.env_driven);\n  let status, declared = [];\n  if (env.length && !literal.length) {\n    status = 'set at runtime by ' + (env[0].env_var || 'an env var');\n  } else if (literal.length) {\n    declared = literal[0].declared;\n    status = 'static list in ' + literal[0].path;\n    const disagree = literal.filter(f => f.declared.join(',') !== literal[0].declared.join(','));\n    if (disagree.length) status += ' (conflicts with ' + disagree[0].path + ')';\n    if (env.length) status += '; also an env fallback in ' + env[0].path;\n  } else {\n    status = 'only a default locale found, no list';\n  }\n  out.push({\n    repo, status, declared,\n    env_driven: !!env.length && !literal.length,\n    files: files.map(f => ({ path: f.path, declared: f.declared, env_driven: f.env_driven, env_var: f.env_var }))\n  });\n}\nreturn [{ json: { repos: out.length, detail: out } }];"
+      }
+    },
+    {
+      "id": "7c883ab1-089a-409f-8aaa-242de5c5e127",
+      "name": "Get File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/QR-CODE-App/{{ $json.repo }}/contents/{{ encodeURI($json.path) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "479347fb-03e4-42ac-a873-53a9f1919c6e",
+      "name": "Parse Declared",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        272
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const meta = $('File Loop').first().json;\nconst b = ($input.first().json || {}).body || {};\nlet text = '';\ntry { if (b.content) text = Buffer.from(b.content, b.encoding || 'base64').toString('utf8'); } catch (e) {}\n\nconst ISO = new Set(('cs da de el en es et fi fil fr hr hu id it ja ko lt lv ms nl no pl pt ro sk sl sv th tr uk vi zh ar ru he hi nb nn')\n  .split(/\\s+/));\n\nconst found = {};\nlet envDriven = false;\nlet envVar = null;\n\nconst BRACKET = /\\[([^\\[\\]]{0,1500})\\]/g;\nlet m;\nwhile ((m = BRACKET.exec(text)) !== null) {\n  const before = text.slice(Math.max(0, m.index - 140), m.index);\n  if (!/locale|lang|i18n/i.test(before)) continue;\n  const inner = m[1];\n  const toks = inner.match(/(?:['\\\"`]([a-zA-Z_-]{2,6})['\\\"`])|(?::([a-z]{2,3}(?:[_-][a-zA-Z]{2,4})?)\\b)/g) || [];\n  if (!toks.length) continue;\n  const vals = toks.map(t => t.replace(/['\\\"`:]/g, '').replace('-', '_'));\n  const ok = vals.every(v => ISO.has(v) || ISO.has(v.split('_')[0]));\n  if (!ok) continue;\n\n  // Is this literal actually a fallback for a runtime-configured list?\n  const ctx = before + inner + text.slice(m.index + m[0].length, m.index + m[0].length + 60);\n  const envMatch = ctx.match(/process\\.env\\.([A-Z0-9_]+)|ENV\\[['\\\"]([A-Z0-9_]+)['\\\"]\\]|Deno\\.env\\.get\\(['\\\"]([A-Z0-9_]+)['\\\"]\\)/);\n  if (envMatch && /\\?\\?|\\|\\||fallback|default/i.test(ctx)) {\n    envDriven = true;\n    envVar = envVar || envMatch[1] || envMatch[2] || envMatch[3];\n    continue;\n  }\n  for (const v of vals) found[v] = true;\n}\n\nif (!envDriven) {\n  const envAny = text.match(/(?:process\\.env\\.|ENV\\[['\\\"]|Deno\\.env\\.get\\(['\\\"])([A-Z0-9_]*(?:LOCALE|LANGUAGE)[A-Z0-9_]*)/);\n  if (envAny) { envDriven = true; envVar = envAny[1]; }\n}\n\nconst def = text.match(/(?:DEFAULT_LOCALE|defaultLocale)\\s*[:=]\\s*['\\\"`]([a-zA-Z_-]{2,6})['\\\"`]/);\nconst defaultLocale = def ? def[1].replace('-', '_') : null;\n\nconst declared = Object.keys(found).sort();\nreturn [{ json: {\n  repo: meta.repo,\n  path: meta.path,\n  declared,\n  count: declared.length,\n  env_driven: envDriven,\n  env_var: envVar,\n  default_locale: defaultLocale\n}}];"
+      }
+    },
+    {
+      "id": "81109fee-c37a-4841-8712-7c0c1ac23680",
+      "name": "File Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        896,
+        96
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "6ddef24b-7ba8-4f49-a946-d0c2369376e1",
+      "name": "Code Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        288
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.github.com/search/code",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $json.q }}"
+            },
+            {
+              "name": "per_page",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchInterval": 2500,
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 8000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "79f1858f-4e9b-45db-9660-43968f90070c",
+      "name": "Collect Hits",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        432
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const b = ($input.first().json || {}).body || {};\nconst items = Array.isArray(b.items) ? b.items : [];\nconst SKIP = /(^|\\/)(node_modules|dist|build|\\.next|vendor|coverage|spec|test|tests|__tests__)(\\/|$)/i;\nconst out = [];\nfor (const it of items) {\n  const repo = it.repository && it.repository.name;\n  const path = it.path;\n  if (!repo || !path) continue;\n  if (SKIP.test(path)) continue;\n  if (/\\.(md|lock|snap|env.*|Dockerfile)$/i.test(path)) continue;\n  if (!/\\.(ts|tsx|js|mjs|cjs|rb|json)$/i.test(path)) continue;\n  out.push({ json: { repo, path } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "fa8c6aaa-b8d4-45db-803d-69af5922d537",
+      "name": "Query Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        448,
+        368
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Search Queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Queries": {
+      "main": [
+        [
+          {
+            "node": "Query Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedupe Files": {
+      "main": [
+        [
+          {
+            "node": "File Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get File": {
+      "main": [
+        [
+          {
+            "node": "Parse Declared",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Declared": {
+      "main": [
+        [
+          {
+            "node": "File Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "File Loop": {
+      "main": [
+        [
+          {
+            "node": "Summarize Declared",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code Search": {
+      "main": [
+        [
+          {
+            "node": "Collect Hits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Hits": {
+      "main": [
+        [
+          {
+            "node": "Query Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Loop": {
+      "main": [
+        [
+          {
+            "node": "Dedupe Files",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "RxjQdSSk3a7mK8Ks",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-15T09:31:49.111Z",
+      "updatedAt": "2026-09-15T09:31:49.111Z"
+    }
+  ],
+  "activeVersion": null
+}
