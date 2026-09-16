@@ -5,10 +5,10 @@
   "active": true,
   "activeVersionId": "3a850134-9215-4dc9-a142-b4fca7fe0847",
   "createdAt": "2026-06-15T13:36:07.491Z",
-  "updatedAt": "2026-08-27T15:17:24.963Z",
+  "updatedAt": "2026-09-15T08:18:05.598Z",
   "isArchived": false,
-  "versionId": "f6f1444b-2116-4881-9d64-4c6e3f4e72f3",
-  "versionCounter": 13,
+  "versionId": "335f788c-d642-4636-92d1-fda9bb204bf9",
+  "versionCounter": 14,
   "sourceWorkflowId": null,
   "triggerCount": 0,
   "nodes": [
@@ -670,7 +670,7 @@
         1860
       ],
       "parameters": {
-        "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\n\nconst ticketId = trig.body['ticket.id'];\nconst noteBody = $('Note: Auto-solve email').first().json.note_body;\n\nconst ticket = {\n  status: 'solved',\n  additional_tags: ['autosolve_email'],\n  comment: { public: false, body: noteBody }\n};\n\n// Zendesk enforces required custom fields on the solve transition and validates\n// against the INCOMING payload, not the stored ticket:\n//   422 RecordInvalid - \"Language: is required when solving a ticket\"\n// So every required field has to ride along in this one PUT.\n// Language is required on 7 of the 9 brands running this automation.\nconst fields = [];\n\nconst catFieldId = Number(cfg.ticket_custom_field_category);\nconst catValue = cfg.category_value_duplicate_contact;\nif (Number.isFinite(catFieldId) && catFieldId > 0\n    && catValue !== null && catValue !== undefined && String(catValue).trim() !== '') {\n  fields.push({ id: catFieldId, value: String(catValue) });\n}\n\nconst langFieldId = Number(cfg.ticket_field_language_id);\nconst langValue = cfg.language_value_english;\nif (Number.isFinite(langFieldId) && langFieldId > 0\n    && langValue !== null && langValue !== undefined && String(langValue).trim() !== '') {\n  fields.push({ id: langFieldId, value: String(langValue) });\n}\n\nif (fields.length > 0) {\n  ticket.custom_fields = fields;\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    note_body: noteBody,\n    fields_applied: fields.length,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
+        "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\n\nconst ticketId = trig.body['ticket.id'];\nconst noteBody = $('Note: Auto-solve email').first().json.note_body;\n\nconst ticket = {\n  status: 'solved',\n  comment: { public: false, body: noteBody }\n};\n\n// TAGS. `additional_tags` is ONLY supported on the Update Many Tickets endpoint.\n// On a single-ticket PUT Zendesk silently discards it - 200 response, no tag\n// event in the audit. This tag was never actually being applied. A single-ticket\n// PUT only accepts `tags`, which replaces the array, so merge the existing ones.\nconst liveTicket = $('Get ticket status').first().json.ticket || {};\nconst tags = Array.isArray(liveTicket.tags) ? liveTicket.tags.slice() : [];\nif (tags.indexOf('autosolve_email') === -1) {\n  tags.push('autosolve_email');\n}\nticket.tags = tags;\n\n// Zendesk enforces required custom fields on the solve transition and validates\n// against the INCOMING payload, not the stored ticket:\n//   422 RecordInvalid - \"Language: is required when solving a ticket\"\n// So every required field has to ride along in this one PUT.\nconst fields = [];\n\nconst catFieldId = Number(cfg.ticket_custom_field_category);\nconst catValue = cfg.category_value_duplicate_contact;\nif (Number.isFinite(catFieldId) && catFieldId > 0\n    && catValue !== null && catValue !== undefined && String(catValue).trim() !== '') {\n  fields.push({ id: catFieldId, value: String(catValue) });\n}\n\nconst langFieldId = Number(cfg.ticket_field_language_id);\nconst langValue = cfg.language_value_english;\nif (Number.isFinite(langFieldId) && langFieldId > 0\n    && langValue !== null && langValue !== undefined && String(langValue).trim() !== '') {\n  fields.push({ id: langFieldId, value: String(langValue) });\n}\n\nif (fields.length > 0) {\n  ticket.custom_fields = fields;\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    note_body: noteBody,\n    fields_applied: fields.length,\n    tags_sent: ticket.tags,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
       },
       "notes": "Builds the PUT body natively so the category field can be set alongside status."
     },
