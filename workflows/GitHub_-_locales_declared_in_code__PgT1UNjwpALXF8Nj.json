@@ -1,0 +1,398 @@
+{
+  "id": "PgT1UNjwpALXF8Nj",
+  "name": "GitHub - locales declared in code",
+  "description": "Read-only: finds the in-code locale declaration (constants/locales.ts, i18n config, middleware, next.config) in every QR-CODE-App repo and extracts the enabled locale list, which is the real gate on what ships.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-15T09:17:33.596Z",
+  "updatedAt": "2026-09-15T09:17:37.974Z",
+  "isArchived": false,
+  "versionId": "b2160069-e55e-452d-af1e-ca955e31310b",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "964a0e0a-7ee7-4cbc-a9cf-da3fd6263221",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        480
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "125c57f3-610b-4dfa-a70c-f9bbba8c5e90",
+      "name": "GH List Repos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        480
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.github.com/orgs/QR-CODE-App/repos",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "per_page",
+              "value": "100"
+            },
+            {
+              "name": "type",
+              "value": "all"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "832c12cd-ef25-4d4a-bbf4-3005d7c4b75e",
+      "name": "GH Expand",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        480
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "return $input.all().filter(i => i.json && i.json.name)\n  .map(i => ({ json: { repo: i.json.name, default_branch: i.json.default_branch || 'main' } }));"
+      }
+    },
+    {
+      "id": "6468a005-d8a2-421b-b5fc-be6e8fe4fdc8",
+      "name": "Summarize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const rows = $input.all().map(i => i.json);\nconst byRepo = {};\nfor (const r of rows) {\n  if (!r.repo) continue;\n  byRepo[r.repo] = byRepo[r.repo] || { repo: r.repo, files: [] };\n  if (r.matched) byRepo[r.repo].files.push({ path: r.path, declared: r.declared });\n}\nconst out = Object.keys(byRepo).sort().map(k => {\n  const e = byRepo[k];\n  e.files.sort((a,b) => b.declared.length - a.declared.length);\n  return { repo: k, best: e.files[0] || null, all_files: e.files };\n});\nreturn [{ json: {\n  repos: out.length,\n  with_declaration: out.filter(o => o.best).length,\n  detail: out\n}}];"
+      }
+    },
+    {
+      "id": "1413faab-4bbc-4a2f-9e86-9a496d291768",
+      "name": "Get File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/QR-CODE-App/{{ $json.repo }}/contents/{{ encodeURI($json.path || \"README.md\") }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "ref",
+              "value": "={{ $json.branch }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "c295d06c-e1b3-4048-bf7d-01a9c9692f76",
+      "name": "Parse Locale List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        240
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const meta = $('File Loop').first().json;\nif (!meta.path) return [{ json: { repo: meta.repo, path: null, declared: [], matched: false } }];\n\nconst b = ($input.first().json || {}).body || {};\nlet text = '';\ntry { if (b.content) text = Buffer.from(b.content, b.encoding || 'base64').toString('utf8'); } catch (e) { text = ''; }\n\nconst ISO = new Set(('cs da de el en es et fi fil fr hr hu id it ja ko lt lv ms nl no pl pt ro sk sl sv th tr uk vi ' +\n 'ar bg he hi nb nn ru zh pt_BR en_GB en_US').split(/\\s+/));\n\nconst KEYS = /(LOCALES|SUPPORTED_LOCALES|locales|languages|SUPPORTED_LANGUAGES|i18n)\\s*[:=]\\s*\\[([^\\]]{0,2000})\\]/gi;\nconst found = {};\nlet m;\nwhile ((m = KEYS.exec(text)) !== null) {\n  const inner = m[2];\n  const toks = inner.match(/['\"`]([a-zA-Z_-]{2,6})['\"`]/g) || [];\n  for (const t of toks) {\n    const v = t.replace(/['\"`]/g, '');\n    const norm = v.replace('-', '_');\n    if (ISO.has(norm) || ISO.has(norm.split('_')[0])) found[norm] = true;\n  }\n}\nconst defMatch = text.match(/DEFAULT_LOCALE\\s*=\\s*['\"`]([a-zA-Z_-]{2,6})['\"`]/);\nif (defMatch) found[defMatch[1]] = true;\n\nconst declared = Object.keys(found).sort();\nreturn [{ json: {\n  repo: meta.repo,\n  path: meta.path,\n  declared: declared,\n  count: declared.length,\n  matched: declared.length > 0\n}}];"
+      }
+    },
+    {
+      "id": "e288f177-1fe9-4fd3-913e-941b12176fc9",
+      "name": "File Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        896,
+        224
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "eba0400e-34b1-4fef-b961-e55e81997684",
+      "name": "GH Get Tree",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        480
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/QR-CODE-App/{{ $json.repo }}/git/trees/{{ $json.default_branch }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "recursive",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "ada617fd-ddc5-4d1d-8201-c835175ce4fc",
+      "name": "Find Candidates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        560
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const meta = $('Tree Loop').first().json;\nconst body = ($input.first().json || {}).body || {};\nconst tree = Array.isArray(body.tree) ? body.tree : [];\n\nconst PATTERNS = [\n  /(^|\\/)constants\\/locales?\\.(ts|tsx|js|mjs)$/i,\n  /(^|\\/)config\\/locales?\\.(ts|tsx|js|mjs)$/i,\n  /(^|\\/)i18n(\\.config)?\\.(ts|tsx|js|mjs|json)$/i,\n  /(^|\\/)middleware\\.(ts|js)$/i,\n  /(^|\\/)next\\.config\\.(js|mjs|ts)$/i,\n  /(^|\\/)locales?\\.(ts|js|mjs)$/i,\n  /(^|\\/)languages?\\.(ts|js|mjs)$/i\n];\nconst SKIP = /(^|\\/)(node_modules|dist|build|\\.next|vendor|coverage)(\\/|$)/i;\n\nconst hits = [];\nfor (const n of tree) {\n  if (n.type !== 'blob') continue;\n  const p = n.path || '';\n  if (SKIP.test(p)) continue;\n  if (/(^|\\/)(locales?|i18n|messages|translations?)\\//i.test(p)) continue;\n  if (n.size && n.size > 40000) continue;\n  if (PATTERNS.some(rx => rx.test(p))) hits.push({ repo: meta.repo, branch: meta.default_branch, path: p, size: n.size || 0 });\n}\nhits.sort((a,b) => a.path.length - b.path.length);\nconst capped = hits.slice(0, 6);\nif (!capped.length) return [{ json: { repo: meta.repo, branch: meta.default_branch, path: null } }];\nreturn capped.map(h => ({ json: h }));"
+      }
+    },
+    {
+      "id": "b61810ba-3a35-4329-8952-74ca1333543e",
+      "name": "Tree Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        672,
+        480
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "GH List Repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GH List Repos": {
+      "main": [
+        [
+          {
+            "node": "GH Expand",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GH Expand": {
+      "main": [
+        [
+          {
+            "node": "Tree Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get File": {
+      "main": [
+        [
+          {
+            "node": "Parse Locale List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Locale List": {
+      "main": [
+        [
+          {
+            "node": "File Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "File Loop": {
+      "main": [
+        [
+          {
+            "node": "Summarize",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GH Get Tree": {
+      "main": [
+        [
+          {
+            "node": "Find Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Candidates": {
+      "main": [
+        [
+          {
+            "node": "Tree Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tree Loop": {
+      "main": [
+        [
+          {
+            "node": "File Loop",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GH Get Tree",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "PgT1UNjwpALXF8Nj",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-15T09:17:33.598Z",
+      "updatedAt": "2026-09-15T09:17:33.598Z"
+    }
+  ],
+  "activeVersion": null
+}
