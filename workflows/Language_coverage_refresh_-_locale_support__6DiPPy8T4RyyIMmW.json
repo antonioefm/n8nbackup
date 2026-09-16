@@ -1,0 +1,319 @@
+{
+  "id": "6DiPPy8T4RyyIMmW",
+  "name": "Language coverage refresh - locale_support",
+  "description": "Nightly probe of 10 production domains x 29 locales; rebuilds the Confluence language-coverage overview page in place.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-15T13:11:18.407Z",
+  "updatedAt": "2026-09-15T14:48:06.514Z",
+  "isArchived": false,
+  "versionId": "b7ab1536-449c-4a67-a240-2e5435f36910",
+  "versionCounter": 4,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "dbbfeffc-fb31-4e58-8bff-15354a786273",
+      "name": "Nightly 03:30 Madrid",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 30 3 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "8932832c-b575-4a5f-9121-1686e7488f84",
+      "name": "Build probe list",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const rows = $input.all();\nconst locales = 'cs da de el es et fi fil fr hr hu id it ko lt lv ms nl no pl pt ro sk sl sv th tr uk vi'.split(' ');\nconst out = [];\nfor (const r of rows) {\n  const d = r.json.domain;\n  if (!d) continue;\n  for (const l of locales) {\n    out.push({ json: { product: r.json.product, domain: d, locale: l, url: 'https://' + d + '/' + l } });\n  }\n}\nreturn out;",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "5980e0c5-986d-482f-8fed-c397ea3f1323",
+      "name": "Probe locale",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "options": {
+          "timeout": 25000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 10,
+              "batchInterval": 400
+            }
+          }
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "6ad69a99-6a97-45dc-bf8f-ec889e6de248",
+      "name": "Build sheet rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const cfg = $('Get products to probe').all();\nconst stranded = {};\nconst strandedList = {};\nfor (const c of cfg) {\n  stranded[c.json.product] = c.json.stranded_count || 0;\n  strandedList[c.json.product] = c.json.stranded_locales || '';\n}\nconst probes = $('Build probe list').all();\nconst res = $input.all();\nconst counts = {};\nfor (let i = 0; i < res.length; i++) {\n  const p = probes[i].json;\n  const r = res[i].json || {};\n  const body = typeof r.body === 'string' ? r.body : '';\n  const m = body.match(/<html[^>]*\\blang\\s*=\\s*[\"']([A-Za-z0-9\\-_]+)/i);\n  const lang = m ? m[1].toLowerCase() : null;\n  const ok = r.statusCode === 200 && lang && (lang === p.locale || lang.split('-')[0] === p.locale);\n  if (!counts[p.product]) counts[p.product] = { product: p.product, domain: p.domain, live: [] };\n  if (ok) counts[p.product].live.push(p.locale);\n}\nconst rows = Object.values(counts).sort(function (a, b) { return b.live.length - a.live.length; });\nconst stamp = new Date().toISOString().slice(0, 10);\nconst out = [];\nfor (const r of rows) {\n  out.push({ json: {\n    'Product': r.product,\n    'Languages live': r.live.length,\n    'Stranded': stranded[r.product] || 0,\n    'Stranded locales': strandedList[r.product] || '',\n    'Locale codes': r.live.join(' '),\n    'Domain': r.domain,\n    'Last checked': stamp\n  } });\n}\nreturn out;",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "8d2fd215-4dce-43cb-a8b3-a775d56094c1",
+      "name": "Sticky Note 77fa2f1c",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        496,
+        0
+      ],
+      "parameters": {
+        "content": "## Language coverage refresh\n\nProbes 10 production domains across 29 locales each night, accepting a locale only when the returned html lang matches the request. Rebuilds Confluence page 1927249974 in place.\n\nThe page is generated - manual edits get overwritten.",
+        "color": 4
+      }
+    },
+    {
+      "id": "442fe1a3-2fca-4f76-ae86-0ecd70fbccd2",
+      "name": "Write counts to sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1500,
+        300
+      ],
+      "parameters": {
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "matchingColumns": [
+            "Product"
+          ],
+          "schema": []
+        },
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1YtvsO767r4yUbMeIhdGz44m5mBHBD9JIXFt_i-K5cCA"
+        },
+        "operation": "appendOrUpdate",
+        "options": {},
+        "resource": "sheet",
+        "sheetName": {
+          "__rl": true,
+          "mode": "id",
+          "value": "0"
+        }
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Gt1NY0PXKDxBUQGy",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "18874a72-a841-4bd0-80c8-60dc6b11a988",
+      "name": "Get products to probe",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "fP85oK32ekwwYfAD"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "condition": "isTrue",
+              "keyName": "probe_enabled"
+            }
+          ]
+        },
+        "matchType": "allConditions",
+        "operation": "get",
+        "resource": "row",
+        "returnAll": true
+      }
+    },
+    {
+      "id": "a1ac23cc-b321-440d-bf95-f4e4292c3bf5",
+      "name": "Write results to table",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1500,
+        460
+      ],
+      "parameters": {
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "product"
+          ],
+          "schema": [],
+          "value": {
+            "last_checked": "={{ $json['Last checked'] }}",
+            "locales_live": "={{ $json['Locale codes'] }}",
+            "locales_live_count": "={{ $json['Languages live'] }}"
+          }
+        },
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "fP85oK32ekwwYfAD"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "condition": "eq",
+              "keyName": "product",
+              "keyValue": "={{ $json.Product }}"
+            }
+          ]
+        },
+        "matchType": "allConditions",
+        "operation": "update",
+        "options": {},
+        "resource": "row"
+      }
+    }
+  ],
+  "connections": {
+    "Build probe list": {
+      "main": [
+        [
+          {
+            "node": "Probe locale",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Probe locale": {
+      "main": [
+        [
+          {
+            "node": "Build sheet rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build sheet rows": {
+      "main": [
+        [
+          {
+            "node": "Write counts to sheet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Write results to table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nightly 03:30 Madrid": {
+      "main": [
+        [
+          {
+            "node": "Get products to probe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get products to probe": {
+      "main": [
+        [
+          {
+            "node": "Build probe list",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Madrid",
+    "saveDataErrorExecution": "all",
+    "executionTimeout": 900
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "6DiPPy8T4RyyIMmW",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-15T13:11:18.410Z",
+      "updatedAt": "2026-09-15T13:11:18.410Z"
+    }
+  ],
+  "activeVersion": null
+}
