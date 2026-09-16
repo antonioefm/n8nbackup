@@ -1,0 +1,221 @@
+{
+  "id": "NDDW3IJvub5y5XPf",
+  "name": "GitHub - remaining product domains",
+  "description": "Read-only: reads env examples, READMEs and Next configs in the remaining repos to recover their production domains.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-15T11:19:30.196Z",
+  "updatedAt": "2026-09-15T11:19:33.892Z",
+  "isArchived": false,
+  "versionId": "f5b20672-41e7-4d62-adf9-c2a3bab9743c",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "8604d9be-2951-47a2-ae9b-5b67d36066ee",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "fd78e825-4ed3-41bf-9044-e435a95a5c6a",
+      "name": "Candidate Files",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const repos = ['myimage-frontend','mywapp-frontend','lovelanguage-frontend','resumewise-frontend','aichecker-frontend','mobitrace-frontend'];\nconst files = ['.env.example','README.md','docs/deployment.md','.env.docker','next.config.mjs','next.config.js'];\nconst out = [];\nfor (const r of repos) for (const f of files) out.push({ json: { repo: r, path: f } });\nreturn out;"
+      }
+    },
+    {
+      "id": "913bdc82-1196-4d52-bca3-3a1836dd3ff4",
+      "name": "Summarize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const byRepo = {};\nfor (const it of $input.all()) {\n  const j = it.json;\n  if (!j.found) continue;\n  byRepo[j.repo] = byRepo[j.repo] || new Set();\n  for (const h of j.hosts) byRepo[j.repo].add(h);\n}\nreturn [{ json: { detail: Object.keys(byRepo).sort().map(k => ({ repo: k, hosts: Array.from(byRepo[k]).sort() })) } }];"
+      }
+    },
+    {
+      "id": "ce292f18-06c2-4c18-9eb2-dbc770ba7535",
+      "name": "Get File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/QR-CODE-App/{{ $json.repo }}/contents/{{ encodeURI($json.path) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "8a892207-9f40-4d2d-a61c-5b4672ffc639",
+      "name": "Extract Hosts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        272
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const meta = $('Loop').first().json;\nconst b = ($input.first().json || {}).body || {};\nlet text = '';\ntry { if (b.content) text = Buffer.from(b.content, b.encoding || 'base64').toString('utf8'); } catch (e) {}\nconst BAD = /(localhost|127\\.0\\.0\\.1|example\\.com|schema\\.org|w3\\.org|sentry|stripe|googleapis|amazonaws|github|npmjs|nextjs|vercel|posthog|groundcover|sendgrid|okta|zendesk|trustpilot|gravatar|gstatic|google)/i;\nconst hosts = {};\nconst rx = /https?:\\/\\/([a-z0-9.-]+\\.[a-z]{2,})/gi;\nlet m;\nwhile ((m = rx.exec(text)) !== null) {\n  const h = m[1].toLowerCase().replace(/^www\\./, '');\n  if (BAD.test(h)) continue;\n  hosts[h] = (hosts[h] || 0) + 1;\n}\nreturn [{ json: { repo: meta.repo, path: meta.path, found: Object.keys(hosts).length > 0, hosts: Object.keys(hosts) } }];"
+      }
+    },
+    {
+      "id": "3c522c96-1de9-4e33-9fdb-f6a8af0af19d",
+      "name": "Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        448,
+        192
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Candidate Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Candidate Files": {
+      "main": [
+        [
+          {
+            "node": "Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get File": {
+      "main": [
+        [
+          {
+            "node": "Extract Hosts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Hosts": {
+      "main": [
+        [
+          {
+            "node": "Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop": {
+      "main": [
+        [
+          {
+            "node": "Summarize",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "NDDW3IJvub5y5XPf",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-15T11:19:30.199Z",
+      "updatedAt": "2026-09-15T11:19:30.199Z"
+    }
+  ],
+  "activeVersion": null
+}
