@@ -3,7 +3,7 @@
   "name": "Unicopy prod - Request eligibility check with merging (first message)",
   "description": null,
   "active": true,
-  "activeVersionId": "e7b732a1-0ea5-4eef-9563-8921b27fe573",
+  "activeVersionId": "bc7bbf05-3ce9-46b5-a903-b772b19bd6b7",
   "createdAt": "2026-08-25T13:40:02.388Z",
   "updatedAt": "2026-09-15T08:17:11.349Z",
   "isArchived": false,
@@ -1960,7 +1960,7 @@
     }
   ],
   "activeVersion": {
-    "versionId": "e7b732a1-0ea5-4eef-9563-8921b27fe573",
+    "versionId": "bc7bbf05-3ce9-46b5-a903-b772b19bd6b7",
     "workflowId": "CMQ8sst0rXkHeasP",
     "nodes": [
       {
@@ -3250,7 +3250,7 @@
       },
       {
         "parameters": {
-          "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\nconst v = $('Parse spam verdict').first().json;\n\nconst ticketId = trig.body['ticket.id'];\n\nconst noteBody = [\n  'Note: This ticket was automatically classified as spam / marketing by the automation'\n    + (v.spam_category ? ' (category: ' + v.spam_category + ')' : '')\n    + ', with confidence ' + v.spam_confidence + ' against a threshold of ' + v.spam_threshold_used + '.',\n  v.spam_reason ? '\\nReason given: ' + v.spam_reason : '',\n  '\\nThe ticket was solved automatically and no reply was sent to the customer.',\n  'If this was misclassified, please reopen the ticket and report it to the Operations Department.'\n].filter(Boolean).join('\\n');\n\nconst ticket = {\n  status: 'solved',\n  additional_tags: ['spam_auto_solved'],\n  comment: { public: false, body: noteBody }\n};\n\n// Zendesk enforces required custom fields on the solve transition and validates\n// against the INCOMING payload, not the stored ticket:\n//   422 RecordInvalid - \"Language: is required when solving a ticket\"\n// The category was accepted in the same request; language was missing. So every\n// required field has to ride along in this one PUT.\n// Language is required on 7 of the 9 brands running this automation.\nconst fields = [];\n\nconst catFieldId = Number(cfg.ticket_custom_field_category);\nconst catValue = cfg.category_value_spam_marketing;\nif (Number.isFinite(catFieldId) && catFieldId > 0\n    && catValue !== null && catValue !== undefined && String(catValue).trim() !== '') {\n  fields.push({ id: catFieldId, value: String(catValue) });\n}\n\nconst langFieldId = Number(cfg.ticket_field_language_id);\nconst langValue = cfg.language_value_english;\nif (Number.isFinite(langFieldId) && langFieldId > 0\n    && langValue !== null && langValue !== undefined && String(langValue).trim() !== '') {\n  fields.push({ id: langFieldId, value: String(langValue) });\n}\n\nif (fields.length > 0) {\n  ticket.custom_fields = fields;\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    note_body: noteBody,\n    fields_applied: fields.length,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
+          "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\nconst v = $('Parse spam verdict').first().json;\n\nconst ticketId = trig.body['ticket.id'];\n\nconst noteBody = [\n  'Note: This ticket was automatically classified as spam / marketing by the automation'\n    + (v.spam_category ? ' (category: ' + v.spam_category + ')' : '')\n    + ', with confidence ' + v.spam_confidence + ' against a threshold of ' + v.spam_threshold_used + '.',\n  v.spam_reason ? '\\nReason given: ' + v.spam_reason : '',\n  '\\nThe ticket was solved automatically and no reply was sent to the customer.',\n  'If this was misclassified, please reopen the ticket and report it to the Operations Department.'\n].filter(Boolean).join('\\n');\n\nconst ticket = {\n  status: 'solved',\n  comment: { public: false, body: noteBody }\n};\n\n// TAGS. `additional_tags` is ONLY supported on the Update Many Tickets endpoint.\n// On a single-ticket PUT Zendesk silently discards it - 200 response, no tag\n// event in the audit. This tag was never actually being applied. A single-ticket\n// PUT only accepts `tags`, which replaces the array, so merge the existing ones.\nconst liveTicket = $('Get ticket status').first().json.ticket || {};\nconst tags = Array.isArray(liveTicket.tags) ? liveTicket.tags.slice() : [];\nif (tags.indexOf('spam_auto_solved') === -1) {\n  tags.push('spam_auto_solved');\n}\nticket.tags = tags;\n\n// Zendesk enforces required custom fields on the solve transition and validates\n// against the INCOMING payload, not the stored ticket:\n//   422 RecordInvalid - \"Language: is required when solving a ticket\"\n// So every required field has to ride along in this one PUT.\nconst fields = [];\n\nconst catFieldId = Number(cfg.ticket_custom_field_category);\nconst catValue = cfg.category_value_spam_marketing;\nif (Number.isFinite(catFieldId) && catFieldId > 0\n    && catValue !== null && catValue !== undefined && String(catValue).trim() !== '') {\n  fields.push({ id: catFieldId, value: String(catValue) });\n}\n\nconst langFieldId = Number(cfg.ticket_field_language_id);\nconst langValue = cfg.language_value_english;\nif (Number.isFinite(langFieldId) && langFieldId > 0\n    && langValue !== null && langValue !== undefined && String(langValue).trim() !== '') {\n  fields.push({ id: langFieldId, value: String(langValue) });\n}\n\nif (fields.length > 0) {\n  ticket.custom_fields = fields;\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    note_body: noteBody,\n    fields_applied: fields.length,\n    tags_sent: ticket.tags,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
         },
         "id": "d5076059-ed26-420d-a943-3bc400d70c84",
         "name": "Build spam solve payload",
@@ -3336,7 +3336,7 @@
       },
       {
         "parameters": {
-          "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\n\nconst ticketId = trig.body['ticket.id'];\nconst noteBody = $('Note: Auto-solve email').first().json.note_body;\n\nconst ticket = {\n  status: 'solved',\n  additional_tags: ['autosolve_email'],\n  comment: { public: false, body: noteBody }\n};\n\n// Zendesk enforces required custom fields on the solve transition and validates\n// against the INCOMING payload, not the stored ticket:\n//   422 RecordInvalid - \"Language: is required when solving a ticket\"\n// So every required field has to ride along in this one PUT.\n// Language is required on 7 of the 9 brands running this automation.\nconst fields = [];\n\nconst catFieldId = Number(cfg.ticket_custom_field_category);\nconst catValue = cfg.category_value_duplicate_contact;\nif (Number.isFinite(catFieldId) && catFieldId > 0\n    && catValue !== null && catValue !== undefined && String(catValue).trim() !== '') {\n  fields.push({ id: catFieldId, value: String(catValue) });\n}\n\nconst langFieldId = Number(cfg.ticket_field_language_id);\nconst langValue = cfg.language_value_english;\nif (Number.isFinite(langFieldId) && langFieldId > 0\n    && langValue !== null && langValue !== undefined && String(langValue).trim() !== '') {\n  fields.push({ id: langFieldId, value: String(langValue) });\n}\n\nif (fields.length > 0) {\n  ticket.custom_fields = fields;\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    note_body: noteBody,\n    fields_applied: fields.length,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
+          "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\n\nconst ticketId = trig.body['ticket.id'];\nconst noteBody = $('Note: Auto-solve email').first().json.note_body;\n\nconst ticket = {\n  status: 'solved',\n  comment: { public: false, body: noteBody }\n};\n\n// TAGS. `additional_tags` is ONLY supported on the Update Many Tickets endpoint.\n// On a single-ticket PUT Zendesk silently discards it - 200 response, no tag\n// event in the audit. This tag was never actually being applied. A single-ticket\n// PUT only accepts `tags`, which replaces the array, so merge the existing ones.\nconst liveTicket = $('Get ticket status').first().json.ticket || {};\nconst tags = Array.isArray(liveTicket.tags) ? liveTicket.tags.slice() : [];\nif (tags.indexOf('autosolve_email') === -1) {\n  tags.push('autosolve_email');\n}\nticket.tags = tags;\n\n// Zendesk enforces required custom fields on the solve transition and validates\n// against the INCOMING payload, not the stored ticket:\n//   422 RecordInvalid - \"Language: is required when solving a ticket\"\n// So every required field has to ride along in this one PUT.\nconst fields = [];\n\nconst catFieldId = Number(cfg.ticket_custom_field_category);\nconst catValue = cfg.category_value_duplicate_contact;\nif (Number.isFinite(catFieldId) && catFieldId > 0\n    && catValue !== null && catValue !== undefined && String(catValue).trim() !== '') {\n  fields.push({ id: catFieldId, value: String(catValue) });\n}\n\nconst langFieldId = Number(cfg.ticket_field_language_id);\nconst langValue = cfg.language_value_english;\nif (Number.isFinite(langFieldId) && langFieldId > 0\n    && langValue !== null && langValue !== undefined && String(langValue).trim() !== '') {\n  fields.push({ id: langFieldId, value: String(langValue) });\n}\n\nif (fields.length > 0) {\n  ticket.custom_fields = fields;\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    note_body: noteBody,\n    fields_applied: fields.length,\n    tags_sent: ticket.tags,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
         },
         "id": "cdfc23e8-f395-41fd-a722-6535a689f0f9",
         "name": "Build auto-solve payload",
@@ -3873,20 +3873,20 @@
       }
     },
     "nodeGroups": [],
-    "authors": "Antonio antonio.marusic@efuturemedia.com",
-    "name": "Version e7b732a1",
-    "description": "",
+    "authors": "Antonio antonio.marusic@efuturemedia.com (via MCP)",
+    "name": "Fix tags silently discarded on single-ticket PUT",
+    "description": "Fixes autosolve_email and spam_auto_solved never being applied. additional_tags is silently discarded on a single-ticket PUT; both builders now merge existing tags into ticket.tags.",
     "autosaved": false,
-    "createdAt": "2026-08-28T09:15:03.849Z",
-    "updatedAt": "2026-08-28T09:15:05.000Z",
+    "createdAt": "2026-09-15T08:17:11.357Z",
+    "updatedAt": "2026-09-16T09:30:35.000Z",
     "workflowPublishHistory": [
       {
-        "id": 1741,
+        "id": 1953,
         "workflowId": "CMQ8sst0rXkHeasP",
-        "versionId": "e7b732a1-0ea5-4eef-9563-8921b27fe573",
+        "versionId": "bc7bbf05-3ce9-46b5-a903-b772b19bd6b7",
         "event": "activated",
         "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e",
-        "createdAt": "2026-08-28T09:15:05.257Z"
+        "createdAt": "2026-09-16T09:30:35.806Z"
       }
     ]
   }
