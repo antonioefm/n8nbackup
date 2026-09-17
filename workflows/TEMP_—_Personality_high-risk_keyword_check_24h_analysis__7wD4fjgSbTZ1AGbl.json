@@ -1,0 +1,295 @@
+{
+  "id": "7wD4fjgSbTZ1AGbl",
+  "name": "TEMP — Personality high-risk keyword check 24h analysis",
+  "description": "Temporary diagnostic. Pulls Personality tickets via Zendesk incremental export, measures high-risk keyword tagging over the last 24h, and parses the automation internal notes for keyword-level breakdown.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-16T09:35:13.866Z",
+  "updatedAt": "2026-09-16T09:35:23.539Z",
+  "isArchived": false,
+  "versionId": "75ca750d-d202-482f-9840-82861433b4a2",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "6d2dec15-8489-403e-9580-bd696569a526",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -320,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "0530e0b3-f523-495e-bfd6-ac758c3d0f76",
+      "name": "Get Project Config",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -96,
+        0
+      ],
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "IRxwFN8iBhHLFQxQ",
+          "cachedResultName": "cs_project_config"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "project_key",
+              "keyValue": "personality_prod"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "9c676948-96e9-4b89-b473-7a493439ee63",
+      "name": "Build window",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        128,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const cfg = $input.first().json;\nconst LOOKBACK_HOURS = 48;\nconst now = new Date();\nconst startUnix = Math.floor((now.getTime() - LOOKBACK_HOURS * 3600 * 1000) / 1000);\nreturn [{ json: {\n  zendesk_domain: cfg.zendesk_domain,\n  automation_agent_id: cfg.automation_agent_id == null ? null : String(cfg.automation_agent_id),\n  high_risk_check_enabled: cfg.high_risk_check_enabled,\n  high_risk_enforce: cfg.high_risk_enforce,\n  start_unix: startUnix,\n  now_iso: now.toISOString(),\n  lookback_hours: LOOKBACK_HOURS\n} }];"
+      }
+    },
+    {
+      "id": "778791d9-26e1-49a9-acce-502c199bee4d",
+      "name": "Zendesk: Incremental tickets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        352,
+        0
+      ],
+      "parameters": {
+        "url": "={{ \"https://\" + $json.zendesk_domain + \".zendesk.com/api/v2/incremental/tickets/cursor.json?start_time=\" + $json.start_unix }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {
+          "pagination": {
+            "pagination": {
+              "paginationMode": "responseContainsNextURL",
+              "nextURL": "={{ $response.body.after_url }}",
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ $response.body.end_of_stream === true }}",
+              "limitPagesFetched": true,
+              "maxRequests": 25,
+              "requestInterval": 7000
+            }
+          }
+        }
+      },
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      },
+      "notes": "Incremental export (cursor). Authoritative, no search-index lag. Paginates on after_url, stops on end_of_stream.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "f984b42f-11b2-42d0-baf8-323791cd7658",
+      "name": "Analyse tickets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        576,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const w = $('Build window').first().json;\n\nconst TAG_TIER = {\n  'high-risk-safety-critical': 'C',\n  'high-risk-legal-financial': 'A',\n  'high-risk-conduct': 'B'\n};\nconst TIER_LABEL = { A: 'Commercial threat', B: 'Hostility / repeat / account', C: 'Safety / duty of care' };\nconst TIER_QUEUE = { A: 'Priority', B: 'Standard', C: 'safety-review' };\n\nconst byId = new Map();\nfor (const item of $input.all()) {\n  const arr = (item.json && Array.isArray(item.json.tickets)) ? item.json.tickets : [];\n  for (const t of arr) byId.set(String(t.id), t);\n}\nconst all = Array.from(byId.values());\n\nfunction hrTags(t) {\n  const tags = Array.isArray(t.tags) ? t.tags : [];\n  return tags.filter(tag => TAG_TIER[tag]);\n}\n\nconst nowMs = Date.parse(w.now_iso);\nconst capMs = nowMs - 24 * 3600 * 1000;\n\nconst flaggedAll = all.filter(t => hrTags(t).length > 0);\nflaggedAll.sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));\nconst firstFlagged = flaggedAll.length ? flaggedAll[0] : null;\n\nlet windowStartMs;\nlet windowBasis;\nif (!firstFlagged) {\n  windowStartMs = capMs;\n  windowBasis = 'no_flagged_ticket_found_fallback_last_24h';\n} else if (Date.parse(firstFlagged.created_at) < capMs) {\n  windowStartMs = capMs;\n  windowBasis = 'capped_at_last_24h';\n} else {\n  windowStartMs = Date.parse(firstFlagged.created_at);\n  windowBasis = 'first_flagged_ticket';\n}\n\nconst inWindow = all.filter(t => {\n  const c = Date.parse(t.created_at);\n  return c >= windowStartMs && c <= nowMs;\n});\nconst flagged = inWindow.filter(t => hrTags(t).length > 0);\n\nfunction tally(list, fn) {\n  const m = {};\n  for (const x of list) {\n    const k = fn(x);\n    if (k === null || k === undefined) continue;\n    m[k] = (m[k] || 0) + 1;\n  }\n  return m;\n}\n\nconst perTag = {};\nfor (const tag of Object.keys(TAG_TIER)) perTag[tag] = 0;\nlet multiTagged = 0;\nfor (const t of flagged) {\n  const hits = hrTags(t);\n  if (hits.length > 1) multiTagged++;\n  for (const tag of hits) perTag[tag]++;\n}\n\nconst tagFreq = {};\nfor (const t of inWindow) {\n  for (const tag of (Array.isArray(t.tags) ? t.tags : [])) tagFreq[tag] = (tagFreq[tag] || 0) + 1;\n}\nconst topTags = Object.entries(tagFreq).sort((a, b) => b[1] - a[1]).slice(0, 25).map(e => ({ tag: e[0], count: e[1] }));\n\nfunction hourKey(iso) { return String(iso).slice(0, 13) + ':00Z'; }\n\nconst MAX_DETAIL = 400;\nconst detail = flagged.slice().sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)).slice(0, MAX_DETAIL).map(t => {\n  const hits = hrTags(t);\n  const tiers = hits.map(h => TAG_TIER[h]);\n  return {\n    ticket_id: t.id,\n    created_at: t.created_at,\n    updated_at: t.updated_at,\n    status: t.status,\n    channel: (t.via && t.via.channel) ? t.via.channel : null,\n    subject: String(t.subject == null ? '' : t.subject).slice(0, 140),\n    hr_tags: hits,\n    tiers: tiers,\n    tier_label: tiers.length ? TIER_LABEL[tiers[0]] : null,\n    queue: tiers.length ? TIER_QUEUE[tiers[0]] : null,\n    assignee_id: t.assignee_id == null ? null : String(t.assignee_id)\n  };\n});\n\nconst summary = {\n  generated_at: w.now_iso,\n  project_key: 'personality_prod',\n  zendesk_domain: w.zendesk_domain,\n  config_high_risk_check_enabled: w.high_risk_check_enabled,\n  config_high_risk_enforce: w.high_risk_enforce,\n  lookback_hours_pulled: w.lookback_hours,\n  tickets_pulled_total: all.length,\n  flagged_anywhere_in_pull: flaggedAll.length,\n  first_flagged_ticket_id: firstFlagged ? firstFlagged.id : null,\n  first_flagged_created_at: firstFlagged ? firstFlagged.created_at : null,\n  window_basis: windowBasis,\n  window_start: new Date(windowStartMs).toISOString(),\n  window_end: w.now_iso,\n  window_hours: Math.round(((nowMs - windowStartMs) / 3600000) * 100) / 100,\n  tickets_created_in_window: inWindow.length,\n  high_risk_in_window: flagged.length,\n  high_risk_pct_of_window: inWindow.length ? Math.round((flagged.length / inWindow.length) * 10000) / 100 : 0,\n  multi_tag_tickets: multiTagged,\n  per_tag: perTag,\n  per_tier: {\n    A_legal_financial: perTag['high-risk-legal-financial'],\n    B_conduct: perTag['high-risk-conduct'],\n    C_safety_critical: perTag['high-risk-safety-critical']\n  },\n  high_risk_status_breakdown: tally(flagged, t => t.status),\n  all_status_breakdown: tally(inWindow, t => t.status),\n  high_risk_channel_breakdown: tally(flagged, t => (t.via && t.via.channel) ? t.via.channel : 'unknown'),\n  all_channel_breakdown: tally(inWindow, t => (t.via && t.via.channel) ? t.via.channel : 'unknown'),\n  hourly_all: tally(inWindow, t => hourKey(t.created_at)),\n  hourly_high_risk: tally(flagged, t => hourKey(t.created_at)),\n  top_tags_in_window: topTags,\n  detail_truncated: flagged.length > MAX_DETAIL\n};\n\nreturn [{ json: { summary: summary, high_risk_tickets: detail } }];"
+      }
+    },
+    {
+      "id": "cd5d7f70-0612-4482-ab19-df141540d3c5",
+      "name": "Split high risk tickets",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "fieldToSplitOut": "high_risk_tickets",
+        "options": {}
+      }
+    },
+    {
+      "id": "cb8fec33-7b2b-4826-bf2c-09cb1a002edc",
+      "name": "Zendesk: Get comments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1024,
+        0
+      ],
+      "parameters": {
+        "url": "={{ \"https://\" + $('Build window').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $json.ticket_id + \"/comments.json\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 20,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      },
+      "notes": "One call per flagged ticket. Batched to stay under the Zendesk rate limit.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "bbec2163-da9a-4b7c-bd3a-37d565179d88",
+      "name": "Build report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1248,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const base = $('Analyse tickets').first().json;\nconst w = $('Build window').first().json;\nconst agentId = w.automation_agent_id;\n\nconst srcItems = $('Split high risk tickets').all();\nconst responses = $input.all();\n\nfunction stripQuotes(s) {\n  let v = String(s == null ? '' : s).trim();\n  if (v.length > 1 && v.charAt(0) === '\"' && v.charAt(v.length - 1) === '\"') v = v.slice(1, -1);\n  return v;\n}\n\nfunction noteFields(body) {\n  const lines = String(body).split(String.fromCharCode(10));\n  const kv = {};\n  const extra = [];\n  for (const raw of lines) {\n    const line = raw.trim();\n    if (line.indexOf('- ') === 0) {\n      const rest = line.slice(2);\n      const c = rest.indexOf(':');\n      if (c > 0) {\n        const left = rest.slice(0, c);\n        const kw = rest.slice(c + 1).trim();\n        const slash = left.indexOf('/');\n        if (slash > 0) {\n          extra.push({ tier: left.slice(0, slash).trim(), category: left.slice(slash + 1).trim(), keyword: kw });\n        }\n      }\n      continue;\n    }\n    const ci = line.indexOf(':');\n    if (ci > 0) {\n      const key = line.slice(0, ci).trim();\n      if (!(key in kv)) kv[key] = line.slice(ci + 1).trim();\n    }\n  }\n  const tierRaw = kv['Tier'] || null;\n  const phrase = kv['Matched phrase'] ? stripQuotes(kv['Matched phrase']) : null;\n  return {\n    tier: tierRaw ? tierRaw.split(' - ')[0].trim() : null,\n    tier_label: tierRaw ? String(tierRaw.split(' - ')[1] || '').trim() : null,\n    category: kv['Category'] || null,\n    queue: kv['Queue'] || null,\n    tag_applied: kv['Tag applied'] || null,\n    primary_match: phrase,\n    all_matches: extra,\n    match_count: extra.length ? extra.length : (phrase ? 1 : 0)\n  };\n}\n\nconst enriched = [];\nfor (let i = 0; i < responses.length; i++) {\n  const r = responses[i];\n  let srcIdx = i;\n  const pi = r.pairedItem;\n  if (pi != null) {\n    if (typeof pi === 'number') srcIdx = pi;\n    else if (Array.isArray(pi) && pi.length && typeof pi[0].item === 'number') srcIdx = pi[0].item;\n    else if (typeof pi === 'object' && typeof pi.item === 'number') srcIdx = pi.item;\n  }\n  const src = (srcItems[srcIdx] && srcItems[srcIdx].json) ? srcItems[srcIdx].json : {};\n  const comments = (r.json && Array.isArray(r.json.comments)) ? r.json.comments : [];\n\n  let note = null;\n  let noteAtMs = null;\n  for (const c of comments) {\n    const body = String(c.body == null ? '' : c.body);\n    if (c.public === false && body.indexOf('matched the high-risk keyword list') !== -1) {\n      note = noteFields(body);\n      noteAtMs = Date.parse(c.created_at);\n    }\n  }\n\n  let botPublicReplies = 0;\n  let botReplyAfterFlag = false;\n  for (const c of comments) {\n    if (c.public !== true) continue;\n    const author = c.author_id == null ? '' : String(c.author_id);\n    if (agentId && author === agentId) {\n      botPublicReplies++;\n      if (noteAtMs === null || Date.parse(c.created_at) >= noteAtMs) botReplyAfterFlag = true;\n    }\n  }\n\n  enriched.push({\n    ticket_id: src.ticket_id,\n    created_at: src.created_at,\n    status: src.status,\n    channel: src.channel,\n    subject: src.subject,\n    hr_tags: src.hr_tags,\n    comments_fetched: comments.length,\n    note_found: note !== null,\n    tier: note ? note.tier : ((src.tiers && src.tiers.length) ? src.tiers[0] : null),\n    tier_label: note ? note.tier_label : src.tier_label,\n    category: note ? note.category : null,\n    queue: note ? note.queue : src.queue,\n    primary_match: note ? note.primary_match : null,\n    match_count: note ? note.match_count : null,\n    all_matches: note ? note.all_matches : [],\n    bot_public_replies: botPublicReplies,\n    bot_replied_after_flag: botReplyAfterFlag\n  });\n}\n\nfunction tallyMulti(list, fn) {\n  const m = {};\n  for (const x of list) {\n    const ks = fn(x);\n    const arr = Array.isArray(ks) ? ks : [ks];\n    for (const k of arr) {\n      if (k === null || k === undefined || k === '') continue;\n      m[k] = (m[k] || 0) + 1;\n    }\n  }\n  return m;\n}\n\nfunction sortDesc(obj, limit) {\n  return Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, limit || 50).map(e => ({ key: e[0], count: e[1] }));\n}\n\nconst keywordFreq = tallyMulti(enriched, e => (e.all_matches && e.all_matches.length)\n  ? e.all_matches.map(m => m.tier + ' | ' + m.category + ' | ' + m.keyword)\n  : (e.primary_match ? [(e.tier || '?') + ' | ' + (e.category || '?') + ' | ' + e.primary_match] : []));\n\nconst primaryKeywordFreq = tallyMulti(enriched, e => e.primary_match);\nconst categoryFreq = tallyMulti(enriched, e => e.category);\nconst queueFreq = tallyMulti(enriched, e => e.queue);\n\nconst multiMatch = enriched.filter(e => (e.match_count || 0) > 1).length;\nconst notesMissing = enriched.filter(e => !e.note_found).length;\nconst botRepliedAfterFlag = enriched.filter(e => e.bot_replied_after_flag).length;\nconst anyBotReply = enriched.filter(e => e.bot_public_replies > 0).length;\n\nreturn [{ json: {\n  summary: base.summary,\n  keyword_analysis: {\n    flagged_tickets_inspected: enriched.length,\n    internal_note_found: enriched.length - notesMissing,\n    internal_note_missing: notesMissing,\n    tickets_matching_more_than_one_keyword: multiMatch,\n    by_category: sortDesc(categoryFreq),\n    by_queue: sortDesc(queueFreq),\n    by_primary_keyword: sortDesc(primaryKeywordFreq, 60),\n    by_keyword_all_matches: sortDesc(keywordFreq, 80)\n  },\n  enforcement_impact: {\n    note: 'With high_risk_enforce OFF the bot still replies. These counts show what enforce ON would have pulled out of automation.',\n    flagged_tickets_with_a_public_bot_reply: anyBotReply,\n    flagged_tickets_where_bot_replied_after_the_flag: botRepliedAfterFlag\n  },\n  flagged_tickets: enriched\n} }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Get Project Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Project Config": {
+      "main": [
+        [
+          {
+            "node": "Build window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build window": {
+      "main": [
+        [
+          {
+            "node": "Zendesk: Incremental tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk: Incremental tickets": {
+      "main": [
+        [
+          {
+            "node": "Analyse tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyse tickets": {
+      "main": [
+        [
+          {
+            "node": "Split high risk tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split high risk tickets": {
+      "main": [
+        [
+          {
+            "node": "Zendesk: Get comments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk: Get comments": {
+      "main": [
+        [
+          {
+            "node": "Build report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "7wD4fjgSbTZ1AGbl",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "updatedAt": "2025-09-16T08:57:49.000Z"
+      },
+      "createdAt": "2026-09-16T09:35:13.869Z",
+      "updatedAt": "2026-09-16T09:35:13.869Z"
+    }
+  ],
+  "activeVersion": null
+}
