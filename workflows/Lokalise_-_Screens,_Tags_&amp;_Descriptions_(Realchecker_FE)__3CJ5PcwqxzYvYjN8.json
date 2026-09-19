@@ -1,0 +1,183 @@
+{
+  "id": "3CJ5PcwqxzYvYjN8",
+  "name": "Lokalise - Screens, Tags &amp; Descriptions (Realchecker FE)",
+  "description": "Scratch driver for attaching Figma screenshots, screen tags and descriptions to untranslated keys in Realchecker (FE). Config node selects the phase; Fetch paginates the Lokalise API; Shape returns compact rows.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-18T09:01:43.993Z",
+  "updatedAt": "2026-09-18T09:58:23.013Z",
+  "isArchived": false,
+  "versionId": "7c7ab0f5-4fb5-4452-837e-ece2961aaf5e",
+  "versionCounter": 4,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "c04850c8-6f0d-4576-bdfc-22fa72f3b2e5",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a9e5aef4-027e-40d6-917e-3867aab7921e",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const PROJECT = '964775386a3ce03ecca883.03770715';\nconst BASE = 'https://api.lokalise.com/api2';\nconst url = BASE + '/projects/' + PROJECT + '/keys?include_screenshots=1&disable_references=1&filter_untranslated=1&limit=500&pagination=cursor';\nreturn [{ json: { mode: 'keys', project: PROJECT, url: url } }];\n"
+      }
+    },
+    {
+      "id": "62d136b8-6ba0-44f9-b89e-98c729712900",
+      "name": "Fetch Lokalise",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 50,
+              "requestInterval": 250
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "fc023d39-778d-4073-8f74-d1e9b6097888",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const pages = $input.all();\nconst errors = [];\nconst rows = [];\nfor (const p of pages) {\n  const r = p.json || {};\n  const status = r.statusCode;\n  const body = r.body !== undefined ? r.body : r;\n  if (status !== undefined && status !== 200) { errors.push({ status: status, body: JSON.stringify(body).slice(0, 200) }); continue; }\n  for (const k of (body.keys || [])) {\n    if (k.is_archived) { continue; }\n    const kn = k.key_name || {};\n    const name = kn.web || kn.other || kn.ios || kn.android || '';\n    const shots = (k.screenshots || []).map(function (s) { return s.title; });\n    rows.push({ id: k.key_id, n: name, d: k.description || '', t: (k.tags || []).sort(), s: shots.length, st: shots.join(' | ') });\n  }\n}\nconst tagCount = {};\nfor (const r of rows) { for (const t of r.t) { tagCount[t] = (tagCount[t] || 0) + 1; } }\nconst sample = [];\nconst want = ['report::overview::title', 'report::safetyRecallCheck::title', 'pages::vin_lookup::hero::title', 'components::faqs_general::question_1::question', 'report::classic::toc::oemOptions', 'ui::sectionCard::ariaLabelFlag', 'report::vehicleSpecs::title', 'pages::vin_lookup::checkout::title'];\nfor (const w of want) { for (const r of rows) { if (r.n === w) { sample.push({ n: r.n, d: r.d, t: r.t.join(','), st: r.st }); break; } } }\nfor (const r of rows) { if (sample.length < 12 && r.s === 2 && r.n.indexOf('report::sales') === 0) { sample.push({ n: r.n, d: r.d, t: r.t.join(','), st: r.st }); } }\nreturn [{ json: {\n  count: rows.length,\n  with_desc: rows.filter(function (x) { return x.d.trim(); }).length,\n  no_desc: rows.filter(function (x) { return !x.d.trim(); }).length,\n  with_shot: rows.filter(function (x) { return x.s > 0; }).length,\n  two_shots: rows.filter(function (x) { return x.s === 2; }).length,\n  over_cap: rows.filter(function (x) { return x.s > 2; }).map(function (x) { return x.n; }),\n  no_tags: rows.filter(function (x) { return x.t.length === 0; }).length,\n  screen_tags: Object.keys(tagCount).filter(function (t) { return t.indexOf('screen_') === 0; }).length,\n  tagCount: tagCount,\n  errors: errors,\n  sample: sample\n} }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lokalise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lokalise": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "3CJ5PcwqxzYvYjN8",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-18T09:01:44.003Z",
+      "updatedAt": "2026-09-18T09:01:44.003Z"
+    }
+  ],
+  "activeVersion": null
+}
