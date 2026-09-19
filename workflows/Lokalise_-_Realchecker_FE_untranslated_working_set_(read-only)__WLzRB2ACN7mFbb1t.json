@@ -1,0 +1,308 @@
+{
+  "id": "WLzRB2ACN7mFbb1t",
+  "name": "Lokalise - Realchecker FE untranslated working set (read-only)",
+  "description": "Read-only. Builds the 939-key untranslated working set for Realchecker (FE) with EN source, tags, char limits, and thin-description classification.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-18T09:27:15.538Z",
+  "updatedAt": "2026-09-18T10:27:44.118Z",
+  "isArchived": false,
+  "versionId": "4ace2180-c674-469b-8489-e5a92ebbdad9",
+  "versionCounter": 8,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "c8ec1c74-0e7d-42a0-aaa8-98adab062269",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "08ec8ae5-34c8-4a1c-9c52-38a731fd4c7c",
+      "name": "Fetch Languages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/964775386a3ce03ecca883.03770715/languages?limit=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "055944bc-4871-42af-9e1a-210a4b60a280",
+      "name": "Build Scope",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const langs = ($input.first().json.languages) || [];\nconst EXCLUDE_ISO = ['en', 'pst', 'ps', 'cus', 'pt_old'];\nconst targets = langs.filter(l => !EXCLUDE_ISO.includes(l.lang_iso));\nif (targets.length === 0) throw new Error('No target languages resolved');\nreturn [{ json: { targetLangIds: targets.map(l => l.lang_id).join(','), targetCount: targets.length } }];"
+      }
+    },
+    {
+      "id": "627c7bd4-d98e-4086-ab9f-07ff6b617a13",
+      "name": "Count Untranslated",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://api.lokalise.com/api2/projects/964775386a3ce03ecca883.03770715/keys?limit=1&page=1&filter_untranslated=1&filter_translation_lang_ids=\" + $json.targetLangIds }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "45955550-59fb-4853-bfbd-43e4d1571735",
+      "name": "Count All Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/964775386a3ce03ecca883.03770715/keys?limit=1&page=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "8841001b-8d60-4817-8998-80c35e21e63f",
+      "name": "Plan Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const scope = $('Build Scope').first().json;\nconst untrTotal = parseInt(($('Count Untranslated').first().json.headers || {})['x-pagination-total-count'] || '0', 10);\nconst allTotal = parseInt(($('Count All Keys').first().json.headers || {})['x-pagination-total-count'] || '0', 10);\nif (!untrTotal || !allTotal) throw new Error('Missing pagination totals');\nconst PROJ = 'https://api.lokalise.com/api2/projects/964775386a3ce03ecca883.03770715';\nconst BASE = PROJ + '/keys';\nconst LIMIT = 500;\nconst out = [];\nfor (let p = 1; p <= Math.ceil(untrTotal / LIMIT); p++) {\n  out.push({ json: { url: BASE + '?limit=' + LIMIT + '&page=' + p + '&filter_untranslated=1&filter_translation_lang_ids=' + scope.targetLangIds } });\n}\nfor (let p = 1; p <= Math.ceil(allTotal / LIMIT); p++) {\n  out.push({ json: { url: BASE + '?limit=' + LIMIT + '&page=' + p + '&include_translations=1&filter_translation_lang_ids=640' } });\n}\n// screenshot inventory: separate endpoint, different response shape\nfor (let p = 1; p <= 8; p++) {\n  out.push({ json: { url: PROJ + '/screenshots?limit=500&page=' + p } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "718c30b3-f348-4dec-a7eb-40491ad56d98",
+      "name": "Fetch Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "3fa971f9-40d9-4ab6-b8aa-cd34d89d7cc9",
+      "name": "Assemble",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const untranslatedIds = new Set();\nconst meta = new Map();\nfor (const it of $input.all()) {\n  const b = it.json || {};\n  if (Array.isArray(b.screenshots)) continue;\n  const keys = b.keys || [];\n  if (!Array.isArray(keys) || keys.length === 0) continue;\n  const isPassB = Array.isArray(keys[0].translations);\n  for (const k of keys) {\n    if (isPassB) meta.set(k.key_id, { key_name: (k.key_name && (k.key_name.web || k.key_name.other)) || '', description: k.description || '' });\n    else untranslatedIds.add(k.key_id);\n  }\n}\n\nfunction sentences(d) {\n  return String(d).split(/(?<=\\.)\\s+/).map(s => s.trim()).filter(Boolean);\n}\n\nconst variants = {};\nlet scopeHits = 0, projectHits = 0;\nconst RE = /figma|no screen in the current|screenshot/i;\n\nfor (const [id, m] of meta) {\n  const hit = sentences(m.description).filter(s => RE.test(s));\n  if (!hit.length) continue;\n  projectHits++;\n  if (untranslatedIds.has(id)) scopeHits++;\n  for (const s of hit) {\n    // collapse the variable screen names so variants group\n    const norm = s.replace(/Screenshot:.*/i, 'Screenshot: <screen names>');\n    variants[norm] = (variants[norm] || 0) + 1;\n  }\n}\n\nconst rows = Object.keys(variants).sort((a, b) => variants[b] - variants[a]).map(v => ({ phrase: v, count: variants[v] }));\n\nreturn [{ json: {\n  scopeSize: untranslatedIds.size,\n  projectKeys: meta.size,\n  scopeKeysWithFigmaOrScreenshotWording: scopeHits,\n  projectKeysWithFigmaOrScreenshotWording: projectHits,\n  distinctPhrases: rows.length,\n  phrases: rows.slice(0, 25)\n} }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Languages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Languages": {
+      "main": [
+        [
+          {
+            "node": "Build Scope",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Scope": {
+      "main": [
+        [
+          {
+            "node": "Count Untranslated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Untranslated": {
+      "main": [
+        [
+          {
+            "node": "Count All Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count All Keys": {
+      "main": [
+        [
+          {
+            "node": "Plan Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan Pages": {
+      "main": [
+        [
+          {
+            "node": "Fetch Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Page": {
+      "main": [
+        [
+          {
+            "node": "Assemble",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "WLzRB2ACN7mFbb1t",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-18T09:27:15.540Z",
+      "updatedAt": "2026-09-18T09:27:15.540Z"
+    }
+  ],
+  "activeVersion": null
+}
