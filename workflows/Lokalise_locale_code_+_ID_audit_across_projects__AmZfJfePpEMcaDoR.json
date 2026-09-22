@@ -1,0 +1,202 @@
+{
+  "id": "AmZfJfePpEMcaDoR",
+  "name": "Lokalise locale code + ID audit across projects",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-21T12:38:52.026Z",
+  "updatedAt": "2026-09-21T12:38:57.231Z",
+  "isArchived": false,
+  "versionId": "73803a8d-61d6-411c-b6b7-1a94e9b1ca8f",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "43b47d71-e40f-4ad0-8330-c0b54220b6c2",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "0de8f4e1-7133-4b4e-9114-2526221fc497",
+      "name": "Fetch Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=100&page=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "767d8479-ecca-47b4-bca7-d9df2a71d5df",
+      "name": "Expand Projects",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const res = $input.first().json;\nconst body = res.body || res;\nif (!Array.isArray(body.projects)) {\n  throw new Error('No projects array in response: ' + JSON.stringify(body).slice(0, 300));\n}\nconst total = res.headers ? res.headers['x-pagination-total-count'] : null;\nreturn body.projects.map(p => ({\n  json: {\n    project_id: p.project_id,\n    name: p.name,\n    total_projects_header: total,\n    fetched_count: body.projects.length\n  }\n}));"
+      }
+    },
+    {
+      "id": "126b963b-5e71-4b97-85ff-55598fb51ebc",
+      "name": "Fetch Languages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/languages?limit=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "0912fdb8-a54e-4ecd-8ec2-2f6a570e3483",
+      "name": "Aggregate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const projItems = $('Expand Projects').all();\nconst nameById = {};\nfor (const it of projItems) nameById[it.json.project_id] = it.json.name;\n\nconst rows = [];\nfor (const it of $input.all()) {\n  const j = it.json;\n  const pid = j.project_id;\n  const pname = nameById[pid] || pid;\n  if (!Array.isArray(j.languages)) {\n    rows.push({ project: pname, project_id: pid, error: JSON.stringify(j).slice(0, 200) });\n    continue;\n  }\n  for (const L of j.languages) {\n    rows.push({\n      project: pname,\n      project_id: pid,\n      lang_iso: L.lang_iso,\n      lang_id: L.lang_id,\n      lang_name: L.lang_name\n    });\n  }\n}\n\nconst byIso = {};\nconst byId = {};\nconst perProject = {};\nfor (const r of rows) {\n  if (!r.lang_iso) continue;\n  byIso[r.lang_iso] = byIso[r.lang_iso] || { ids: {}, names: {}, projects: [] };\n  byIso[r.lang_iso].ids[r.lang_id] = byIso[r.lang_iso].ids[r.lang_id] || [];\n  byIso[r.lang_iso].ids[r.lang_id].push(r.project);\n  byIso[r.lang_iso].names[r.lang_name] = true;\n  byIso[r.lang_iso].projects.push(r.project);\n  byId[r.lang_id] = byId[r.lang_id] || {};\n  byId[r.lang_id][r.lang_iso] = true;\n  perProject[r.project] = perProject[r.project] || [];\n  perProject[r.project].push(r.lang_iso + ':' + r.lang_id);\n}\n\nconst isoSummary = Object.keys(byIso).sort().map(iso => ({\n  iso,\n  names: Object.keys(byIso[iso].names),\n  project_count: byIso[iso].projects.length,\n  ids: Object.keys(byIso[iso].ids).map(id => ({ id: Number(id), n: byIso[iso].ids[id].length, projects: byIso[iso].ids[id] })),\n  id_conflict: Object.keys(byIso[iso].ids).length > 1\n}));\n\nconst idSummary = Object.keys(byId).map(id => ({ id: Number(id), isos: Object.keys(byId[id]) }))\n  .filter(x => x.isos.length > 1);\n\nconst projectSummary = Object.keys(perProject).sort().map(p => ({\n  project: p,\n  count: perProject[p].length,\n  codes: perProject[p].sort().join(' ')\n}));\n\nreturn [{ json: {\n  total_projects_header: projItems.length ? projItems[0].json.total_projects_header : null,\n  projects_fetched: projItems.length,\n  total_language_rows: rows.length,\n  errors: rows.filter(r => r.error),\n  iso_summary: isoSummary,\n  shared_ids: idSummary,\n  per_project: projectSummary\n} }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Projects": {
+      "main": [
+        [
+          {
+            "node": "Expand Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand Projects": {
+      "main": [
+        [
+          {
+            "node": "Fetch Languages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Languages": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "AmZfJfePpEMcaDoR",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-21T12:38:52.027Z",
+      "updatedAt": "2026-09-21T12:38:52.027Z"
+    }
+  ],
+  "activeVersion": null
+}
