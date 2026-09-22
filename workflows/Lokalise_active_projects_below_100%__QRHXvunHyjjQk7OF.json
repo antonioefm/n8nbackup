@@ -1,0 +1,552 @@
+{
+  "id": "QRHXvunHyjjQk7OF",
+  "name": "Lokalise: active projects below 100%",
+  "description": "Daily 04:00 Europe/Madrid: reads active-labelled projects from the lokalise_project_labels data table, checks per-language progress in Lokalise, posts a completeness summary to #i18n-team with per-project locale detail in thread.",
+  "active": true,
+  "activeVersionId": "c4b30b0a-2efc-40a7-8797-053d9f7340e8",
+  "createdAt": "2026-09-21T15:00:53.247Z",
+  "updatedAt": "2026-09-21T15:29:39.677Z",
+  "isArchived": false,
+  "versionId": "c4b30b0a-2efc-40a7-8797-053d9f7340e8",
+  "versionCounter": 15,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "52abc455-dbe4-465f-8f12-d3a71e14039f",
+      "name": "Daily 04:00 Madrid",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 4,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "4ec07525-199d-46d9-8e07-30aa010c2109",
+      "name": "Get Active Projects",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "zgduWw2eDaFthPf6"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "active",
+              "condition": "eq",
+              "keyValue": "true"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "fa4725b0-98de-409b-b44a-6de9afe40609",
+      "name": "Fetch Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=100&page=1",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "c901624f-33fa-4275-a823-3b1630d513cb",
+      "name": "Build Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Active project ids from the data table (labels are UI-only in Lokalise, so\n// this table is the only source of truth for the \"active\" label).\nconst activeRows = $('Get Active Projects').all().map(i => i.json);\nconst activeIds = new Set(activeRows.map(r => r.project_id));\nconst nameById = new Map(activeRows.map(r => [r.project_id, r.project_name]));\n\nconst resp = $('Fetch Projects').first().json;\nconst body = resp.body || resp;\nif (!Array.isArray(body.projects)) {\n  throw new Error('Lokalise /projects returned no projects array - check the token and response shape');\n}\n\n// Not real target languages: source EN plus pseudo-locales.\nconst EXCLUDE_ISO = new Set(['en', 'pst', 'ps', 'cus', 'pt_old']);\n\nconst fetched = new Map(body.projects.map(p => [p.project_id, p]));\nconst incomplete = [];\nconst missing = [];\n\nfor (const pid of activeIds) {\n  const p = fetched.get(pid);\n  if (!p) { missing.push(nameById.get(pid) || pid); continue; }\n\n  const langs = ((p.statistics || {}).languages || [])\n    .filter(l => !EXCLUDE_ISO.has(l.language_iso))\n    .filter(l => l.progress < 100)\n    .map(l => ({ iso: l.language_iso, progress: l.progress }))\n    .sort((a, b) => a.progress - b.progress);\n\n  if (langs.length === 0) continue;\n\n  incomplete.push({\n    project_id: pid,\n    name: p.name,\n    worst: langs[0].progress,\n    languages: langs,\n    url: 'https://app.lokalise.com/project/' + pid + '/'\n  });\n}\n\n// Alphabetical, as in the nightly QA report - leading punctuation stripped so\n// '\"myevisa.com\"' sorts under m, not above everything.\nincomplete.sort(function (a, b) {\n  return a.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase()\n    .localeCompare(b.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase());\n});\n\nconst localeCount = incomplete.reduce((s, p) => s + p.languages.length, 0);\nconst scanned = activeIds.size;\nconst atHundred = scanned - incomplete.length - missing.length;\n\n// --- summary ---------------------------------------------------------------\n// Deliberately terse (Mary, 2026-09-21):\n//  - Totals carry ONE number: projects below 100%, marked with :x: so it reads\n//    as the counterpart to the :white_check_mark: at-100% line below.\n//  - No \"N of M projects below 100%\" restatement: the header already gives M\n//    and Totals already gives N.\n//  - No baseline / change tracking at all. Removed on request; if it is ever\n//    wanted back it needs $getWorkflowStaticData('global') to hold the previous\n//    project|iso pairs, as the nightly QA report does with its key-id baseline,\n//    and the first run after re-adding it can report no change.\nconst cleanSweep = (incomplete.length === 0);\nconst verified = (missing.length === 0);\n\nlet summary = '*Lokalise daily completeness check* \\u2014 ' + scanned + ' active projects scanned\\n\\n';\nsummary += '*Totals*\\n';\nsummary += ':x: Projects below 100%: ' + incomplete.length + '\\n';\nsummary += '\\n';\n\nif (cleanSweep && verified) {\n  summary += ':tada: :confetti_ball: *CONGRATULATIONS!* :confetti_ball: :tada:\\n';\n  summary += '*Every active project is fully translated across all ' + scanned + ' projects.*\\n';\n  summary += 'Every target locale at 100% \\u2014 nothing outstanding, account-wide.\\n';\n  summary += 'Genuinely excellent work, everyone. :clap:\\n';\n} else if (cleanSweep) {\n  summary += ':white_check_mark: Every project read is at 100% \\u2014 but see the warning below before celebrating.\\n';\n} else {\n  summary += ':white_check_mark: ' + atHundred + ' project(s) at 100%.\\n';\n}\n\nif (missing.length) {\n  summary += '\\n:warning: in the active map but not returned by the API: ' + missing.join(', ');\n}\n\n// Slack Block Kit payload. A section carries the text; an image block carries the\n// gif. An image block RENDERS the gif - posting the bare URL and hoping Slack\n// unfurls it does not.\n// TWO gifs, one per outcome. Neither is the nightly QA report's gif. Both were\n// verified to return real GIF bytes, because media.giphy.com serves a placeholder\n// gif (239321 bytes) with HTTP 200 for ANY unknown id - never trust a 200 alone\n// when swapping these.\n// GIF_ISSUES was chosen by Mary 2026-09-21. She supplied it as a media0 \"200.gif\"\n// link carrying cid / ep / rid / ct query parameters; those are per-session\n// tracking params, so the canonical query-less form is stored instead - same asset,\n// higher resolution (649 kB vs 309 kB), and nothing that can expire.\nconst GIF_CLEAN = 'https://media.giphy.com/media/26u4cqiYI30juCOGY/giphy.gif';\nconst GIF_ISSUES = 'https://media.giphy.com/media/eImrJKnOmuBDmqXNUj/giphy.gif';\n\nlet gifUrl = null;\nlet gifAlt = null;\nif (cleanSweep && verified) {\n  gifUrl = GIF_CLEAN;\n  gifAlt = 'Celebration - every active project is fully translated';\n} else if (!cleanSweep) {\n  gifUrl = GIF_ISSUES;\n  gifAlt = 'At least one project is below 100% - details in thread';\n}\n// The clean-but-unverified branch deliberately gets NO gif: a warning the team\n// should read does not belong under a picture.\n\nconst blocks = [{\n  type: 'section',\n  text: { type: 'mrkdwn', text: summary.length > 2900 ? summary.slice(0, 2897) + '...' : summary }\n}];\nif (gifUrl) {\n  blocks.push({ type: 'image', image_url: gifUrl, alt_text: gifAlt });\n}\nconst summaryBlocks = JSON.stringify({ blocks: blocks });\n\n// --- thread reply: detail, percentages only --------------------------------\nlet threadText;\nif (cleanSweep) {\n  threadText = 'Nothing outstanding \\u2014 all ' + scanned + ' active projects at 100%.';\n} else {\n  threadText = '*Projects below 100%* \\u2014 ' + localeCount + ' locale' +\n    (localeCount === 1 ? '' : 's') + ' below 100%\\n\\n' + incomplete.map(p => {\n    const langStr = p.languages.map(l => l.iso + ' ' + l.progress + '%').join(', ');\n    const label = String(p.name).replace(/[<>|]/g, ' ').trim();\n    return '<' + p.url + '|' + label + '>\\n    ' + langStr;\n  }).join('\\n\\n') + '\\n';\n}\n\nreturn [{ json: {\n  active_count: scanned,\n  incomplete_count: incomplete.length,\n  locale_count: localeCount,\n  missing_from_api: missing,\n  celebrated: (cleanSweep && verified),\n  gif_url: gifUrl,\n  projects: incomplete,\n  summary,\n  summary_blocks: summaryBlocks,\n  text: summary,\n  threadText\n} }];"
+      }
+    },
+    {
+      "id": "e9960f16-2cc7-434b-a707-84485019a0f6",
+      "name": "Post to i18n-team",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C094NS33FN0"
+        },
+        "messageType": "block",
+        "text": "={{ $json.summary }}",
+        "otherOptions": {
+          "mrkdwn": true,
+          "includeLinkToWorkflow": false,
+          "unfurl_links": false,
+          "unfurl_media": true
+        },
+        "blocksUi": "={{ $json.summary_blocks }}"
+      },
+      "disabled": false,
+      "webhookId": "ef202d98-c1a0-4411-a183-8da6526c1587",
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      }
+    },
+    {
+      "id": "25fb2234-cead-413d-86e3-88bdd458cac5",
+      "name": "Post Details in Thread",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C094NS33FN0"
+        },
+        "messageType": "text",
+        "operation": "post",
+        "otherOptions": {
+          "includeLinkToWorkflow": false,
+          "mrkdwn": true,
+          "thread_ts": {
+            "replyValues": {
+              "reply_broadcast": false,
+              "thread_ts": "={{ $json.message_timestamp }}"
+            }
+          },
+          "unfurl_links": false
+        },
+        "resource": "message",
+        "select": "channel",
+        "text": "={{ $('Build Report').first().json.threadText }}"
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "disabled": false,
+      "webhookId": "4af1b97e-f493-4a68-9662-1085ea5fdbe0"
+    }
+  ],
+  "connections": {
+    "Get Active Projects": {
+      "main": [
+        [
+          {
+            "node": "Fetch Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Projects": {
+      "main": [
+        [
+          {
+            "node": "Build Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Report": {
+      "main": [
+        [
+          {
+            "node": "Post to i18n-team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to i18n-team": {
+      "main": [
+        [
+          {
+            "node": "Post Details in Thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily 04:00 Madrid": {
+      "main": [
+        [
+          {
+            "node": "Get Active Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Madrid"
+  },
+  "staticData": {
+    "node:Daily 04:00 Madrid": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    }
+  },
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "QRHXvunHyjjQk7OF",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-21T15:00:53.251Z",
+      "updatedAt": "2026-09-21T15:00:53.251Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "c4b30b0a-2efc-40a7-8797-053d9f7340e8",
+    "workflowId": "QRHXvunHyjjQk7OF",
+    "nodes": [
+      {
+        "id": "52abc455-dbe4-465f-8f12-d3a71e14039f",
+        "name": "Daily 04:00 Madrid",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.4,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "days",
+                "daysInterval": 1,
+                "triggerAtHour": 4,
+                "triggerAtMinute": 0
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "4ec07525-199d-46d9-8e07-30aa010c2109",
+        "name": "Get Active Projects",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          224,
+          0
+        ],
+        "parameters": {
+          "resource": "row",
+          "operation": "get",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "zgduWw2eDaFthPf6"
+          },
+          "matchType": "allConditions",
+          "filters": {
+            "conditions": [
+              {
+                "keyName": "active",
+                "condition": "eq",
+                "keyValue": "true"
+              }
+            ]
+          },
+          "returnAll": true
+        }
+      },
+      {
+        "id": "fa4725b0-98de-409b-b44a-6de9afe40609",
+        "name": "Fetch Projects",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          448,
+          0
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://api.lokalise.com/api2/projects?limit=100&page=1",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            }
+          },
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth"
+        },
+        "executeOnce": true,
+        "retryOnFail": true,
+        "maxTries": 5,
+        "waitBetweenTries": 5000,
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "VW7WtJP8PzJMR813",
+            "name": "Lokalise read-only"
+          }
+        }
+      },
+      {
+        "id": "c901624f-33fa-4275-a823-3b1630d513cb",
+        "name": "Build Report",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          672,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "// Active project ids from the data table (labels are UI-only in Lokalise, so\n// this table is the only source of truth for the \"active\" label).\nconst activeRows = $('Get Active Projects').all().map(i => i.json);\nconst activeIds = new Set(activeRows.map(r => r.project_id));\nconst nameById = new Map(activeRows.map(r => [r.project_id, r.project_name]));\n\nconst resp = $('Fetch Projects').first().json;\nconst body = resp.body || resp;\nif (!Array.isArray(body.projects)) {\n  throw new Error('Lokalise /projects returned no projects array - check the token and response shape');\n}\n\n// Not real target languages: source EN plus pseudo-locales.\nconst EXCLUDE_ISO = new Set(['en', 'pst', 'ps', 'cus', 'pt_old']);\n\nconst fetched = new Map(body.projects.map(p => [p.project_id, p]));\nconst incomplete = [];\nconst missing = [];\n\nfor (const pid of activeIds) {\n  const p = fetched.get(pid);\n  if (!p) { missing.push(nameById.get(pid) || pid); continue; }\n\n  const langs = ((p.statistics || {}).languages || [])\n    .filter(l => !EXCLUDE_ISO.has(l.language_iso))\n    .filter(l => l.progress < 100)\n    .map(l => ({ iso: l.language_iso, progress: l.progress }))\n    .sort((a, b) => a.progress - b.progress);\n\n  if (langs.length === 0) continue;\n\n  incomplete.push({\n    project_id: pid,\n    name: p.name,\n    worst: langs[0].progress,\n    languages: langs,\n    url: 'https://app.lokalise.com/project/' + pid + '/'\n  });\n}\n\n// Alphabetical, as in the nightly QA report - leading punctuation stripped so\n// '\"myevisa.com\"' sorts under m, not above everything.\nincomplete.sort(function (a, b) {\n  return a.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase()\n    .localeCompare(b.name.replace(/^[^A-Za-z0-9]+/, '').toLowerCase());\n});\n\nconst localeCount = incomplete.reduce((s, p) => s + p.languages.length, 0);\nconst scanned = activeIds.size;\nconst atHundred = scanned - incomplete.length - missing.length;\n\n// --- summary ---------------------------------------------------------------\n// Deliberately terse (Mary, 2026-09-21):\n//  - Totals carry ONE number: projects below 100%, marked with :x: so it reads\n//    as the counterpart to the :white_check_mark: at-100% line below.\n//  - No \"N of M projects below 100%\" restatement: the header already gives M\n//    and Totals already gives N.\n//  - No baseline / change tracking at all. Removed on request; if it is ever\n//    wanted back it needs $getWorkflowStaticData('global') to hold the previous\n//    project|iso pairs, as the nightly QA report does with its key-id baseline,\n//    and the first run after re-adding it can report no change.\nconst cleanSweep = (incomplete.length === 0);\nconst verified = (missing.length === 0);\n\nlet summary = '*Lokalise daily completeness check* \\u2014 ' + scanned + ' active projects scanned\\n\\n';\nsummary += '*Totals*\\n';\nsummary += ':x: Projects below 100%: ' + incomplete.length + '\\n';\nsummary += '\\n';\n\nif (cleanSweep && verified) {\n  summary += ':tada: :confetti_ball: *CONGRATULATIONS!* :confetti_ball: :tada:\\n';\n  summary += '*Every active project is fully translated across all ' + scanned + ' projects.*\\n';\n  summary += 'Every target locale at 100% \\u2014 nothing outstanding, account-wide.\\n';\n  summary += 'Genuinely excellent work, everyone. :clap:\\n';\n} else if (cleanSweep) {\n  summary += ':white_check_mark: Every project read is at 100% \\u2014 but see the warning below before celebrating.\\n';\n} else {\n  summary += ':white_check_mark: ' + atHundred + ' project(s) at 100%.\\n';\n}\n\nif (missing.length) {\n  summary += '\\n:warning: in the active map but not returned by the API: ' + missing.join(', ');\n}\n\n// Slack Block Kit payload. A section carries the text; an image block carries the\n// gif. An image block RENDERS the gif - posting the bare URL and hoping Slack\n// unfurls it does not.\n// TWO gifs, one per outcome. Neither is the nightly QA report's gif. Both were\n// verified to return real GIF bytes, because media.giphy.com serves a placeholder\n// gif (239321 bytes) with HTTP 200 for ANY unknown id - never trust a 200 alone\n// when swapping these.\n// GIF_ISSUES was chosen by Mary 2026-09-21. She supplied it as a media0 \"200.gif\"\n// link carrying cid / ep / rid / ct query parameters; those are per-session\n// tracking params, so the canonical query-less form is stored instead - same asset,\n// higher resolution (649 kB vs 309 kB), and nothing that can expire.\nconst GIF_CLEAN = 'https://media.giphy.com/media/26u4cqiYI30juCOGY/giphy.gif';\nconst GIF_ISSUES = 'https://media.giphy.com/media/eImrJKnOmuBDmqXNUj/giphy.gif';\n\nlet gifUrl = null;\nlet gifAlt = null;\nif (cleanSweep && verified) {\n  gifUrl = GIF_CLEAN;\n  gifAlt = 'Celebration - every active project is fully translated';\n} else if (!cleanSweep) {\n  gifUrl = GIF_ISSUES;\n  gifAlt = 'At least one project is below 100% - details in thread';\n}\n// The clean-but-unverified branch deliberately gets NO gif: a warning the team\n// should read does not belong under a picture.\n\nconst blocks = [{\n  type: 'section',\n  text: { type: 'mrkdwn', text: summary.length > 2900 ? summary.slice(0, 2897) + '...' : summary }\n}];\nif (gifUrl) {\n  blocks.push({ type: 'image', image_url: gifUrl, alt_text: gifAlt });\n}\nconst summaryBlocks = JSON.stringify({ blocks: blocks });\n\n// --- thread reply: detail, percentages only --------------------------------\nlet threadText;\nif (cleanSweep) {\n  threadText = 'Nothing outstanding \\u2014 all ' + scanned + ' active projects at 100%.';\n} else {\n  threadText = '*Projects below 100%* \\u2014 ' + localeCount + ' locale' +\n    (localeCount === 1 ? '' : 's') + ' below 100%\\n\\n' + incomplete.map(p => {\n    const langStr = p.languages.map(l => l.iso + ' ' + l.progress + '%').join(', ');\n    const label = String(p.name).replace(/[<>|]/g, ' ').trim();\n    return '<' + p.url + '|' + label + '>\\n    ' + langStr;\n  }).join('\\n\\n') + '\\n';\n}\n\nreturn [{ json: {\n  active_count: scanned,\n  incomplete_count: incomplete.length,\n  locale_count: localeCount,\n  missing_from_api: missing,\n  celebrated: (cleanSweep && verified),\n  gif_url: gifUrl,\n  projects: incomplete,\n  summary,\n  summary_blocks: summaryBlocks,\n  text: summary,\n  threadText\n} }];"
+        }
+      },
+      {
+        "id": "e9960f16-2cc7-434b-a707-84485019a0f6",
+        "name": "Post to i18n-team",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.7,
+        "position": [
+          896,
+          0
+        ],
+        "parameters": {
+          "resource": "message",
+          "operation": "post",
+          "select": "channel",
+          "channelId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "C094NS33FN0"
+          },
+          "messageType": "block",
+          "text": "={{ $json.summary }}",
+          "otherOptions": {
+            "mrkdwn": true,
+            "includeLinkToWorkflow": false,
+            "unfurl_links": false,
+            "unfurl_media": true
+          },
+          "blocksUi": "={{ $json.summary_blocks }}"
+        },
+        "disabled": false,
+        "webhookId": "ef202d98-c1a0-4411-a183-8da6526c1587",
+        "credentials": {
+          "slackApi": {
+            "id": "CXa5wwj5tndNAnHG",
+            "name": "i18n assignment bot"
+          }
+        }
+      },
+      {
+        "id": "25fb2234-cead-413d-86e3-88bdd458cac5",
+        "name": "Post Details in Thread",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.7,
+        "position": [
+          1200,
+          0
+        ],
+        "parameters": {
+          "channelId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "C094NS33FN0"
+          },
+          "messageType": "text",
+          "operation": "post",
+          "otherOptions": {
+            "includeLinkToWorkflow": false,
+            "mrkdwn": true,
+            "thread_ts": {
+              "replyValues": {
+                "reply_broadcast": false,
+                "thread_ts": "={{ $json.message_timestamp }}"
+              }
+            },
+            "unfurl_links": false
+          },
+          "resource": "message",
+          "select": "channel",
+          "text": "={{ $('Build Report').first().json.threadText }}"
+        },
+        "credentials": {
+          "slackApi": {
+            "id": "CXa5wwj5tndNAnHG",
+            "name": "i18n assignment bot"
+          }
+        },
+        "disabled": false,
+        "webhookId": "4af1b97e-f493-4a68-9662-1085ea5fdbe0"
+      }
+    ],
+    "connections": {
+      "Get Active Projects": {
+        "main": [
+          [
+            {
+              "node": "Fetch Projects",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Projects": {
+        "main": [
+          [
+            {
+              "node": "Build Report",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Report": {
+        "main": [
+          [
+            {
+              "node": "Post to i18n-team",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Post to i18n-team": {
+        "main": [
+          [
+            {
+              "node": "Post Details in Thread",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Daily 04:00 Madrid": {
+        "main": [
+          [
+            {
+              "node": "Get Active Projects",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Maria Sica (via MCP)",
+    "name": "Move schedule to 04:00 Madrid",
+    "description": "Updated nodes: Daily 04:00 Madrid\nConnections: 1 added, 1 removed",
+    "autosaved": false,
+    "createdAt": "2026-09-21T15:29:39.678Z",
+    "updatedAt": "2026-09-21T15:29:39.678Z",
+    "workflowPublishHistory": [
+      {
+        "id": 1969,
+        "workflowId": "QRHXvunHyjjQk7OF",
+        "versionId": "c4b30b0a-2efc-40a7-8797-053d9f7340e8",
+        "event": "activated",
+        "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
+        "createdAt": "2026-09-21T15:29:44.798Z"
+      }
+    ]
+  }
+}
