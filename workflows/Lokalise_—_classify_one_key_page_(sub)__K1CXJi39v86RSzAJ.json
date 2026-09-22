@@ -1,0 +1,131 @@
+{
+  "id": "K1CXJi39v86RSzAJ",
+  "name": "Lokalise — classify one key page (sub)",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-21T12:38:41.931Z",
+  "updatedAt": "2026-09-21T12:38:48.008Z",
+  "isArchived": false,
+  "versionId": "c0f7ecbd-5c01-4b6c-b12b-7520d7ecd368",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "c9aadf8d-3085-4563-9777-f65d2b7a39fa",
+      "name": "When Called",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "3933bc90-5fa4-4f8f-a777-dd88cf19dc99",
+      "name": "Fetch Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?include_translations=1&limit={{ $json.limit }}&page={{ $json.page }}",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "70ac27e7-aa65-4339-88c2-1586b2435f10",
+      "name": "Classify Page",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst src = $('When Called').first().json;\n\nconst LINGUISTS = new Set([\n  'sabrathan@gmail.com','farahputri@gmail.com','dmluciahorea@gmail.com','roxanamoldovan25@gmail.com',\n  'mteres@terestraducciones.com','arandatrad@gmail.com','sara.guinot.trad@gmail.com','daniel@dgmultilingualservices.com',\n  'root-translations@outlook.com','austra.muizniece@gmail.com','harald.roald@gmail.com','47natcha@gmail.com',\n  'ellen.de.venter@outlook.com','ilaria.roncaglia@gmail.com','silke.luehrmann@gmx.de','boh.vozniuk@gmail.com',\n  'vidiasc@gmail.com','ivanaturcin@ymail.com','julius.valkiunas@gmail.com','jaromirvicari@me.com',\n  'karahansisman@gmail.com','katri.varvikko@gmail.com','kenneth@phraseit.dk','translation@cornell.hu',\n  'ruckova.lucia@gmail.com','marit.teichmann@gmail.com','michal.tosza@translators.org.pl',\n  'mteixeira@sacradomus.com','bruno@bsttranslations.com','nerissaneptuno@gmail.com','straus.translations@gmail.com',\n  'quentinnguyen.localize@gmail.com','therese.svardsten@gmail.com'\n]);\nconst PSEUDO = new Set(['pst','ps','cus','pt_old']);\n\nfunction isEmpty(t) {\n  if (t === null || t === undefined) return true;\n  if (typeof t === 'string') {\n    const s = t.trim();\n    if (!s) return true;\n    if (s.startsWith('{') || s.startsWith('[')) {\n      try { return isEmpty(JSON.parse(s)); } catch (e) { return false; }\n    }\n    return false;\n  }\n  if (typeof t === 'object') {\n    const vals = Object.values(t);\n    if (!vals.length) return true;\n    return vals.every(v => isEmpty(v));\n  }\n  return false;\n}\n\nconst body = $input.first().json.body || $input.first().json;\nif (!Array.isArray(body.keys)) {\n  throw new Error('No keys array: ' + JSON.stringify(body).slice(0, 300));\n}\n\nconst buckets = {};\nconst empties = {};\nlet keysSeen = 0;\n\nfor (const k of body.keys) {\n  keysSeen += 1;\n  const trs = Array.isArray(k.translations) ? k.translations : [];\n  const emptyLocales = [];\n  for (const tr of trs) {\n    const iso = tr.language_iso;\n    if (!iso || PSEUDO.has(iso)) continue;\n    if (!buckets[iso]) {\n      buckets[iso] = { locale: iso, keys: 0, untranslated: 0, ai: 0, mt: 0, tm: 0,\n        linguist: 0, other_editor: 0, linguist_touched: 0,\n        machine_status_but_linguist_edit: 0, reviewed: 0, unverified: 0, authors: {} };\n    }\n    const r = buckets[iso];\n    r.keys += 1;\n    if (tr.is_reviewed) r.reviewed += 1;\n    if (tr.is_unverified) r.unverified += 1;\n\n    const titles = (tr.custom_translation_statuses || []).map(s => String(s.title || '').toUpperCase());\n    const hasAI = titles.some(t => t.startsWith('AI'));\n    const hasMT = titles.some(t => t === 'MT' || t.startsWith('MT_') || t.startsWith('MT '));\n    const hasTM = titles.some(t => t.includes('TM'));\n    const email = String(tr.modified_by_email || '').toLowerCase().trim();\n    const byLinguist = LINGUISTS.has(email);\n\n    if (isEmpty(tr.translation)) { r.untranslated += 1; emptyLocales.push(iso); continue; }\n    r.authors[email || '(none)'] = (r.authors[email || '(none)'] || 0) + 1;\n    if (byLinguist) r.linguist_touched += 1;\n    if ((hasAI || hasMT) && byLinguist) r.machine_status_but_linguist_edit += 1;\n    if (hasAI) { r.ai += 1; continue; }\n    if (hasMT) { r.mt += 1; continue; }\n    if (hasTM) { r.tm += 1; continue; }\n    if (byLinguist) { r.linguist += 1; continue; }\n    r.other_editor += 1;\n  }\n  if (emptyLocales.length) {\n    const kn = k.key_name;\n    const name = (kn && typeof kn === 'object') ? (kn.web || kn.other || kn.ios || kn.android || JSON.stringify(kn)) : String(kn);\n    empties[name] = emptyLocales.join(',');\n  }\n}\n\nreturn Object.values(buckets).map(r => ({ json: Object.assign({\n  project_id: src.project_id,\n  project: src.name,\n  product: src.product,\n  page: src.page,\n  keys_on_page: keysSeen,\n  empty_keys: empties\n}, r) }));\n"
+      }
+    }
+  ],
+  "connections": {
+    "When Called": {
+      "main": [
+        [
+          {
+            "node": "Fetch Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Page": {
+      "main": [
+        [
+          {
+            "node": "Classify Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "executionTimeout": 1800,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "K1CXJi39v86RSzAJ",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-21T12:38:41.933Z",
+      "updatedAt": "2026-09-21T12:38:41.933Z"
+    }
+  ],
+  "activeVersion": null
+}
