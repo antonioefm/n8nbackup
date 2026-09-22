@@ -1,0 +1,285 @@
+{
+  "id": "OLQsAD4cNdy7rK1p",
+  "name": "Lokalise — key status by locale (MyImage / PDF Editor / Chat AI)",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-21T10:36:42.912Z",
+  "updatedAt": "2026-09-21T10:41:11.637Z",
+  "isArchived": false,
+  "versionId": "588442cf-e5cc-4e75-a6d3-01006b5301fd",
+  "versionCounter": 4,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "1e50f93b-4e52-403e-8d9b-65e615cd41b6",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "ebf5c4a7-518a-46f9-9375-731c1bd4f4f9",
+      "name": "Target Projects",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst projects = [\n  { project_id: '3070657967b5854be32cb1.65162854', name: 'My Image', product: 'MyImage' },\n  { project_id: '50011170688b3050b0a7f8.40995136', name: 'My Image - Backend', product: 'MyImage' },\n  { project_id: '1286096867dbf31146afc5.54950617', name: 'PDF Editor', product: 'PDF Editor' },\n  { project_id: '479073796a6095e8c10e35.09051894', name: 'PDF Editor monorepo', product: 'PDF Editor' },\n  { project_id: '46919453689d5d729a1e70.59972091', name: 'PDF Editor - html/legal pages', product: 'PDF Editor' },\n  { project_id: '6744586768821f2c3fe845.13636914', name: 'PDF Editor (BE- emails)', product: 'PDF Editor' },\n  { project_id: '691331356a3b9a68428ab3.43540470', name: 'Chat AI - frontend', product: 'Chat AI' },\n  { project_id: '225008626a33e62b328c63.04676982', name: 'Chat AI (emails)', product: 'Chat AI' }\n];\nreturn projects.map(p => ({ json: p }));\n"
+      }
+    },
+    {
+      "id": "6c8091a6-4d80-4516-a372-22a1e0e73a8b",
+      "name": "Build Table",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst rows = $input.all().map(i => i.json);\nreturn [{ json: { row_count: rows.length, rows } }];\n"
+      }
+    },
+    {
+      "id": "455daa2a-0262-43a3-8e5a-de0a05fe616c",
+      "name": "Count Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?limit=1&page=1",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "b6eab834-8f7b-4881-8bc7-fe38889bb36c",
+      "name": "Expand Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst src = $('Per Project').first().json;\nconst resp = $input.first().json;\nconst headers = resp.headers || {};\nconst total = parseInt(headers['x-pagination-total-count'] || headers['X-Pagination-Total-Count'] || '0', 10);\nif (!total) {\n  throw new Error('No total count header for ' + src.name + ' :: ' + JSON.stringify(headers).slice(0, 300));\n}\nconst limit = 500;\nconst pageCount = Math.ceil(total / limit);\nconst out = [];\nfor (let p = 1; p <= pageCount; p++) {\n  out.push({ json: { project_id: src.project_id, name: src.name, product: src.product, page: p, limit, total_keys: total } });\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "3fa7a262-7c8a-4688-9748-ac32e700ca50",
+      "name": "Fetch Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?include_translations=1&limit={{ $json.limit }}&page={{ $json.page }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 900
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "e8d862ac-5dda-4ea3-b624-b04edbee829d",
+      "name": "Classify Per Locale",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        272
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst src = $('Per Project').first().json;\nconst meta = $('Expand Pages').first().json;\n\nconst PSEUDO = new Set(['pst','ps','cus','pt_old']);\nconst empties = {};\n\nfunction isEmpty(t) {\n  if (t === null || t === undefined) return true;\n  if (typeof t === 'string') {\n    const s = t.trim();\n    if (!s) return true;\n    if (s.startsWith('{') || s.startsWith('[')) {\n      try { return isEmpty(JSON.parse(s)); } catch (e) { return false; }\n    }\n    return false;\n  }\n  if (typeof t === 'object') {\n    const vals = Object.values(t);\n    if (!vals.length) return true;\n    return vals.every(v => isEmpty(v));\n  }\n  return false;\n}\n\nfor (const item of $input.all()) {\n  const body = item.json.body || item.json;\n  const keys = body.keys;\n  if (!Array.isArray(keys)) throw new Error('No keys array for ' + src.name);\n  for (const k of keys) {\n    const trs = Array.isArray(k.translations) ? k.translations : [];\n    const emptyLocales = [];\n    for (const tr of trs) {\n      const iso = tr.language_iso;\n      if (!iso || PSEUDO.has(iso)) continue;\n      if (isEmpty(tr.translation)) emptyLocales.push(iso);\n    }\n    if (emptyLocales.length) {\n      const name = Array.isArray(k.key_name) ? (k.key_name.web || k.key_name.other || JSON.stringify(k.key_name)) : (k.key_name && typeof k.key_name === 'object' ? (k.key_name.web || k.key_name.ios || k.key_name.other) : k.key_name);\n      empties[String(name)] = emptyLocales.join(',');\n    }\n  }\n}\n\nreturn [{ json: {\n  project: src.name,\n  project_id: src.project_id,\n  empty_key_count: Object.keys(empties).length,\n  empty_keys: empties\n}}];\n"
+      }
+    },
+    {
+      "id": "6116b9fd-c96d-4b36-b244-446033bae13c",
+      "name": "Per Project",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        448,
+        192
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Target Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Target Projects": {
+      "main": [
+        [
+          {
+            "node": "Per Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Keys": {
+      "main": [
+        [
+          {
+            "node": "Expand Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand Pages": {
+      "main": [
+        [
+          {
+            "node": "Fetch Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Keys": {
+      "main": [
+        [
+          {
+            "node": "Classify Per Locale",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Per Locale": {
+      "main": [
+        [
+          {
+            "node": "Per Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Per Project": {
+      "main": [
+        [
+          {
+            "node": "Build Table",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Count Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "executionTimeout": 1800
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "OLQsAD4cNdy7rK1p",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-21T10:36:42.915Z",
+      "updatedAt": "2026-09-21T10:36:42.915Z"
+    }
+  ],
+  "activeVersion": null
+}
