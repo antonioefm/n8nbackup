@@ -1,0 +1,247 @@
+{
+  "id": "11ZfKc74Rrfkz2iG",
+  "name": "Lokalise — MyImage/PDF/ChatAI key status probe",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-21T10:34:15.971Z",
+  "updatedAt": "2026-09-21T12:36:40.604Z",
+  "isArchived": false,
+  "versionId": "56c6f35d-b6d3-4906-865e-185a08a33aa8",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "ed2c5a91-bc55-40ac-befd-13aeefd40592",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "fed91666-38c0-4790-ac79-657c31556469",
+      "name": "Get Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=100&page=1&include_statistics=1&include_settings=1",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "809f6a5d-e98b-45d3-8544-90119e79896d",
+      "name": "Pick Projects",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst body = $input.first().json;\nconst projects = body.projects;\nif (!Array.isArray(projects)) {\n  throw new Error('No projects array in response: ' + JSON.stringify(body).slice(0, 400));\n}\nconst rx = /personality/i;\nconst out = [];\nfor (const p of projects) {\n  const name = p.name || '';\n  if (!rx.test(name)) continue;\n  const stats = p.statistics || {};\n  const langs = (stats.languages || []).map(l => ({ iso: l.language_iso, id: l.language_id }));\n  out.push({ json: {\n    project_id: p.project_id,\n    name,\n    keys_total: stats.keys_total,\n    base_words: stats.base_words,\n    langs\n  }});\n}\nout.sort((a, b) => a.json.name.localeCompare(b.json.name));\nreturn out;\n"
+      }
+    },
+    {
+      "id": "1503bdf8-6f0f-41b3-8ae1-b0eeeb8dcba6",
+      "name": "Summarise",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst rows = $input.all().map(i => i.json);\nconst total_keys = rows.reduce((a, r) => a + (r.keys_total || 0), 0);\nreturn [{ json: {\n  projects: rows.length,\n  total_keys,\n  estimated_translation_records: rows.reduce((a, r) => a + (r.keys_total || 0) * (r.langs ? r.langs.length : 0), 0),\n  detail: rows\n}}];\n"
+      }
+    },
+    {
+      "id": "b6af2cc5-9fc6-492b-8208-51c61db998b9",
+      "name": "Get Custom Statuses",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/custom_translation_statuses?limit=100",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "8ad611d5-9d21-4e27-9d20-ad72e4a5197b",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        272
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst src = $('Per Project').first().json;\nconst resp = $input.first().json || {};\nconst statuses = Array.isArray(resp.custom_translation_statuses)\n  ? resp.custom_translation_statuses.map(s => ({ id: s.status_id, title: s.title, color: s.color }))\n  : { error: resp.error || resp.message || 'no statuses array' };\nreturn [{ json: {\n  project_id: src.project_id,\n  name: src.name,\n  keys_total: src.keys_total,\n  langs: src.langs,\n  statuses\n}}];\n"
+      }
+    },
+    {
+      "id": "5e7205e8-a1da-42b9-8364-b63eb472123d",
+      "name": "Per Project",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Get Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Projects": {
+      "main": [
+        [
+          {
+            "node": "Pick Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Projects": {
+      "main": [
+        [
+          {
+            "node": "Per Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Custom Statuses": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape": {
+      "main": [
+        [
+          {
+            "node": "Per Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Per Project": {
+      "main": [
+        [
+          {
+            "node": "Summarise",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Custom Statuses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "11ZfKc74Rrfkz2iG",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-21T10:34:15.974Z",
+      "updatedAt": "2026-09-21T10:34:15.974Z"
+    }
+  ],
+  "activeVersion": null
+}
