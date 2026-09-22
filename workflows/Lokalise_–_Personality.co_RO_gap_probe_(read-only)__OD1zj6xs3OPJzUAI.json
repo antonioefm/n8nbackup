@@ -1,0 +1,240 @@
+{
+  "id": "OD1zj6xs3OPJzUAI",
+  "name": "Lokalise – Personality.co RO gap probe (read-only)",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-21T07:16:13.922Z",
+  "updatedAt": "2026-09-21T07:16:20.944Z",
+  "isArchived": false,
+  "versionId": "66129b79-219d-4770-84cb-674aca3a3025",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "f53b8670-ca3b-49dd-a07e-cc0cf6f13489",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "809fd716-fd4b-4cf7-a401-092a5184ef76",
+      "name": "Get Languages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/31393214664f295f94dd86.76792605/languages?limit=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "f6f34900-719a-46b1-b46b-58b5c07733fc",
+      "name": "Pick RO",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst body = $input.first().json;\nconst langs = body.languages;\nif (!Array.isArray(langs)) {\n  throw new Error('No languages array in response: ' + JSON.stringify(body).slice(0,500));\n}\nconst ro = langs.find(l => l.lang_iso === 'ro');\nconst en = langs.find(l => l.lang_iso === 'en');\nreturn [{ json: {\n  project_id: '31393214664f295f94dd86.76792605',\n  ro_found: !!ro,\n  ro_id: ro ? ro.lang_id : null,\n  ro_iso: ro ? ro.lang_iso : null,\n  en_id: en ? en.lang_id : null,\n  all_langs: langs.map(l => l.lang_iso + ':' + l.lang_id).sort().join(', '),\n  lang_count: langs.length\n} }];\n"
+      }
+    },
+    {
+      "id": "1c991928-55b0-4a1e-9be4-0dc8d13260e9",
+      "name": "Count All Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.lokalise.com/api2/projects/31393214664f295f94dd86.76792605/keys?limit=1&page=1&filter_translation_lang_ids=' + $json.ro_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "e28f3ea5-2a31-4dee-be0a-22e4b719381f",
+      "name": "Count Untranslated RO",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.lokalise.com/api2/projects/31393214664f295f94dd86.76792605/keys?limit=1&page=1&filter_untranslated=1&filter_translation_lang_ids=' + $('Pick RO').first().json.ro_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "350d4ce8-5343-4c7f-bf53-98fb1961e512",
+      "name": "Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst meta = $('Pick RO').first().json;\nconst all = $('Count All Keys').first().json;\nconst unt = $('Count Untranslated RO').first().json;\nfunction total(r) {\n  const h = r.headers || {};\n  return Number(h['x-pagination-total-count'] ?? h['X-Pagination-Total-Count'] ?? -1);\n}\nfunction okKeys(r) {\n  const b = r.body || {};\n  return Array.isArray(b.keys);\n}\nreturn [{ json: {\n  ...meta,\n  all_keys_call_ok: okKeys(all),\n  total_keys: total(all),\n  untranslated_call_ok: okKeys(unt),\n  ro_untranslated: total(unt),\n  ro_translated: total(all) - total(unt)\n} }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Get Languages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Languages": {
+      "main": [
+        [
+          {
+            "node": "Pick RO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick RO": {
+      "main": [
+        [
+          {
+            "node": "Count All Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count All Keys": {
+      "main": [
+        [
+          {
+            "node": "Count Untranslated RO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Untranslated RO": {
+      "main": [
+        [
+          {
+            "node": "Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "OD1zj6xs3OPJzUAI",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-21T07:16:13.930Z",
+      "updatedAt": "2026-09-21T07:16:13.930Z"
+    }
+  ],
+  "activeVersion": null
+}
