@@ -1,0 +1,219 @@
+{
+  "id": "DQbKQrYRaqrjVxg4",
+  "name": "Lokalise – RO glossary term write (Personality.co blockers)",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-21T07:45:34.431Z",
+  "updatedAt": "2026-09-21T07:48:26.659Z",
+  "isArchived": false,
+  "versionId": "4a06682a-ddd4-4c02-9d97-2590ef86d010",
+  "versionCounter": 5,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "64d0648d-acfd-438e-99cb-6bccb9a4879b",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "9e23bd85-a406-4596-9cf1-aba66fb27ed7",
+      "name": "Glossary p1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "59c8cf5c-47c9-4369-85eb-7278a4360c89",
+      "name": "Glossary p2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500&cursor=' + encodeURIComponent((($json.meta||{}).nextCursor) || '') }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "cf3ca54d-3caf-4ef8-b15b-4a730c64e97e",
+      "name": "Plan Writes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Approved Romanian for the glossary terms that block the Personality.co RO fill.\n// Gender-avoiding by default. No slash or parenthetical forms: zero precedent across\n// 9,610 existing Romanian strings in Personality.co.\nconst APPROVED = {\n  'Results': 'rezultate',\n  'Connection': 'conexiune',\n  'Empathy': 'empatie',\n  'Traits': 'trăsături',\n  'Impact': 'impact',\n  'Responsibility': 'responsabilitate',\n  'Communication': 'comunicare',\n  'Challenges': 'provocări',\n  'Authenticity': 'autenticitate',\n  'Interest': 'interes',\n  'Adaptability': 'adaptabilitate',\n  'Self-Awareness': 'conștiință de sine',\n  'Emotional needs': 'nevoi emoționale',\n  'coping': 'coping',\n  'Personal Growth': 'dezvoltare personală',\n  'Intimacy': 'intimitate',\n  'Emotional bonds': 'legături emoționale',\n  'Emotional Intelligence': 'inteligență emoțională',\n  'Romantic relationships': 'relații romantice',\n  'Career': 'carieră',\n  'Family': 'familie',\n  'Give': 'a oferi',\n  'Receive': 'a primi',\n  'Female': 'Femeie',\n  'Male': 'Bărbat',\n  'Single': 'Fără relație',\n  'Very Low': 'Nivel foarte scăzut',\n  'Low': 'Nivel scăzut',\n  'Moderate': 'Nivel moderat',\n  'High': 'Nivel ridicat',\n  'Very High': 'Nivel foarte ridicat'\n};\n// Deliberately NOT written:\n//   Strategic, Dominant  -> adjectives, source should be rewritten as nouns first\n//   Experience, Skills, Review -> one glossary row carrying two meanings, must be split\n\nconst RO_LANG_ID = 770; // numeric; the write API rejects the ISO code\n\nfunction page(nodeName) {\n  let j; try { j = $(nodeName).first().json; } catch(e) { return []; }\n  if (!j) return [];\n  const a = j.data || j.terms || j.glossary_terms;\n  return Array.isArray(a) ? a : [];\n}\nconst all = page('Glossary p1').concat(page('Glossary p2'));\nif (!all.length) throw new Error('glossary fetch returned nothing');\n\nconst seen = new Set();\nconst terms = [];\nfor (const t of all) {\n  const id = t.id ?? t.term_id;\n  const nm = String(t.term || '').trim();\n  if (!nm || !id || seen.has(id)) continue;\n  seen.add(id);\n  terms.push({ id, term: nm, translatable: t.translatable !== false, translations: Array.isArray(t.translations) ? t.translations : [] });\n}\nconst roOf = t => t.translations.find(x => x.langId === RO_LANG_ID || x.langIso === 'ro');\n\nconst withRoSlot = terms.filter(t => !!roOf(t)).length;\nif (withRoSlot === 0) throw new Error('no term exposes a Romanian translation slot - check RO_LANG_ID');\n\nconst writes = [], notFound = [], alreadySet = [], notTranslatable = [];\nfor (const [name, ro] of Object.entries(APPROVED)) {\n  const hit = terms.find(t => t.term.toLowerCase() === name.toLowerCase());\n  if (!hit) { notFound.push(name); continue; }\n  if (!hit.translatable) { notTranslatable.push(name); continue; }\n  const cur = roOf(hit);\n  const curVal = cur ? String(cur.translation || '').trim() : '';\n  if (curVal) { alreadySet.push({ term: name, existing: curVal, proposed: ro }); continue; }\n  writes.push({ id: hit.id, term: hit.term, ro });\n}\n\n// Payload shape verified on a single term (Results -> rezultate, HTTP 200).\nconst TEST_ONLY = false;\nconst selected = TEST_ONLY ? writes.slice(0, 1) : writes;\nif (!selected.length) {\n  return [{ json: { test_only: TEST_ONLY, nothing_to_write: true, already_has_ro_SKIPPED: alreadySet, payload: { terms: [] } } }];\n}\n\nreturn [{ json: {\n  test_only: TEST_ONLY,\n  ro_lang_id: RO_LANG_ID,\n  planned_writes: writes.length,\n  selected_this_run: selected.length,\n  not_found_in_glossary: notFound,\n  not_translatable_SKIPPED: notTranslatable,\n  already_has_ro_SKIPPED: alreadySet,\n  payload: { terms: selected.map(w => ({ id: w.id, translations: [{ langId: RO_LANG_ID, translation: w.ro }] })) },\n  writes_detail: writes\n} }];\n"
+      }
+    },
+    {
+      "id": "034adf96-632f-4898-9629-e576bf045b84",
+      "name": "PUT Glossary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "disabled": false,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Glossary p1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Glossary p1": {
+      "main": [
+        [
+          {
+            "node": "Glossary p2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Glossary p2": {
+      "main": [
+        [
+          {
+            "node": "Plan Writes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan Writes": {
+      "main": [
+        [
+          {
+            "node": "PUT Glossary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "DQbKQrYRaqrjVxg4",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-21T07:45:34.433Z",
+      "updatedAt": "2026-09-21T07:45:34.433Z"
+    }
+  ],
+  "activeVersion": null
+}
