@@ -1,0 +1,332 @@
+{
+  "id": "Adnp3MGa9zhXTXVq",
+  "name": "Personality members - questions AI fill",
+  "description": "Fills missing translations for enneagram_questions.* keys in Personality - Members area. Derives per-language style rules and few-shot examples from the existing 1,220 human translations, applies per-group gender mode (fa female, ma male), validates, then",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-21T06:22:19.227Z",
+  "updatedAt": "2026-09-21T06:35:17.377Z",
+  "isArchived": false,
+  "versionId": "ee474bcb-493e-4735-82d7-ce7d677c40e0",
+  "versionCounter": 5,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "5dbdc3e3-4f8b-436d-92d8-8525e3bfe6ec",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "03e73aba-abf2-45a1-9253-72e2f76fa711",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const CFG = {\n  project_id: '9933660066825e9a8005c8.58526829',\n  model: 'gpt-4.1',\n  batch: 25,\n  locales: ['es','it','fr','pt','ro','pl','lv','lt','de','nl','da','no','sv','et','id','ms','ko','th'],\n  groups: ['test_questions::occ','test_questions::ocd','test_questions::ps','test_questions::so','(untagged)','test_questions::anxiety','test_questions::bt','test_questions::et','test_questions::fa','test_questions::ma','test_questions::nd']\n};\nconst BASE = 'https://api.lokalise.com/api2';\nconst qs = 'include_translations=1&disable_references=1&limit=500&pagination=cursor';\nCFG.url = BASE + '/projects/' + CFG.project_id + '/keys?' + qs;\nCFG.put_url = BASE + '/projects/' + CFG.project_id + '/keys';\nreturn [{ json: CFG }];\n"
+      }
+    },
+    {
+      "id": "74f5c648-e2fe-4985-bbce-e6ad3cb61f74",
+      "name": "Fetch keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "parameters": {
+                "parameters": [
+                  {
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 200,
+              "requestInterval": 250
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "c765200d-0e84-4278-9a32-cb839ff87efc",
+      "name": "Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const C = $('Config').first().json;\nconst RULES = {\"es\":{\"name\":\"Spanish\",\"period\":true,\"case\":\"sentence\",\"dev\":\"slash\",\"dev_ex\":\"crítico/a, cómodo/a\",\"fem\":\"crítica, cómoda\",\"masc\":\"crítico, cómodo\",\"notes\":\"Never voseo. Prefer 'me siento' constructions. Drop the redundant subject pronoun 'yo'.\"},\"it\":{\"name\":\"Italian\",\"period\":true,\"case\":\"sentence\",\"dev\":\"slash\",\"dev_ex\":\"visto/a, sicuro/a\",\"fem\":\"vista, sicura\",\"masc\":\"visto, sicuro\",\"notes\":\"Drop the subject pronoun 'io'. Prefer 'mi sento' over 'sono'.\"},\"fr\":{\"name\":\"French\",\"period\":true,\"case\":\"sentence\",\"dev\":\"paren\",\"dev_ex\":\"aimé(e), prêt(e)\",\"fem\":\"aimée, prête\",\"masc\":\"aimé, prêt\",\"notes\":\"Keep 'je'. Plain spaces only.\"},\"pt\":{\"name\":\"Portuguese (Brazil)\",\"period\":true,\"case\":\"sentence\",\"dev\":\"paren\",\"dev_ex\":\"motivado(a), cansado(a)\",\"fem\":\"motivada, cansada\",\"masc\":\"motivado, cansado\",\"notes\":\"Brazilian usage. Drop the subject pronoun 'eu' where natural.\"},\"ro\":{\"name\":\"Romanian\",\"period\":true,\"case\":\"sentence\",\"dev\":\"slash\",\"dev_ex\":\"perfecționist/ă, singur/ă\",\"fem\":\"perfecționistă, singură\",\"masc\":\"perfecționist, singur\",\"notes\":\"Drop the subject pronoun 'eu'. Use dative reflexive 'îmi' constructions.\"},\"pl\":{\"name\":\"Polish\",\"period\":true,\"case\":\"sentence\",\"dev\":\"paren-hyphen\",\"dev_ex\":\"kochany(-a), obawiałem(-am)\",\"fem\":\"kochana, obawiałam\",\"masc\":\"kochany, obawiałem\",\"notes\":\"Drop the subject pronoun 'ja'. Past-tense verb forms are gendered - treat them exactly like adjectives.\"},\"lv\":{\"name\":\"Latvian\",\"period\":true,\"case\":\"sentence\",\"dev\":\"paren-hyphen\",\"dev_ex\":\"mīlēts(-ta), pārliecināts(-ta)\",\"fem\":\"mīlēta, pārliecināta\",\"masc\":\"mīlēts, pārliecināts\",\"notes\":\"Drop the subject pronoun 'es' where natural.\"},\"lt\":{\"name\":\"Lithuanian\",\"period\":true,\"case\":\"sentence\",\"dev\":\"masc-default\",\"dev_ex\":\"atlikdamas\",\"fem\":\"atlikdama, pavargusi\",\"masc\":\"atlikdamas, pavargęs\",\"notes\":\"Participles and adjectives are gendered; the corpus uses no slash or bracket device.\"},\"de\":{\"name\":\"German\",\"period\":true,\"case\":\"sentence\",\"dev\":\"none\",\"dev_ex\":\"\",\"fem\":\"\",\"masc\":\"\",\"notes\":\"Neue deutsche Rechtschreibung, ss written as the sharp s where correct. No gender star or colon. Add no quotation marks.\"},\"nl\":{\"name\":\"Dutch\",\"period\":true,\"case\":\"sentence\",\"dev\":\"none\",\"dev_ex\":\"\",\"fem\":\"\",\"masc\":\"\",\"notes\":\"Prefer 'ik voel me' over nominal constructions.\"},\"da\":{\"name\":\"Danish\",\"period\":true,\"case\":\"sentence\",\"dev\":\"none\",\"dev_ex\":\"\",\"fem\":\"\",\"masc\":\"\",\"notes\":\"First person carries no gender marking.\"},\"no\":{\"name\":\"Norwegian\",\"period\":true,\"case\":\"sentence\",\"dev\":\"none\",\"dev_ex\":\"\",\"fem\":\"\",\"masc\":\"\",\"notes\":\"Bokmal.\"},\"sv\":{\"name\":\"Swedish\",\"period\":true,\"case\":\"sentence\",\"dev\":\"none\",\"dev_ex\":\"\",\"fem\":\"\",\"masc\":\"\",\"notes\":\"First person carries no gender marking.\"},\"et\":{\"name\":\"Estonian\",\"period\":true,\"case\":\"sentence\",\"dev\":\"none\",\"dev_ex\":\"\",\"fem\":\"\",\"masc\":\"\",\"notes\":\"No grammatical gender. Drop 'ma' or 'mina' where natural.\"},\"id\":{\"name\":\"Indonesian\",\"period\":true,\"case\":\"sentence\",\"dev\":\"none\",\"dev_ex\":\"\",\"fem\":\"\",\"masc\":\"\",\"notes\":\"No grammatical gender. Use 'saya', never 'aku'.\"},\"ms\":{\"name\":\"Malay\",\"period\":true,\"case\":\"sentence\",\"dev\":\"none\",\"dev_ex\":\"\",\"fem\":\"\",\"masc\":\"\",\"notes\":\"No grammatical gender. Use 'saya'.\"},\"ko\":{\"name\":\"Korean\",\"period\":true,\"case\":\"none\",\"dev\":\"none\",\"dev_ex\":\"\",\"fem\":\"\",\"masc\":\"\",\"notes\":\"No letter case. The corpus uses the plain declarative style, not polite endings. Output runs about half the English character count.\"},\"th\":{\"name\":\"Thai\",\"period\":false,\"case\":\"none\",\"dev\":\"none\",\"dev_ex\":\"\",\"fem\":\"\",\"masc\":\"\",\"notes\":\"No final full stop and no letter case. Use the first-person pronoun the corpus uses. No politeness particles.\"}};\nconst GENDER = { 'test_questions::fa': 'female', 'test_questions::ma': 'male' };\n\nconst keys = [];\nfor (const p of $input.all()) {\n  const b = (p.json && p.json.body) || {};\n  if (!Array.isArray(b.keys)) continue;\n  for (const k of b.keys) {\n    const kn = k.key_name;\n    const nm = typeof kn === 'string' ? kn : ((kn && (kn.web || kn.other)) || '');\n    if (nm.indexOf('_questions.') === -1) continue;\n    const tags = k.tags || [];\n    const gs = tags.filter(function (t) { return t.indexOf('questions::') !== -1 || t === 'questions'; });\n    const t = {};\n    let en = '';\n    for (const tr of (k.translations || [])) {\n      let x = tr.translation;\n      if (x && typeof x === 'object') x = JSON.stringify(x);\n      x = (x === null || x === undefined) ? '' : String(x);\n      if (tr.language_iso === 'en') { en = x; continue; }\n      if (x.trim()) t[tr.language_iso] = x;\n    }\n    keys.push({ id: k.key_id, n: nm, g: gs.length ? gs[0] : '(untagged)', tags: tags, en: en, t: t });\n  }\n}\n\nconst out = [];\nconst stats = { keys_scanned: keys.length, batches: 0, strings: 0, per_locale: {} };\nfor (const L of C.locales) {\n  const R = RULES[L];\n  if (!R) continue;\n  const corpus = keys.filter(function (k) { return k.t[L] && k.t[L].trim() !== k.en.trim(); });\n  const shots = [];\n  const step = Math.max(1, Math.floor(corpus.length / 12));\n  for (let i = 0; i < corpus.length && shots.length < 12; i += step) {\n    shots.push('EN: ' + corpus[i].en + String.fromCharCode(10) + 'TARGET: ' + corpus[i].t[L]);\n  }\n  let n = 0;\n  for (const G of C.groups) {\n    const mode = GENDER[G] || 'neutral';\n    let gl;\n    if (mode === 'female') gl = 'The respondent is FEMALE (this is the female archetype test). Use feminine agreement throughout, e.g. ' + R.fem + '. Do NOT use any dual-gender notation.';\n    else if (mode === 'male') gl = 'The respondent is MALE (this is the male archetype test). Use masculine agreement throughout, e.g. ' + R.masc + '. Do NOT use any dual-gender notation.';\n    else if (R.dev === 'slash' || R.dev === 'paren' || R.dev === 'paren-hyphen') gl = 'Respondent gender is unknown. Use exactly the dual-gender notation the reference examples use: ' + R.dev_ex + '.';\n    else if (R.dev === 'masc-default') gl = 'Respondent gender is unknown. Use the masculine form, as the reference examples do.';\n    else gl = 'No gender marking is needed in ' + R.name + '.';\n\n    const lines = [\n      'You are a professional ' + R.name + ' translator working on psychometric self-report tests for Personality.co.',\n      'Translate each English item into ' + R.name + '. Each item is a first-person statement the user rates on an agreement scale.',\n      '',\n      'RULES',\n      '- Keep every item a declarative statement. Never turn it into a question.',\n      R.period ? '- End every statement with a full stop.' : '- Do NOT add a final full stop.',\n      R.case === 'sentence' ? '- Sentence case: capitalise the first letter only, plus proper nouns.' : '- The script has no letter case.',\n      '- ' + gl,\n      '- Avoid first-person possessive determiners wherever ' + R.name + ' offers a natural alternative (definite article, reflexive, or bare noun). Never force it at the cost of naturalness.',\n      '- Plain text only. No placeholders, no HTML, no added quotation marks, no brand names.',\n      '- Match the register, rhythm and length of the reference examples.',\n      '- ' + R.notes,\n      '',\n      'REFERENCE EXAMPLES (existing human translations from the same test battery - match this style exactly)',\n      shots.join(String.fromCharCode(10)),\n      '',\n      'Return ONLY JSON in this shape: {\"t\":[{\"i\":123,\"s\":\"translation\"}]} with one entry per input id, in the same order, and nothing else.'\n    ];\n    const sys = lines.filter(function (x) { return x !== ''; }).join(String.fromCharCode(10));\n\n    const todo = keys.filter(function (k) { return k.g === G && k.en.trim() && !k.t[L]; });\n    for (let i = 0; i < todo.length; i += C.batch) {\n      const chunk = todo.slice(i, i + C.batch);\n      out.push({\n        json: {\n          locale: L,\n          group: G,\n          mode: mode,\n          items: chunk.map(function (c) { return { i: c.id, en: c.en, n: c.n, tags: c.tags }; }),\n          body: {\n            model: C.model,\n            temperature: 0.3,\n            response_format: { type: 'json_object' },\n            messages: [\n              { role: 'system', content: sys },\n              { role: 'user', content: JSON.stringify(chunk.map(function (c) { return { i: c.id, en: c.en }; })) }\n            ]\n          }\n        }\n      });\n      stats.batches++;\n      stats.strings += chunk.length;\n      n += chunk.length;\n    }\n  }\n  stats.per_locale[L] = n;\n}\nif (!out.length) throw new Error('Plan produced no batches: ' + JSON.stringify(stats));\nout[0].json.stats = stats;\nreturn out;\n"
+      }
+    },
+    {
+      "id": "59288175-5b75-4828-a442-72099b61ef21",
+      "name": "Translate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "openAiApi": {
+          "id": "yra2iG8pnmCKhZIc",
+          "name": "Futuremedia - n8n project"
+        }
+      }
+    },
+    {
+      "id": "8048cc70-85a6-4297-b329-7e9a5b510aee",
+      "name": "Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const plan = $('Plan').all();\nconst res = $input.all();\nconst errors = [];\nconst rowsOut = [];\nconst byKey = {};\nconst PERIOD_OFF = { th: 1 };\nconst FLOOR = { ko: 0.18, th: 0.25 };\n\nif (plan.length !== res.length) errors.push('item count mismatch: plan ' + plan.length + ' vs responses ' + res.length);\n\nfor (let b = 0; b < res.length; b++) {\n  const p = plan[b] ? plan[b].json : null;\n  const r = res[b] ? res[b].json : null;\n  if (!p) { errors.push('batch ' + b + ': no plan item'); continue; }\n  const tag = p.locale + '/' + p.group + '#' + b;\n  if (!r || r.error) { errors.push(tag + ': request failed ' + JSON.stringify(r && r.error).slice(0, 200)); continue; }\n  let content = '';\n  try { content = r.choices[0].message.content; } catch (e) { errors.push(tag + ': no content'); continue; }\n  let parsed;\n  try { parsed = JSON.parse(content); } catch (e) { errors.push(tag + ': content not JSON'); continue; }\n  const arr = parsed.t || parsed.translations || [];\n  if (!Array.isArray(arr)) { errors.push(tag + ': no array'); continue; }\n  const map = {};\n  for (const e of arr) { if (e && e.i !== undefined) map[String(e.i)] = String(e.s === undefined ? '' : e.s); }\n  for (const it of p.items) {\n    const s = map[String(it.i)];\n    if (s === undefined) { errors.push(tag + ' key ' + it.i + ': missing from response'); continue; }\n    const v = s.trim();\n    if (!v) { errors.push(tag + ' key ' + it.i + ': empty'); continue; }\n    if (v === it.en.trim()) { errors.push(tag + ' key ' + it.i + ': identical to English'); continue; }\n    const ratio = v.length / Math.max(it.en.length, 1);\n    const floor = FLOOR[p.locale] || 0.35;\n    if (ratio < floor || ratio > 3) { errors.push(tag + ' key ' + it.i + ': length ratio ' + ratio.toFixed(2)); continue; }\n    if (v.indexOf('{') !== -1 || v.indexOf('<') !== -1) { errors.push(tag + ' key ' + it.i + ': contains markup'); continue; }\n    const wantPeriod = !PERIOD_OFF[p.locale];\n    const hasPeriod = v.slice(-1) === '.';\n    let fixed = v;\n    if (wantPeriod && !hasPeriod && v.slice(-1) !== '?' && v.slice(-1) !== '!') fixed = v + '.';\n    if (!wantPeriod && hasPeriod) fixed = v.replace(/\\.+$/, '');\n    if (!byKey[it.i]) byKey[it.i] = { key_id: it.i, n: it.n, tags: it.tags.slice(), tr: {} };\n    byKey[it.i].tr[p.locale] = fixed;\n    rowsOut.push({ key_id: it.i, n: it.n, group: p.group, mode: p.mode, locale: p.locale, en: it.en, target: fixed });\n  }\n}\n\nconst ids = Object.keys(byKey);\nconst putKeys = [];\nfor (const id of ids) {\n  const k = byKey[id];\n  const tags = k.tags.indexOf('to_review') === -1 ? k.tags.concat(['to_review']) : k.tags;\n  const translations = Object.keys(k.tr).map(function (L) {\n    return { language_iso: L, translation: k.tr[L], is_unverified: true, is_reviewed: false };\n  });\n  putKeys.push({ key_id: Number(k.key_id), tags: tags, translations: translations });\n}\n\nconst out = [];\nconst summary = { batches: res.length, keys: ids.length, strings: rowsOut.length, errors: errors.length, error_sample: errors.slice(0, 25) };\nfor (let i = 0; i < putKeys.length; i += 150) {\n  out.push({ json: { kind: 'put', part: i / 150, body: { keys: putKeys.slice(i, i + 150) } } });\n}\nif (!out.length) out.push({ json: { kind: 'put', part: 0, body: { keys: [] } } });\nout[0].json.summary = summary;\nout[0].json.rows = rowsOut;\nreturn out;\n"
+      }
+    },
+    {
+      "id": "59574356-b7ce-451b-a166-dad1d59c9b64",
+      "name": "Write to Lokalise",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $('Config').first().json.put_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "disabled": false,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "0dd63d19-2511-4ce6-9621-4788ceffe486",
+      "name": "Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const v = $('Validate').all();\nconst summary = (v[0] && v[0].json.summary) || {};\nconst rows = (v[0] && v[0].json.rows) || [];\nconst writes = [];\nfor (const r of $input.all()) {\n  const j = r.json || {};\n  if (j.statusCode !== undefined) writes.push({ statusCode: j.statusCode, keys: (j.body && j.body.keys ? j.body.keys.length : 0), err: j.statusCode === 200 ? '' : JSON.stringify(j.body).slice(0, 300) });\n}\nconst chunks = [];\nfor (let i = 0; i < rows.length; i += 250) chunks.push({ json: { kind: 'rows', i: i, rows: rows.slice(i, i + 250) } });\nreturn [{ json: { kind: 'summary', summary: summary, writes: writes, wrote: writes.length > 0 } }].concat(chunks);\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch keys": {
+      "main": [
+        [
+          {
+            "node": "Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan": {
+      "main": [
+        [
+          {
+            "node": "Translate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Translate": {
+      "main": [
+        [
+          {
+            "node": "Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate": {
+      "main": [
+        [
+          {
+            "node": "Write to Lokalise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write to Lokalise": {
+      "main": [
+        [
+          {
+            "node": "Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "saveManualExecutions": true,
+    "executionTimeout": 2400
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "Adnp3MGa9zhXTXVq",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-21T06:22:19.229Z",
+      "updatedAt": "2026-09-21T06:22:19.229Z"
+    }
+  ],
+  "activeVersion": null
+}
