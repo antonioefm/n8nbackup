@@ -1,0 +1,292 @@
+{
+  "id": "8jF2AFRBR5tcyk8E",
+  "name": "Personality.co – Malay TM match + fill v2",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-21T09:03:58.706Z",
+  "updatedAt": "2026-09-21T12:15:15.105Z",
+  "isArchived": false,
+  "versionId": "71481783-daf2-4b44-bdea-c30dafadb868",
+  "versionCounter": 4,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "950a57fe-2fc3-4f33-9bdf-895b9c854ce8",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "91189fa7-dc9e-47cf-87b1-e8d04d6b1b66",
+      "name": "Fetch custom statuses",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/31393214664f295f94dd86.76792605/custom_translation_statuses?limit=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "45eb2fcb-0aea-49c3-9f9b-001e43f72e3b",
+      "name": "Probe row count",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/31393214664f295f94dd86.76792605/translations?filter_lang_id=757&limit=1&page=1&disable_references=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "537ce918-2e25-4ce7-906e-fddd55cdb9e5",
+      "name": "Generate page list",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const h = $input.first().json.headers || {};\nconst total = Number(h['x-pagination-total-count'] || 0);\nif (!total) { throw new Error('No pagination header'); }\nconst limit = 500;\nconst pages = Math.ceil(total / limit);\nconst out = [];\nconst langs = [640, 757];\nfor (const lid of langs) {\n  for (let p = 1; p <= pages; p++) { out.push({ json: { lang_id: lid, page: p, limit: limit } }); }\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "8a1c5e60-af01-423d-8934-a9a9f814bb69",
+      "name": "Build TM match plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        -160
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const pages = $input.all();\nconst en = {};\nconst tg = [];\nfor (const p of pages) {\n  const j = p.json;\n  if (!Array.isArray(j.rows)) { continue; }\n  if (j.iso === 'en') { for (const r of j.rows) { en[r[0]] = r[1]; } }\n  else { for (const r of j.rows) { tg.push({ k: r[0], text: r[1], tid: r[2] }); } }\n}\nconst byEditor = {};\nconst corpus = [];\nlet filled = 0;\nconst norm = function (s) { return String(s).replace(/\\s+/g, ' ').trim().toLowerCase(); };\nconst tm = {};\nfor (const r of tg) {\n  if (String(r.text).trim() === '') { continue; }\n  filled = filled + 1;\n  const src = en[r.k];\n  if (src === undefined || String(src).trim() === '') { continue; }\n  if (tm[norm(src)] === undefined) { tm[norm(src)] = r.text; }\n  if (corpus.length < 4000) { corpus.push([String(src), String(r.text)]); }\n}\nlet exact = 0;\nlet empties = 0;\nfor (const r of tg) {\n  if (String(r.text).trim() !== '') { continue; }\n  const src = en[r.k];\n  if (src === undefined || String(src).trim() === '') { continue; }\n  empties = empties + 1;\n  if (tm[norm(src)]) { exact = exact + 1; }\n}\nreturn [{ json: { rows: tg.length, filled: filled, empty: empties, tm_entries: Object.keys(tm).length, exact_matches: exact, corpus_size: corpus.length, corpus: corpus } }];"
+      }
+    },
+    {
+      "id": "02758663-9ed5-454d-8324-18d23007ab4b",
+      "name": "Fetch translations page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        160
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/31393214664f295f94dd86.76792605/translations?disable_references=1&filter_lang_id={{ $json.lang_id }}&limit={{ $json.limit }}&page={{ $json.page }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 4000
+    },
+    {
+      "id": "f32ccb85-6bcb-4bd5-9c5b-33fa16c90eab",
+      "name": "Compact page",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        160
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const t = $input.first().json.translations;\nif (!Array.isArray(t)) { throw new Error(\"No translations array: \" + JSON.stringify($input.first().json).slice(0, 300)); }\nlet iso = \"\";\nconst rows = [];\nfor (const x of t) {\n  iso = x.language_iso;\n  const val = x.translation === null || x.translation === undefined ? \"\" : String(x.translation);\n  if (x.language_iso === \"en\") {\n    rows.push([x.key_id + \":\" + x.segment_number, val]);\n  } else {\n    rows.push([x.key_id + \":\" + x.segment_number, val, x.translation_id, x.modified_by_email || \"\", x.is_reviewed ? 1 : 0, x.is_fuzzy ? 1 : 0]);\n  }\n}\nreturn [{ json: { iso: iso, count: rows.length, rows: rows } }];"
+      }
+    },
+    {
+      "id": "603d88fd-13ef-4a7a-8923-5f22847f2f58",
+      "name": "Loop pages",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {
+          "reset": false
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch custom statuses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch custom statuses": {
+      "main": [
+        [
+          {
+            "node": "Probe row count",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Probe row count": {
+      "main": [
+        [
+          {
+            "node": "Generate page list",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate page list": {
+      "main": [
+        [
+          {
+            "node": "Loop pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch translations page": {
+      "main": [
+        [
+          {
+            "node": "Compact page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compact page": {
+      "main": [
+        [
+          {
+            "node": "Loop pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop pages": {
+      "main": [
+        [
+          {
+            "node": "Build TM match plan",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch translations page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "8jF2AFRBR5tcyk8E",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-21T09:03:58.709Z",
+      "updatedAt": "2026-09-21T09:03:58.709Z"
+    }
+  ],
+  "activeVersion": null
+}
