@@ -3,12 +3,12 @@
   "name": "PS prod - Request eligibility check (second message)",
   "description": null,
   "active": true,
-  "activeVersionId": "300dfabb-233e-43f6-b2f3-c6e6eb348537",
+  "activeVersionId": "c77f09dd-afd8-4a5e-bead-b74d9766491b",
   "createdAt": "2026-06-10T08:34:35.548Z",
-  "updatedAt": "2026-09-22T08:24:00.099Z",
+  "updatedAt": "2026-09-23T09:35:58.077Z",
   "isArchived": false,
-  "versionId": "300dfabb-233e-43f6-b2f3-c6e6eb348537",
-  "versionCounter": 76,
+  "versionId": "c77f09dd-afd8-4a5e-bead-b74d9766491b",
+  "versionCounter": 77,
   "sourceWorkflowId": null,
   "triggerCount": 0,
   "nodes": [
@@ -661,7 +661,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\n\nconst ticketId = trig.body['ticket.id'];\nconst noteBody = $('Note: Auto-solve email').first().json.note_body;\n\nconst ticket = {\n  status: 'solved',\n  comment: { public: false, body: noteBody }\n};\n\n// TAGS. `additional_tags` is ONLY supported on the Update Many Tickets endpoint.\n// On a single-ticket PUT Zendesk silently discards it - 200 response, no tag\n// event in the audit. This tag was never actually being applied. A single-ticket\n// PUT only accepts `tags`, which replaces the array, so merge the existing ones.\nconst liveTicket = $('Get ticket status').first().json.ticket || {};\nconst tags = Array.isArray(liveTicket.tags) ? liveTicket.tags.slice() : [];\nif (tags.indexOf('autosolve_email') === -1) {\n  tags.push('autosolve_email');\n}\nticket.tags = tags;\n\n// Zendesk enforces required custom fields on the solve transition and validates\n// against the INCOMING payload, not the stored ticket:\n//   422 RecordInvalid - \"Language: is required when solving a ticket\"\n// So every required field has to ride along in this one PUT.\nconst fields = [];\n\nconst catFieldId = Number(cfg.ticket_custom_field_category);\nconst catValue = cfg.category_value_duplicate_contact;\nif (Number.isFinite(catFieldId) && catFieldId > 0\n    && catValue !== null && catValue !== undefined && String(catValue).trim() !== '') {\n  fields.push({ id: catFieldId, value: String(catValue) });\n}\n\nconst langFieldId = Number(cfg.ticket_field_language_id);\nconst langValue = cfg.language_value_english;\nif (Number.isFinite(langFieldId) && langFieldId > 0\n    && langValue !== null && langValue !== undefined && String(langValue).trim() !== '') {\n  fields.push({ id: langFieldId, value: String(langValue) });\n}\n\nif (fields.length > 0) {\n  ticket.custom_fields = fields;\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    note_body: noteBody,\n    fields_applied: fields.length,\n    tags_sent: ticket.tags,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
+        "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\n\nconst ticketId = trig.body['ticket.id'];\nconst noteBody = $('Note: Auto-solve email').first().json.note_body;\n\nconst ticket = {\n  status: 'solved',\n  comment: { public: false, body: noteBody }\n};\n\n// TAGS. `additional_tags` is ONLY supported on the Update Many Tickets endpoint.\n// On a single-ticket PUT Zendesk silently discards it - 200 response, no tag\n// event in the audit. This tag was never actually being applied. A single-ticket\n// PUT only accepts `tags`, which replaces the array, so merge the existing ones.\nconst liveTicket = $('Get ticket status').first().json.ticket || {};\nconst tags = Array.isArray(liveTicket.tags) ? liveTicket.tags.slice() : [];\nif (tags.indexOf('autosolve_email') === -1) {\n  tags.push('autosolve_email');\n}\nticket.tags = tags;\n\n// Zendesk enforces required custom fields on the solve transition and validates\n// against the INCOMING payload, not the stored ticket:\n//   422 RecordInvalid - \"Language: is required when solving a ticket\"\n// So every required field has to ride along in this one PUT.\nconst fields = [];\n\nconst catFieldId = Number(cfg.ticket_custom_field_category);\nconst catValue = cfg.category_value_duplicate_contact;\nif (Number.isFinite(catFieldId) && catFieldId > 0\n    && catValue !== null && catValue !== undefined && String(catValue).trim() !== '') {\n  fields.push({ id: catFieldId, value: String(catValue) });\n}\n\nconst langFieldId = Number(cfg.ticket_field_language_id);\nconst langValue = cfg.language_value_english;\nif (Number.isFinite(langFieldId) && langFieldId > 0\n    && langValue !== null && langValue !== undefined && String(langValue).trim() !== '') {\n  fields.push({ id: langFieldId, value: String(langValue) });\n}\n\n// Rejection Complaint (record-based case 2) - required to solve on Personality.\n// This path never sends a refund rejection, so it writes \"no\". STICKY: a ticket\n// that already carries \"yes\" keeps it - same rule as the Zendesk ticket update\n// request sub-workflow, so an earlier rejection is never erased.\nlet rcValue = null;\nconst rcFieldId = Number(cfg.ticket_field_rejection_complaint);\nif (Number.isFinite(rcFieldId) && rcFieldId > 0) {\n  const liveFields = Array.isArray(liveTicket.custom_fields) ? liveTicket.custom_fields : [];\n  const rcCurrent = liveFields.find(f => Number(f.id) === rcFieldId);\n  rcValue = (rcCurrent && rcCurrent.value === 'yes') ? 'yes' : 'no';\n  fields.push({ id: rcFieldId, value: rcValue });\n}\n\nif (fields.length > 0) {\n  ticket.custom_fields = fields;\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    note_body: noteBody,\n    fields_applied: fields.length,\n    rejection_complaint: rcValue,\n    tags_sent: ticket.tags,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
       },
       "id": "156d765f-c6a3-4b47-85b3-785ac7f71a26",
       "name": "Build auto-solve payload",
@@ -1818,7 +1818,7 @@
     }
   ],
   "activeVersion": {
-    "versionId": "300dfabb-233e-43f6-b2f3-c6e6eb348537",
+    "versionId": "c77f09dd-afd8-4a5e-bead-b74d9766491b",
     "workflowId": "6lYSxMlA2bQYIaaq",
     "nodes": [
       {
@@ -2470,7 +2470,7 @@
       },
       {
         "parameters": {
-          "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\n\nconst ticketId = trig.body['ticket.id'];\nconst noteBody = $('Note: Auto-solve email').first().json.note_body;\n\nconst ticket = {\n  status: 'solved',\n  comment: { public: false, body: noteBody }\n};\n\n// TAGS. `additional_tags` is ONLY supported on the Update Many Tickets endpoint.\n// On a single-ticket PUT Zendesk silently discards it - 200 response, no tag\n// event in the audit. This tag was never actually being applied. A single-ticket\n// PUT only accepts `tags`, which replaces the array, so merge the existing ones.\nconst liveTicket = $('Get ticket status').first().json.ticket || {};\nconst tags = Array.isArray(liveTicket.tags) ? liveTicket.tags.slice() : [];\nif (tags.indexOf('autosolve_email') === -1) {\n  tags.push('autosolve_email');\n}\nticket.tags = tags;\n\n// Zendesk enforces required custom fields on the solve transition and validates\n// against the INCOMING payload, not the stored ticket:\n//   422 RecordInvalid - \"Language: is required when solving a ticket\"\n// So every required field has to ride along in this one PUT.\nconst fields = [];\n\nconst catFieldId = Number(cfg.ticket_custom_field_category);\nconst catValue = cfg.category_value_duplicate_contact;\nif (Number.isFinite(catFieldId) && catFieldId > 0\n    && catValue !== null && catValue !== undefined && String(catValue).trim() !== '') {\n  fields.push({ id: catFieldId, value: String(catValue) });\n}\n\nconst langFieldId = Number(cfg.ticket_field_language_id);\nconst langValue = cfg.language_value_english;\nif (Number.isFinite(langFieldId) && langFieldId > 0\n    && langValue !== null && langValue !== undefined && String(langValue).trim() !== '') {\n  fields.push({ id: langFieldId, value: String(langValue) });\n}\n\nif (fields.length > 0) {\n  ticket.custom_fields = fields;\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    note_body: noteBody,\n    fields_applied: fields.length,\n    tags_sent: ticket.tags,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
+          "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\n\nconst ticketId = trig.body['ticket.id'];\nconst noteBody = $('Note: Auto-solve email').first().json.note_body;\n\nconst ticket = {\n  status: 'solved',\n  comment: { public: false, body: noteBody }\n};\n\n// TAGS. `additional_tags` is ONLY supported on the Update Many Tickets endpoint.\n// On a single-ticket PUT Zendesk silently discards it - 200 response, no tag\n// event in the audit. This tag was never actually being applied. A single-ticket\n// PUT only accepts `tags`, which replaces the array, so merge the existing ones.\nconst liveTicket = $('Get ticket status').first().json.ticket || {};\nconst tags = Array.isArray(liveTicket.tags) ? liveTicket.tags.slice() : [];\nif (tags.indexOf('autosolve_email') === -1) {\n  tags.push('autosolve_email');\n}\nticket.tags = tags;\n\n// Zendesk enforces required custom fields on the solve transition and validates\n// against the INCOMING payload, not the stored ticket:\n//   422 RecordInvalid - \"Language: is required when solving a ticket\"\n// So every required field has to ride along in this one PUT.\nconst fields = [];\n\nconst catFieldId = Number(cfg.ticket_custom_field_category);\nconst catValue = cfg.category_value_duplicate_contact;\nif (Number.isFinite(catFieldId) && catFieldId > 0\n    && catValue !== null && catValue !== undefined && String(catValue).trim() !== '') {\n  fields.push({ id: catFieldId, value: String(catValue) });\n}\n\nconst langFieldId = Number(cfg.ticket_field_language_id);\nconst langValue = cfg.language_value_english;\nif (Number.isFinite(langFieldId) && langFieldId > 0\n    && langValue !== null && langValue !== undefined && String(langValue).trim() !== '') {\n  fields.push({ id: langFieldId, value: String(langValue) });\n}\n\n// Rejection Complaint (record-based case 2) - required to solve on Personality.\n// This path never sends a refund rejection, so it writes \"no\". STICKY: a ticket\n// that already carries \"yes\" keeps it - same rule as the Zendesk ticket update\n// request sub-workflow, so an earlier rejection is never erased.\nlet rcValue = null;\nconst rcFieldId = Number(cfg.ticket_field_rejection_complaint);\nif (Number.isFinite(rcFieldId) && rcFieldId > 0) {\n  const liveFields = Array.isArray(liveTicket.custom_fields) ? liveTicket.custom_fields : [];\n  const rcCurrent = liveFields.find(f => Number(f.id) === rcFieldId);\n  rcValue = (rcCurrent && rcCurrent.value === 'yes') ? 'yes' : 'no';\n  fields.push({ id: rcFieldId, value: rcValue });\n}\n\nif (fields.length > 0) {\n  ticket.custom_fields = fields;\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    note_body: noteBody,\n    fields_applied: fields.length,\n    rejection_complaint: rcValue,\n    tags_sent: ticket.tags,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
         },
         "id": "156d765f-c6a3-4b47-85b3-785ac7f71a26",
         "name": "Build auto-solve payload",
@@ -3525,20 +3525,20 @@
       }
     },
     "nodeGroups": [],
-    "authors": "Antonio antonio.marusic@efuturemedia.com",
-    "name": "Version 300dfabb",
-    "description": "",
-    "autosaved": true,
-    "createdAt": "2026-09-22T08:24:00.101Z",
-    "updatedAt": "2026-09-22T08:24:42.000Z",
+    "authors": "Antonio antonio.marusic@efuturemedia.com (via MCP)",
+    "name": "Rejection Complaint on auto-solve",
+    "description": "Adds the Rejection Complaint field (no, sticky yes) to the auto-solve PUT body so it doesn't 422 once the field is required to solve.",
+    "autosaved": false,
+    "createdAt": "2026-09-23T09:35:58.085Z",
+    "updatedAt": "2026-09-23T11:16:22.000Z",
     "workflowPublishHistory": [
       {
-        "id": 1974,
+        "id": 1984,
         "workflowId": "6lYSxMlA2bQYIaaq",
-        "versionId": "300dfabb-233e-43f6-b2f3-c6e6eb348537",
+        "versionId": "c77f09dd-afd8-4a5e-bead-b74d9766491b",
         "event": "activated",
         "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e",
-        "createdAt": "2026-09-22T08:24:42.150Z"
+        "createdAt": "2026-09-23T11:16:22.075Z"
       }
     ]
   }
