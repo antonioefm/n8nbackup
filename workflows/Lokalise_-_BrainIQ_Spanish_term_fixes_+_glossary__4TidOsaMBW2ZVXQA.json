@@ -1,0 +1,258 @@
+{
+  "id": "4TidOsaMBW2ZVXQA",
+  "name": "Lokalise - BrainIQ Spanish term fixes + glossary",
+  "description": "Normalises the agreed Spanish terms across BrainIQ Test and adds them to the shared glossary project.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-23T14:43:47.095Z",
+  "updatedAt": "2026-09-23T14:43:47.095Z",
+  "isArchived": false,
+  "versionId": "ff066de5-e1c4-4edc-9b4a-11241c512383",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "3a2bcc5b-5bc0-4cf2-9226-39113022d89b",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "4e6d8262-7e2f-4b1d-a9dd-fec4510e9508",
+      "name": "Fetch Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/185916266aa3d6649ca6f7.57851232/keys?limit=1500&page=1&disable_references=1&include_translations=1&filter_translation_lang_ids=640,1056",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 4000
+    },
+    {
+      "id": "e5ce68a7-4f69-4c60-b47e-08adcf5a2918",
+      "name": "Build Corrections",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const FIX = {\n'email address': 'Correo electrónico',\n'tests': 'Tests',\n'7-day full access': 'Acceso completo de 7 días',\n'invalid email or password.': 'Correo electrónico o contraseña no válidos.',\n'invalid email or password': 'Correo electrónico o contraseña no válidos',\n'sign into your account': 'Inicia sesión'\n};\nconst CONTACT = /^contact us$/i;\nconst NAVISH = /(^|::)(nav|menu|footer|header|metadata|meta)(::|$)|::title(::|$)/i;\n\nconst rows = [];\nconst changed = [];\nfor (const p of $input.all()) {\n  const b = (p.json && p.json.body) || {};\n  if (!Array.isArray(b.keys)) continue;\n  for (const k of b.keys) {\n    let en = '', es = '', sids = [];\n    for (const tr of (k.translations || [])) {\n      if (tr.language_iso === 'en') en = String(tr.translation === null ? '' : tr.translation);\n      if (tr.language_iso === 'es') {\n        es = String(tr.translation === null ? '' : tr.translation);\n        for (const s of (tr.custom_translation_statuses || [])) { sids.push(s.status_id); }\n      }\n    }\n    const kn = k.key_name;\n    const name = (typeof kn === 'string') ? kn : ((kn && (kn.web || kn.other)) || '');\n    const flat = en.trim().toLowerCase();\n    let want = null;\n    if (CONTACT.test(en.trim())) {\n      want = NAVISH.test(name) ? 'Contacto' : 'Contáctanos';\n    } else if (FIX[flat] !== undefined) {\n      want = FIX[flat];\n    }\n    if (want === null) continue;\n    if (es.trim() === want) continue;\n    rows.push({ key_id: k.key_id, translations: [{ language_iso: 'es', translation: want, is_reviewed: false, is_fuzzy: false, custom_translation_status_ids: sids }] });\n    changed.push({ key: name, en: en.slice(0, 40), from: es.slice(0, 50), to: want });\n  }\n}\nconst CHUNK = 150;\nconst out = [];\nfor (let i = 0; i < rows.length; i += CHUNK) {\n  out.push({ json: { chunk: (i / CHUNK) + 1, total: rows.length, changed: changed, url: 'https://api.lokalise.com/api2/projects/185916266aa3d6649ca6f7.57851232/keys', body: { keys: rows.slice(i, i + CHUNK) } } });\n}\nif (!out.length) { out.push({ json: { chunk: 0, total: 0, changed: [], skip: true, url: 'https://api.lokalise.com/api2/projects/185916266aa3d6649ca6f7.57851232/keys', body: { keys: [] } } }); }\nreturn out;"
+      }
+    },
+    {
+      "id": "1b1d12c9-55db-47f4-8d5a-593e135d6a21",
+      "name": "Write Fixes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 500
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "4d297e3f-ea3e-49f7-90ad-2137cdca74c3",
+      "name": "Add Glossary Terms",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"terms\":[{\"term\":\"Email address\",\"description\":\"noun. Always the full form; do not shorten to \\\"Dirección de email\\\".\",\"caseSensitive\":false,\"translatable\":true,\"forbidden\":false,\"translations\":[{\"langId\":1056,\"translation\":\"Correo electrónico\"}]},{\"term\":\"Tests\",\"description\":\"noun, plural. Keep the English plural form in Spanish.\",\"caseSensitive\":false,\"translatable\":true,\"forbidden\":false,\"translations\":[{\"langId\":1056,\"translation\":\"Tests\"}]},{\"term\":\"Contact us\",\"description\":\"Use Contacto for nav, footer and page titles; Contáctanos for calls to action.\",\"caseSensitive\":false,\"translatable\":true,\"forbidden\":false,\"translations\":[{\"langId\":1056,\"translation\":\"Contacto\"}]},{\"term\":\"7-day full access\",\"description\":\"Offer wording. Use de, not por.\",\"caseSensitive\":false,\"translatable\":true,\"forbidden\":false,\"translations\":[{\"langId\":1056,\"translation\":\"Acceso completo de 7 días\"}]},{\"term\":\"Invalid email or password\",\"description\":\"Login error. Use no válidos, not inválidos.\",\"caseSensitive\":false,\"translatable\":true,\"forbidden\":false,\"translations\":[{\"langId\":1056,\"translation\":\"Correo electrónico o contraseña no válidos\"}]},{\"term\":\"Sign into your account\",\"description\":\"Login heading. Short form.\",\"caseSensitive\":false,\"translatable\":true,\"forbidden\":false,\"translations\":[{\"langId\":1056,\"translation\":\"Inicia sesión\"}]}]}",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "executeOnce": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "35ff3cd4-0677-4492-b0fa-c8a974e4dfaa",
+      "name": "Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const plan = $('Build Corrections').first().json;\nconst wr = $('Write Fixes').all();\nlet ok = 0, updated = 0;\nconst errors = [];\nfor (const r of wr) {\n  const j = r.json || {};\n  const b = j.body || {};\n  if (j.statusCode === 200 && Array.isArray(b.keys)) { ok++; updated += b.keys.length; }\n  else if (j.statusCode) errors.push({ statusCode: j.statusCode, err: JSON.stringify(b).slice(0, 200) });\n}\nconst g = $input.first().json || {};\nconst gb = g.body || {};\nreturn [{ json: {\n  planned: plan.total,\n  keys_updated: updated,\n  ok_requests: ok,\n  write_errors: errors,\n  changed: plan.changed,\n  glossary_status: g.statusCode,\n  glossary_response: JSON.stringify(gb).slice(0, 500)\n} }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Keys": {
+      "main": [
+        [
+          {
+            "node": "Build Corrections",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Corrections": {
+      "main": [
+        [
+          {
+            "node": "Write Fixes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Fixes": {
+      "main": [
+        [
+          {
+            "node": "Add Glossary Terms",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Glossary Terms": {
+      "main": [
+        [
+          {
+            "node": "Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "4TidOsaMBW2ZVXQA",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-23T14:43:47.098Z",
+      "updatedAt": "2026-09-23T14:43:47.098Z"
+    }
+  ],
+  "activeVersion": null
+}
