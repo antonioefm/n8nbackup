@@ -3,12 +3,12 @@
   "name": "PS prod - 2nd message trigger",
   "description": null,
   "active": true,
-  "activeVersionId": "a53ec646-4640-497e-b79d-f97df1b46e51",
+  "activeVersionId": "e706f5fd-b4dc-4512-afda-1edb111bbe2e",
   "createdAt": "2026-06-18T16:37:27.350Z",
-  "updatedAt": "2026-09-10T10:10:27.816Z",
+  "updatedAt": "2026-09-23T11:11:50.901Z",
   "isArchived": false,
-  "versionId": "a53ec646-4640-497e-b79d-f97df1b46e51",
-  "versionCounter": 241,
+  "versionId": "e706f5fd-b4dc-4512-afda-1edb111bbe2e",
+  "versionCounter": 243,
   "sourceWorkflowId": null,
   "triggerCount": 1,
   "nodes": [
@@ -781,7 +781,7 @@
       "type": "@n8n/n8n-nodes-langchain.openAi",
       "typeVersion": 2.1,
       "position": [
-        -10304,
+        -10240,
         -3264
       ],
       "retryOnFail": true,
@@ -2932,6 +2932,155 @@
         -6784,
         -4416
       ]
+    },
+    {
+      "id": "3b44e271-7823-446c-bc2c-f2b152463bdc",
+      "name": "Case 2: Get ticket",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -5552,
+        800
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "method": "GET",
+        "nodeCredentialType": "zendeskApi",
+        "options": {},
+        "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $(\"Aggregate\").first().json.data[0].original_ticket_content.ticket_id }}"
+      },
+      "notes": "Live read of the ticket for record-based case 2. Needed because the webhook payload does not carry the Rejection Complaint field. A failed read does not fire the check.",
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true
+    },
+    {
+      "id": "b02a306d-900e-479d-8304-e5a09290243a",
+      "name": "Case 2: Evaluate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5328,
+        800
+      ],
+      "parameters": {
+        "jsCode": "// === Record-based case 2 - same ticket ===\n// A refund was already rejected on THIS ticket (Rejection Complaint = yes, set\n// by the Zendesk ticket update request sub-workflow when the rejection macro was\n// sent, or by an agent on a manual rejection) and the follow-up has just been\n// classified as a refund request again.\n//\n// Runs only after \"Is refund request\" = r, by decision 2026-09-23 - not on\n// thanks, confirmation or complaint replies. The cross-ticket half of case 2\n// (a NEW ticket after an earlier rejection) lives in PS prod - Record based\n// checks, called from the main flow.\n//\n// Reads the live ticket rather than the webhook payload, so no Zendesk trigger\n// change is needed and an agent's manual \"yes\" is always seen. If the read\n// fails the check does not fire and automation carries on as before.\n\nconst cfg = $('Get Project Config').first().json || {};\nconst resp = $('Case 2: Get ticket').first().json || {};\nconst live = resp.ticket || {};\n\n// Same switches as 1a/1b/7b: fail-CLOSED on enabled, fail-SAFE on enforce.\nfunction truthy(v) {\n  return v === true || v === 1 || v === 'true' || v === '1' || v === 'yes';\n}\nconst enabled = truthy(cfg.record_checks_enabled);\nconst enforce = truthy(cfg.record_checks_enforce);\n\nconst rcFieldId = Number(cfg.ticket_field_rejection_complaint);\nconst liveFields = Array.isArray(live.custom_fields) ? live.custom_fields : [];\nconst rcCurrent = liveFields.find(f => Number(f.id) === rcFieldId);\nconst rejectedBefore = Number.isFinite(rcFieldId) && rcFieldId > 0\n  && !!rcCurrent && rcCurrent.value === 'yes';\n\nconst matched = enabled && rejectedBefore;\nconst ticketId = $('Aggregate').first().json.data[0].original_ticket_content.ticket_id;\n\nconst lines = [\n  'Note: This ticket matched record-based case 2 - a refund was already rejected on this ticket and the customer is requesting a refund again.',\n  ''\n];\n\nif (enforce) {\n  lines.push('Automation has been stopped and no reply was sent to the customer.');\n  lines.push('Please review the conversation and handle this ticket manually.');\n} else {\n  lines.push('MONITORING MODE: the ticket was tagged and this note added, but automation was NOT stopped.');\n  lines.push('The bot may still reply to this customer. No agent action is required unless the reply is wrong.');\n}\n\nconst ticket = {\n  comment: { public: false, body: lines.join('\\n') }\n};\n\n// TAGS. A single-ticket PUT REPLACES the tag array (additional_tags is silently\n// discarded), so the live tags from Case 2: Get ticket are merged in.\n// record_based_flag matches what the main-flow record-based checks add.\nconst tags = Array.isArray(live.tags) ? live.tags.slice() : [];\n['record_case_2', 'record_based_flag'].forEach(function (t) {\n  if (tags.indexOf(t) === -1) tags.push(t);\n});\nticket.tags = tags;\n\nif (enforce) {\n  // Setting to open is not a solve transition, so required-to-solve fields do\n  // not need to ride along.\n  const openStatusId = Number(cfg.ticket_custom_status_open_id);\n  if (Number.isFinite(openStatusId) && openStatusId > 0) {\n    ticket.custom_status_id = openStatusId;\n  }\n\n  // Stop automation re-engaging on any further replies.\n  const allowFieldId = Number(cfg.ticket_field_allow_automation);\n  if (Number.isFinite(allowFieldId) && allowFieldId > 0) {\n    ticket.custom_fields = [{ id: allowFieldId, value: '_no_' }];\n  }\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    rc2_enabled: enabled,\n    rc2_enforce: enforce,\n    rc2_rejected_before: rejectedBefore,\n    rc2_matched: matched,\n    rc2_should_block: matched && enforce,\n    rc2_ticket_read_error: resp.error ? String(resp.error.message || resp.error) : null,\n    tags_sent: tags,\n    zendesk_body: { ticket: ticket }\n  },\n  pairedItem: { item: 0 }\n}];"
+      },
+      "notes": "Case 2 verdict: Rejection Complaint already yes on this ticket + refund requested again. Uses record_checks_enabled / record_checks_enforce."
+    },
+    {
+      "id": "32bafc75-2ba4-4b0d-8dee-899f988663bb",
+      "name": "Case 2: Matched?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -5104,
+        800
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c2-matched",
+              "leftValue": "={{ $json.rc2_matched }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "13352269-a7a6-4a50-93ef-167523639c56",
+      "name": "Case 2: Flag in Zendesk",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -4880,
+        800
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "jsonBody": "={{ JSON.stringify($json.zendesk_body) }}",
+        "method": "PUT",
+        "nodeCredentialType": "zendeskApi",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $json.ticket_id }}"
+      },
+      "notes": "Tags record_case_2 + record_based_flag and adds an internal note. In enforce mode also sets status open and allow_automation _no_.",
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      },
+      "retryOnFail": true
+    },
+    {
+      "id": "1fed4373-cd48-49cd-b6c3-fd17ef79453e",
+      "name": "Case 2: Enforce?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -4656,
+        800
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c2-enforce",
+              "leftValue": "={{ $('Case 2: Evaluate').first().json.rc2_should_block }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "notes": "True = stop automation. False = monitoring mode, carry on to the refund handling as normal."
+    },
+    {
+      "id": "6943b364-a317-48ae-9475-67ae58c8ba6b",
+      "name": "Case 2: Stop",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -4432,
+        960
+      ],
+      "parameters": {},
+      "notes": "Terminal. The note, tags, open status and allow_automation _no_ were already written by Case 2: Flag in Zendesk."
     }
   ],
   "connections": {
@@ -3421,7 +3570,7 @@
       "main": [
         [
           {
-            "node": "Edit Fields9",
+            "node": "Case 2: Get ticket",
             "type": "main",
             "index": 0
           }
@@ -3674,6 +3823,75 @@
           }
         ]
       ]
+    },
+    "Case 2: Get ticket": {
+      "main": [
+        [
+          {
+            "node": "Case 2: Evaluate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Case 2: Evaluate": {
+      "main": [
+        [
+          {
+            "node": "Case 2: Matched?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Case 2: Matched?": {
+      "main": [
+        [
+          {
+            "node": "Case 2: Flag in Zendesk",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Case 2: Flag in Zendesk": {
+      "main": [
+        [
+          {
+            "node": "Case 2: Enforce?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Case 2: Enforce?": {
+      "main": [
+        [
+          {
+            "node": "Case 2: Stop",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "nodeGroups": [],
@@ -3720,7 +3938,7 @@
     }
   ],
   "activeVersion": {
-    "versionId": "a53ec646-4640-497e-b79d-f97df1b46e51",
+    "versionId": "e706f5fd-b4dc-4512-afda-1edb111bbe2e",
     "workflowId": "C87KQIUQ3383eeCd",
     "nodes": [
       {
@@ -4492,7 +4710,7 @@
         "type": "@n8n/n8n-nodes-langchain.openAi",
         "typeVersion": 2.1,
         "position": [
-          -10304,
+          -10240,
           -3264
         ],
         "retryOnFail": true,
@@ -6643,6 +6861,155 @@
           -6784,
           -4416
         ]
+      },
+      {
+        "id": "3b44e271-7823-446c-bc2c-f2b152463bdc",
+        "name": "Case 2: Get ticket",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          -5552,
+          800
+        ],
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "method": "GET",
+          "nodeCredentialType": "zendeskApi",
+          "options": {},
+          "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $(\"Aggregate\").first().json.data[0].original_ticket_content.ticket_id }}"
+        },
+        "notes": "Live read of the ticket for record-based case 2. Needed because the webhook payload does not carry the Rejection Complaint field. A failed read does not fire the check.",
+        "credentials": {
+          "zendeskApi": {
+            "id": "z41y1j8bbsyi2W61",
+            "name": "Personality Zendesk prod account"
+          }
+        },
+        "onError": "continueRegularOutput",
+        "retryOnFail": true
+      },
+      {
+        "id": "b02a306d-900e-479d-8304-e5a09290243a",
+        "name": "Case 2: Evaluate",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -5328,
+          800
+        ],
+        "parameters": {
+          "jsCode": "// === Record-based case 2 - same ticket ===\n// A refund was already rejected on THIS ticket (Rejection Complaint = yes, set\n// by the Zendesk ticket update request sub-workflow when the rejection macro was\n// sent, or by an agent on a manual rejection) and the follow-up has just been\n// classified as a refund request again.\n//\n// Runs only after \"Is refund request\" = r, by decision 2026-09-23 - not on\n// thanks, confirmation or complaint replies. The cross-ticket half of case 2\n// (a NEW ticket after an earlier rejection) lives in PS prod - Record based\n// checks, called from the main flow.\n//\n// Reads the live ticket rather than the webhook payload, so no Zendesk trigger\n// change is needed and an agent's manual \"yes\" is always seen. If the read\n// fails the check does not fire and automation carries on as before.\n\nconst cfg = $('Get Project Config').first().json || {};\nconst resp = $('Case 2: Get ticket').first().json || {};\nconst live = resp.ticket || {};\n\n// Same switches as 1a/1b/7b: fail-CLOSED on enabled, fail-SAFE on enforce.\nfunction truthy(v) {\n  return v === true || v === 1 || v === 'true' || v === '1' || v === 'yes';\n}\nconst enabled = truthy(cfg.record_checks_enabled);\nconst enforce = truthy(cfg.record_checks_enforce);\n\nconst rcFieldId = Number(cfg.ticket_field_rejection_complaint);\nconst liveFields = Array.isArray(live.custom_fields) ? live.custom_fields : [];\nconst rcCurrent = liveFields.find(f => Number(f.id) === rcFieldId);\nconst rejectedBefore = Number.isFinite(rcFieldId) && rcFieldId > 0\n  && !!rcCurrent && rcCurrent.value === 'yes';\n\nconst matched = enabled && rejectedBefore;\nconst ticketId = $('Aggregate').first().json.data[0].original_ticket_content.ticket_id;\n\nconst lines = [\n  'Note: This ticket matched record-based case 2 - a refund was already rejected on this ticket and the customer is requesting a refund again.',\n  ''\n];\n\nif (enforce) {\n  lines.push('Automation has been stopped and no reply was sent to the customer.');\n  lines.push('Please review the conversation and handle this ticket manually.');\n} else {\n  lines.push('MONITORING MODE: the ticket was tagged and this note added, but automation was NOT stopped.');\n  lines.push('The bot may still reply to this customer. No agent action is required unless the reply is wrong.');\n}\n\nconst ticket = {\n  comment: { public: false, body: lines.join('\\n') }\n};\n\n// TAGS. A single-ticket PUT REPLACES the tag array (additional_tags is silently\n// discarded), so the live tags from Case 2: Get ticket are merged in.\n// record_based_flag matches what the main-flow record-based checks add.\nconst tags = Array.isArray(live.tags) ? live.tags.slice() : [];\n['record_case_2', 'record_based_flag'].forEach(function (t) {\n  if (tags.indexOf(t) === -1) tags.push(t);\n});\nticket.tags = tags;\n\nif (enforce) {\n  // Setting to open is not a solve transition, so required-to-solve fields do\n  // not need to ride along.\n  const openStatusId = Number(cfg.ticket_custom_status_open_id);\n  if (Number.isFinite(openStatusId) && openStatusId > 0) {\n    ticket.custom_status_id = openStatusId;\n  }\n\n  // Stop automation re-engaging on any further replies.\n  const allowFieldId = Number(cfg.ticket_field_allow_automation);\n  if (Number.isFinite(allowFieldId) && allowFieldId > 0) {\n    ticket.custom_fields = [{ id: allowFieldId, value: '_no_' }];\n  }\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    rc2_enabled: enabled,\n    rc2_enforce: enforce,\n    rc2_rejected_before: rejectedBefore,\n    rc2_matched: matched,\n    rc2_should_block: matched && enforce,\n    rc2_ticket_read_error: resp.error ? String(resp.error.message || resp.error) : null,\n    tags_sent: tags,\n    zendesk_body: { ticket: ticket }\n  },\n  pairedItem: { item: 0 }\n}];"
+        },
+        "notes": "Case 2 verdict: Rejection Complaint already yes on this ticket + refund requested again. Uses record_checks_enabled / record_checks_enforce."
+      },
+      {
+        "id": "32bafc75-2ba4-4b0d-8dee-899f988663bb",
+        "name": "Case 2: Matched?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -5104,
+          800
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "c2-matched",
+                "leftValue": "={{ $json.rc2_matched }}",
+                "operator": {
+                  "operation": "true",
+                  "singleValue": true,
+                  "type": "boolean"
+                },
+                "rightValue": ""
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            }
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "13352269-a7a6-4a50-93ef-167523639c56",
+        "name": "Case 2: Flag in Zendesk",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          -4880,
+          800
+        ],
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "jsonBody": "={{ JSON.stringify($json.zendesk_body) }}",
+          "method": "PUT",
+          "nodeCredentialType": "zendeskApi",
+          "options": {},
+          "sendBody": true,
+          "specifyBody": "json",
+          "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $json.ticket_id }}"
+        },
+        "notes": "Tags record_case_2 + record_based_flag and adds an internal note. In enforce mode also sets status open and allow_automation _no_.",
+        "credentials": {
+          "zendeskApi": {
+            "id": "z41y1j8bbsyi2W61",
+            "name": "Personality Zendesk prod account"
+          }
+        },
+        "retryOnFail": true
+      },
+      {
+        "id": "1fed4373-cd48-49cd-b6c3-fd17ef79453e",
+        "name": "Case 2: Enforce?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -4656,
+          800
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "c2-enforce",
+                "leftValue": "={{ $('Case 2: Evaluate').first().json.rc2_should_block }}",
+                "operator": {
+                  "operation": "true",
+                  "singleValue": true,
+                  "type": "boolean"
+                },
+                "rightValue": ""
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            }
+          },
+          "options": {}
+        },
+        "notes": "True = stop automation. False = monitoring mode, carry on to the refund handling as normal."
+      },
+      {
+        "id": "6943b364-a317-48ae-9475-67ae58c8ba6b",
+        "name": "Case 2: Stop",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          -4432,
+          960
+        ],
+        "parameters": {},
+        "notes": "Terminal. The note, tags, open status and allow_automation _no_ were already written by Case 2: Flag in Zendesk."
       }
     ],
     "connections": {
@@ -7132,7 +7499,7 @@
         "main": [
           [
             {
-              "node": "Edit Fields9",
+              "node": "Case 2: Get ticket",
               "type": "main",
               "index": 0
             }
@@ -7385,23 +7752,92 @@
             }
           ]
         ]
+      },
+      "Case 2: Get ticket": {
+        "main": [
+          [
+            {
+              "node": "Case 2: Evaluate",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Case 2: Evaluate": {
+        "main": [
+          [
+            {
+              "node": "Case 2: Matched?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Case 2: Matched?": {
+        "main": [
+          [
+            {
+              "node": "Case 2: Flag in Zendesk",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Edit Fields9",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Case 2: Flag in Zendesk": {
+        "main": [
+          [
+            {
+              "node": "Case 2: Enforce?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Case 2: Enforce?": {
+        "main": [
+          [
+            {
+              "node": "Case 2: Stop",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Edit Fields9",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     },
     "nodeGroups": [],
-    "authors": "Antonio antonio.marusic@efuturemedia.com",
-    "name": "Version a53ec646",
-    "description": "",
-    "autosaved": true,
-    "createdAt": "2026-09-10T10:10:27.818Z",
-    "updatedAt": "2026-09-10T10:10:44.000Z",
+    "authors": "Antonio antonio.marusic@efuturemedia.com (via MCP)",
+    "name": "Record-based case 2 (same ticket)",
+    "description": "After Is refund request = r: reads the ticket live and, if Rejection Complaint is already yes, tags record_case_2 + note (monitoring) or also sets open + allow_automation _no_ and stops (enforce). Otherwise continues to Edit Fields9 unchanged.",
+    "autosaved": false,
+    "createdAt": "2026-09-23T11:11:50.903Z",
+    "updatedAt": "2026-09-23T11:16:29.000Z",
     "workflowPublishHistory": [
       {
-        "id": 1852,
+        "id": 1988,
         "workflowId": "C87KQIUQ3383eeCd",
-        "versionId": "a53ec646-4640-497e-b79d-f97df1b46e51",
+        "versionId": "e706f5fd-b4dc-4512-afda-1edb111bbe2e",
         "event": "activated",
         "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e",
-        "createdAt": "2026-09-10T10:10:44.161Z"
+        "createdAt": "2026-09-23T11:16:29.071Z"
       }
     ]
   }
