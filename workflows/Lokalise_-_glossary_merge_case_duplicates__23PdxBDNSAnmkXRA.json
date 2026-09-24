@@ -1,0 +1,251 @@
+{
+  "id": "23PdxBDNSAnmkXRA",
+  "name": "Lokalise - glossary merge case duplicates",
+  "description": "Merges the four capitalisation-duplicate glossary pairs into the sentence-case entry, filling missing languages from the title-case one, then deletes the title-case entries and the empty duplicate PDF Help term.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-23T14:59:05.073Z",
+  "updatedAt": "2026-09-23T14:59:05.073Z",
+  "isArchived": false,
+  "versionId": "fc07d0b4-da36-4b48-98ed-28a05a31ddca",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "cf6dbf13-821f-4f40-9e23-3cd4f11ab00b",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "5d1af823-b53a-4f6d-bada-831d304cffcb",
+      "name": "Fetch Glossary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 4000
+    },
+    {
+      "id": "6c5657e5-ab39-42cb-abc1-45b80cfc381e",
+      "name": "Build Merge",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const PAIRS = [\n[7176075, 7176129, 'Save changes'],\n[7176119, 7176135, 'Change password'],\n[7176095, 7176099, 'Reactivate subscription'],\n[7176111, 7176057, '7-day full access']\n];\nconst DELETE_EMPTY = [7174055];\n\nconst byId = {};\nfor (const p of $input.all()) {\n  const b = (p.json && p.json.body) || {};\n  for (const t of (Array.isArray(b.data) ? b.data : [])) { byId[t.id] = t; }\n}\nfunction fill(t) {\n  const m = {};\n  let n = 0;\n  for (const tr of ((t && t.translations) || [])) {\n    const v = String(tr.translation || '').trim();\n    if (v) { m[tr.langId] = v; n++; }\n  }\n  return { map: m, n: n };\n}\n\nconst updates = [];\nconst audit = [];\nconst dels = [];\nfor (const pr of PAIRS) {\n  const keep = byId[pr[0]];\n  const drop = byId[pr[1]];\n  if (!keep || !drop) { audit.push({ term: pr[2], error: 'id not found' }); continue; }\n  const A = fill(keep), B = fill(drop);\n  const richerIsDrop = B.n > A.n;\n  const out = {};\n  const langs = {};\n  for (const l in A.map) langs[l] = 1;\n  for (const l in B.map) langs[l] = 1;\n  let added = 0, overridden = 0;\n  for (const l in langs) {\n    const a = A.map[l], b = B.map[l];\n    let v = a;\n    if (!a && b) { v = b; added++; }\n    else if (a && b && a !== b && richerIsDrop) { v = b; overridden++; }\n    if (v) out[l] = v;\n  }\n  const trs = [];\n  for (const l in out) { trs.push({ langId: parseInt(l, 10), translation: out[l] }); }\n  updates.push({ id: pr[0], translations: trs });\n  audit.push({ term: pr[2], keep_id: pr[0], keep_langs: A.n, drop_id: pr[1], drop_langs: B.n, merged_langs: trs.length, filled_gaps: added, overridden_from_richer: overridden, es: out[1056] || '' });\n  dels.push(pr[1]);\n}\nfor (const d of DELETE_EMPTY) { dels.push(d); }\n\nreturn [{ json: { audit: audit, deletes: dels, update_body: { terms: updates }, delete_body: { terms: dels },\n  update_url: 'https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms',\n  delete_url: 'https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms' } }];"
+      }
+    },
+    {
+      "id": "c0211b39-7f23-44d4-a5da-45f630a2b342",
+      "name": "Merge Translations",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $json.update_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.update_body) }}",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "bfb5fd4a-6fb3-4711-b1e5-a2ad363d2895",
+      "name": "Delete Losers",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $('Build Merge').first().json.delete_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Build Merge').first().json.delete_body) }}",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "0a820c58-95c9-4f83-9937-0f28c5d4e394",
+      "name": "Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const plan = $('Build Merge').first().json;\nconst u = $('Merge Translations').first().json || {};\nconst d = $input.first().json || {};\nreturn [{ json: {\n  audit: plan.audit,\n  deleted_ids: plan.deletes,\n  merge_status: u.statusCode,\n  merge_body: JSON.stringify(u.body || {}).slice(0, 220),\n  delete_status: d.statusCode,\n  delete_body: JSON.stringify(d.body || {}).slice(0, 220)\n} }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Glossary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Glossary": {
+      "main": [
+        [
+          {
+            "node": "Build Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Merge": {
+      "main": [
+        [
+          {
+            "node": "Merge Translations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Translations": {
+      "main": [
+        [
+          {
+            "node": "Delete Losers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Losers": {
+      "main": [
+        [
+          {
+            "node": "Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "23PdxBDNSAnmkXRA",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-23T14:59:05.077Z",
+      "updatedAt": "2026-09-23T14:59:05.077Z"
+    }
+  ],
+  "activeVersion": null
+}
