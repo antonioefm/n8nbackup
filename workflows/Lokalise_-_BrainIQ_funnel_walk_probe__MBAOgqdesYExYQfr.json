@@ -1,0 +1,148 @@
+{
+  "id": "MBAOgqdesYExYQfr",
+  "name": "Lokalise - BrainIQ funnel walk probe",
+  "description": "Diagnostic: drives a real browser through the BrainIQ quiz funnel to learn the selectors needed to reach Get Results and Checkout.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-23T11:40:16.815Z",
+  "updatedAt": "2026-09-23T11:40:16.815Z",
+  "isArchived": false,
+  "versionId": "756fe6e4-c634-44c8-82b8-fe9ff48b3314",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "d6ff6708-755c-46e4-b894-399aa35db2e9",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "b47f1848-3d2d-41c8-87cb-00e27ea235f9",
+      "name": "Create Browser",
+      "type": "@mendable/n8n-nodes-firecrawl.firecrawl",
+      "typeVersion": 1,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "resource": "Browser",
+        "operation": "browserCreate",
+        "ttl": 900,
+        "activityTtl": 300
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "fc020e21-14c0-43d9-a2bb-43b8800aa618",
+      "name": "Walk Funnel",
+      "type": "@mendable/n8n-nodes-firecrawl.firecrawl",
+      "typeVersion": 1,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "resource": "Browser",
+        "operation": "browserExecute",
+        "sessionId": "={{ $json.data && $json.data.sessionId ? $json.data.sessionId : $json.sessionId }}",
+        "language": "node",
+        "timeout": 280,
+        "code": "const log = [];\nasync function snap(tag) {\n  const txt = (await page.evaluate(() => document.body.innerText)) || '';\n  const btns = await page.evaluate(() => {\n    const out = [];\n    const els = document.querySelectorAll('button, a[role=button], [class*=option], [class*=answer], input[type=submit]');\n    for (let i = 0; i < els.length && out.length < 18; i++) {\n      const t = (els[i].innerText || els[i].value || '').trim().replace(/\\s+/g, ' ');\n      if (t) out.push(t.slice(0, 45));\n    }\n    return out;\n  });\n  log.push({ tag: tag, url: page.url(), title: await page.title(), textLen: txt.length, text: txt.replace(/\\s+/g, ' ').slice(0, 320), buttons: btns });\n}\n\nawait page.goto('https://brainiqtest.com/', { waitUntil: 'domcontentloaded' });\nawait page.waitForTimeout(4000);\nawait snap('home');\n\ntry {\n  const start = page.getByText(/Start Certified Test|Start IQ Test|Start the IQ test/i).first();\n  await start.click({ timeout: 15000 });\n} catch (e) {\n  log.push({ tag: 'start-click-failed', err: String(e).slice(0, 180) });\n}\nawait page.waitForTimeout(5000);\nawait snap('after-start');\n\nfor (let i = 0; i < 6; i++) {\n  try {\n    const opts = page.locator('button, [class*=option], [class*=answer]');\n    const n = await opts.count();\n    let clicked = false;\n    for (let j = 0; j < n; j++) {\n      const el = opts.nth(j);\n      const t = ((await el.innerText().catch(() => '')) || '').trim();\n      if (t && !/menu|login|sign in|cookie|accept|home|about|pricing|faq|contact/i.test(t)) {\n        await el.click({ timeout: 8000 });\n        clicked = true;\n        break;\n      }\n    }\n    if (!clicked) { log.push({ tag: 'q' + i, note: 'no clickable option' }); break; }\n    await page.waitForTimeout(2500);\n  } catch (e) {\n    log.push({ tag: 'q' + i, err: String(e).slice(0, 140) });\n    break;\n  }\n}\nawait snap('after-answers');\nconsole.log(JSON.stringify(log));\nreturn log;"
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "a02a0d79-4cf2-417a-9565-e30010d75bb2",
+      "name": "Inspect",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const out = [];\nfor (const it of $input.all()) {\n  const j = it.json || {};\n  const d = j.data || j;\n  out.push({ json: { keys: Object.keys(j), dkeys: Object.keys(d), result: JSON.stringify(d.result || d.output || d.logs || d).slice(0, 3000), err: j.error ? String(j.error).slice(0, 300) : null } });\n}\nreturn out;"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Create Browser",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Browser": {
+      "main": [
+        [
+          {
+            "node": "Walk Funnel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Walk Funnel": {
+      "main": [
+        [
+          {
+            "node": "Inspect",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "MBAOgqdesYExYQfr",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-23T11:40:16.817Z",
+      "updatedAt": "2026-09-23T11:40:16.817Z"
+    }
+  ],
+  "activeVersion": null
+}
