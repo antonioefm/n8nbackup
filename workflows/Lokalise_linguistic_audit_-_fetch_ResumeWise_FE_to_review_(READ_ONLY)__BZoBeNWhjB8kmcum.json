@@ -1,0 +1,287 @@
+{
+  "id": "BZoBeNWhjB8kmcum",
+  "name": "Lokalise linguistic audit - fetch ResumeWise FE to_review (READ ONLY)",
+  "description": "READ-ONLY fetch for lokalise-linguistic-audit: ResumeWise frontend, tag to_review. Dedicated per-job workflow.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-24T08:01:40.342Z",
+  "updatedAt": "2026-09-24T08:01:44.782Z",
+  "isArchived": false,
+  "versionId": "9fed79eb-641b-42e4-87ec-6b7793cb11b6",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "a19a961b-eba2-43c3-9191-8667bef748f5",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "9d809ed1-d9ae-4b73-839d-274e93aa30e8",
+      "name": "List Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=100&include_statistics=1&include_settings=0",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "1fdf64bf-50df-4dad-8bf2-21d8af26661e",
+      "name": "Pick Project",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// READ ONLY. Picks the ResumeWise frontend project and builds a count URL.\nconst CFG = { name_match: /resume/i, exclude: /(back|email|html|legal)/i, filter_tags: 'to_review' };\nconst r = $input.first().json;\nconst body = r.body || r;\nif (!Array.isArray(body.projects)) { throw new Error('projects list missing: ' + JSON.stringify(body).slice(0,300)); }\nconst cands = body.projects.filter(p => CFG.name_match.test(p.name)).map(p => ({ id: p.project_id, name: p.name, keys_total: p.statistics && p.statistics.keys_total }));\nconst chosen = cands.filter(c => !CFG.exclude.test(c.name));\nif (chosen.length !== 1) { throw new Error('Expected exactly 1 frontend candidate, got: ' + JSON.stringify(cands)); }\nconst pid = chosen[0].id;\nconst url = 'https://api.lokalise.com/api2/projects/' + pid + '/keys?limit=1&page=1&filter_tags=' + encodeURIComponent(CFG.filter_tags);\nreturn [{ json: { project_id: pid, project_name: chosen[0].name, candidates: cands, projects_seen: body.projects.length, total_header: (r.headers||{})['x-pagination-total-count'] || null, filter_tags: CFG.filter_tags, url } }];"
+      }
+    },
+    {
+      "id": "5292d9c4-9cf6-4a04-920b-b867408afe8b",
+      "name": "Count Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "b5660c06-c765-4dab-94a4-679ac59acf83",
+      "name": "Expand Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const cfg = $('Pick Project').first().json;\nconst r = $input.first().json;\nconst body = r.body || r;\nif (!Array.isArray(body.keys)) { throw new Error('count call returned no keys array: ' + JSON.stringify(body).slice(0,300)); }\nconst total = Number((r.headers||{})['x-pagination-total-count'] || 0);\nconst LIMIT = 500;\nconst pages = Math.max(1, Math.ceil(total / LIMIT));\nconst out = [];\nfor (let i = 1; i <= pages; i++) {\n  out.push({ json: { page: i, total, url: 'https://api.lokalise.com/api2/projects/' + cfg.project_id + '/keys?include_translations=1&disable_references=1&limit=' + LIMIT + '&page=' + i + '&filter_tags=' + encodeURIComponent(cfg.filter_tags) } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "0d97abe5-a55b-42e8-acc2-e60acd795c8d",
+      "name": "Fetch Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "bc267a79-11b6-4bd0-8c19-f8ea804a01fc",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const cfg = $('Pick Project').first().json;\nconst total = $('Expand Pages').first().json.total;\nconst PSEUDO = new Set(['pst','ps','cus','pt_old']);\nconst rows = []; const errors = []; let keysSeen = 0; const langs = {};\nfor (const p of $input.all()) {\n  const r = p.json || {}; const body = r.body || r;\n  if (!Array.isArray(body.keys)) { errors.push({ statusCode: r.statusCode, body: JSON.stringify(body).slice(0,300) }); continue; }\n  for (const key of body.keys) {\n    keysSeen++;\n    const tr = Array.isArray(key.translations) ? key.translations : [];\n    const name = typeof key.key_name === 'object' ? (key.key_name.web || key.key_name.other || '') : key.key_name;\n    const enT = tr.find(t => t.language_iso === 'en');\n    const str = v => (v === null || v === undefined) ? '' : (typeof v === 'object' ? JSON.stringify(v) : String(v));\n    const en = enT ? str(enT.translation) : '';\n    if (!en) continue;\n    const t = {}; const m = {};\n    for (const x of tr) {\n      const iso = x.language_iso;\n      if (iso === 'en' || PSEUDO.has(iso)) continue;\n      const v = str(x.translation);\n      if (!v) continue;\n      t[iso] = v; m[iso] = (x.modified_at || '') + '|' + (x.is_reviewed ? 1 : 0) + '|' + (x.is_unverified ? 1 : 0);\n      langs[iso] = (langs[iso] || 0) + 1;\n    }\n    rows.push({ k: name, en, t, m, tags: key.tags || [], d: key.description || '' });\n  }\n}\nreturn [{ json: { mode: 'keys', project_id: cfg.project_id, project_name: cfg.project_name, candidates: cfg.candidates, filter_tags: cfg.filter_tags, server_total: total, keys_seen: keysSeen, rows_kept: rows.length, langs, errors, rows } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "List Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Projects": {
+      "main": [
+        [
+          {
+            "node": "Pick Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Project": {
+      "main": [
+        [
+          {
+            "node": "Count Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Keys": {
+      "main": [
+        [
+          {
+            "node": "Expand Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand Pages": {
+      "main": [
+        [
+          {
+            "node": "Fetch Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Keys": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "BZoBeNWhjB8kmcum",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-24T08:01:40.344Z",
+      "updatedAt": "2026-09-24T08:01:40.344Z"
+    }
+  ],
+  "activeVersion": null
+}
