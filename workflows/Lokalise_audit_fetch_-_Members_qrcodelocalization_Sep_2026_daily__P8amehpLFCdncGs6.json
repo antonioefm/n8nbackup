@@ -1,0 +1,199 @@
+{
+  "id": "P8amehpLFCdncGs6",
+  "name": "Lokalise audit fetch - Members qrcodelocalization Sep 2026 daily",
+  "description": "READ ONLY. Daily audit-log pull (1–24 Sep 2026) of qrcodelocalization edits in Personality - Members area content.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-24T17:13:39.154Z",
+  "updatedAt": "2026-09-24T17:16:36.005Z",
+  "isArchived": false,
+  "versionId": "4dd1c544-a227-41dc-80d3-91015baa9f57",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "2e65fb6c-3292-4bb9-b6b3-91ac98903369",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "f9e850ff-c926-4af6-8e1f-15fd0643e01e",
+      "name": "Get uid key",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/9933660066825e9a8005c8.58526829/keys?include_translations=1&filter_key_ids=663718210&filter_translation_lang_ids=753",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "b07f8332-8ff6-467f-a44e-f31f250165aa",
+      "name": "Build audit requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const k = ($input.first().json.keys || [])[0];\nconst tr = k && (k.translations || []).find(t => t.modified_by_email === 'qrcodelocalization@gmail.com');\nif (!tr) throw new Error('uid not found');\nconst uid = tr.modified_by;\nconst out = [];\nconst s = new Date('2025-09-25T00:00:00Z'), e = new Date('2025-10-31T00:00:00Z');\nfor (let d = new Date(s); d <= e; d = new Date(d.getTime() + 86400000)) {\n  const ds = d.toISOString().slice(0,10);\n  for (const ev of ['translation.updated','translations.updated']) out.push({ json: { uid, e: ev, from: ds, url: 'https://api.lokalise.com/v1/audit-logs?limit=1000&user_id=' + uid + '&event_type=' + ev + '&date_from=' + ds + '&date_to=' + ds } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "5cb623d3-5fe9-4480-9cef-c75f4056d102",
+      "name": "Fetch audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "77689ae7-1a9d-4496-9c33-8dfa53b57f8a",
+      "name": "Collect",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const P = '9933660066825e9a8005c8.58526829';\nconst reqs = $('Build audit requests').all();\nconst res = $input.all();\nconst summary = []; const ev = []; const seen = new Set();\nres.forEach((it, i) => { const b = it.json; const q = reqs[i].json;\n  const arr = Array.isArray(b.data) ? b.data : null; let inProj = 0;\n  for (const e of (arr || [])) {\n    const uid = e.metadata && e.metadata.uid; if (uid && seen.has(uid)) continue; if (uid) seen.add(uid);\n    const pr = (e.enrichments || []).find(x => x.name === 'project');\n    if (!pr || !pr.data || pr.data.id !== P) continue; inProj++;\n    const d = (e.unmapped && e.unmapped.data) || {}; const api = e.unmapped && e.unmapped.api_call;\n    if (d.lang_id || d.key_id) ev.push({ t: e.time, kid: d.key_id, lang: d.lang_iso, lid: d.lang_id, o: d.old_translation, n: d.new_translation, bulk: 0, api });\n    else for (const x of (d.translations || [])) ev.push({ t: e.time, kid: x.key && x.key.id, lid: x.language && x.language.id, o: x.previous_value, n: x.value, bulk: 1, api });\n  }\n  summary.push({ e: q.e, d: q.from, n: arr ? arr.length : -1, more: b.has_more, inProj, err: arr ? null : JSON.stringify(b).slice(0,200) });\n});\nreturn [{ json: { uid: reqs[0].json.uid, summary, events: ev } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Get uid key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get uid key": {
+      "main": [
+        [
+          {
+            "node": "Build audit requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build audit requests": {
+      "main": [
+        [
+          {
+            "node": "Fetch audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch audit": {
+      "main": [
+        [
+          {
+            "node": "Collect",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "P8amehpLFCdncGs6",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-24T17:13:39.158Z",
+      "updatedAt": "2026-09-24T17:13:39.158Z"
+    }
+  ],
+  "activeVersion": null
+}
