@@ -1,0 +1,184 @@
+{
+  "id": "10MdexknGWjJfaMx",
+  "name": "Lokalise - Personality TH audit fetch test-fa / fsa (READ ONLY)",
+  "description": "READ ONLY. Fetches EN+TH for keys tagged test-fa (Personality.co) and test_questions::fsa (Members area) for a Thai linguistic audit.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-24T11:00:03.857Z",
+  "updatedAt": "2026-09-24T11:02:37.223Z",
+  "isArchived": false,
+  "versionId": "f3bc645c-ecaa-4a9e-a7a3-1820c3b8e41e",
+  "versionCounter": 4,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "4eb0688b-1338-4d8f-a0bb-202ef6a8db0c",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "7385224a-74ed-4d79-8f28-180cdef74cbb",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const BASE = 'https://api.lokalise.com/api2/projects/';\nconst LANGS = '640,753';\nconst qs = 'include_translations=1&disable_references=1&limit=500&pagination=cursor&filter_translation_lang_ids=' + LANGS;\nreturn [\n  { json: { job: 'pco_all', url: BASE + '31393214664f295f94dd86.76792605/keys?' + qs } },\n  { json: { job: 'mem_tag', url: BASE + '9933660066825e9a8005c8.58526829/keys?' + qs + '&filter_tags=' + encodeURIComponent('test_questions::fa') } }\n];\n"
+      }
+    },
+    {
+      "id": "3698ba3a-ecab-4ded-b6ed-3e43a3b27523",
+      "name": "Fetch Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 100,
+              "requestInterval": 700
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "bbac4ab5-5f75-41ea-acf0-afa02a60ab06",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const PCO = '31393214664f295f94dd86.76792605';\nconst FA = /(^|[-:_ ])fa$/i;\nconst out = { pco: [], mem: [], pco_all_count: 0, pco_tags_seen: {}, pco_fa_tags: {}, pages: 0, errors: [] };\nconst seen = {};\nfor (const it of $input.all()) {\n  const r = it.json || {};\n  const body = r.body || {};\n  out.pages++;\n  if (!Array.isArray(body.keys)) { out.errors.push({ status: r.statusCode, body: JSON.stringify(body).slice(0, 300) }); continue; }\n  const isPco = body.project_id === PCO;\n  for (const k of body.keys) {\n    const sk = (isPco ? 'p' : 'm') + k.key_id;\n    if (seen[sk]) continue; seen[sk] = 1;\n    const name = typeof k.key_name === 'object' ? (k.key_name.web || k.key_name.other || k.key_name.ios || '') : k.key_name;\n    const row = { id: k.key_id, k: name, tags: k.tags, archived: k.is_archived, desc: k.description || '', en: null, th: null, th_m: null, th_by: null, th_rev: null };\n    for (const t of (k.translations || [])) {\n      const v = typeof t.translation === 'string' ? t.translation : JSON.stringify(t.translation);\n      if (t.language_iso === 'en') row.en = v;\n      if (t.language_iso === 'th') { row.th = v; row.th_m = t.modified_at; row.th_by = t.modified_by_email; row.th_rev = t.is_reviewed; }\n    }\n    if (isPco) {\n      out.pco_all_count++;\n      let hit = false;\n      for (const tg of (k.tags || [])) { out.pco_tags_seen[tg] = (out.pco_tags_seen[tg] || 0) + 1; if (FA.test(tg)) { hit = true; out.pco_fa_tags[tg] = (out.pco_fa_tags[tg] || 0) + 1; } }\n      if (hit) out.pco.push(row);\n    } else out.mem.push(row);\n  }\n}\nreturn [{ json: out }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Keys": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "10MdexknGWjJfaMx",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-24T11:00:03.863Z",
+      "updatedAt": "2026-09-24T11:00:03.863Z"
+    }
+  ],
+  "activeVersion": null
+}
