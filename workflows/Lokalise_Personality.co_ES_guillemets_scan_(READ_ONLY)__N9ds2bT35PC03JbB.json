@@ -1,0 +1,201 @@
+{
+  "id": "N9ds2bT35PC03JbB",
+  "name": "Lokalise: Personality.co ES guillemets scan (READ ONLY)",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-24T10:28:30.036Z",
+  "updatedAt": "2026-09-24T10:28:34.236Z",
+  "isArchived": false,
+  "versionId": "c2fcd170-acf2-45ed-ac68-1edf6991343d",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "0c941b79-bf7f-44a2-b106-7b7c1c72907d",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "be15f24b-4a2a-4a10-9696-69d88cbcc82b",
+      "name": "Count Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/31393214664f295f94dd86.76792605/keys?limit=1&page=1&filter_archived=exclude",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "424ccabc-9654-44de-91f0-d6aae218468a",
+      "name": "Expand Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const h = $input.first().json.headers || {};\nconst total = parseInt(h['x-pagination-total-count'], 10);\nif (isNaN(total)) { throw new Error('No total count header'); }\nconst pages = Math.max(1, Math.ceil(total / 500));\nconst out = [];\nfor (let p = 1; p <= pages; p++) { out.push({ json: { page: p, total: total, pages: pages } }); }\nreturn out;"
+      }
+    },
+    {
+      "id": "97b4e92e-a0f8-4356-9928-f1a86a89d44b",
+      "name": "Fetch Keys Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/31393214664f295f94dd86.76792605/keys?include_translations=1&filter_translation_lang_ids=640,1056&filter_archived=exclude&limit=500&page={{ $json.page }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "6a4872ab-d48c-4cf5-b7d9-e1c0f977b786",
+      "name": "Scan Spanish Quotes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const pages = $input.all();\nconst expected = $('Expand Pages').first().json;\nlet keysSeen = 0;\nconst badPages = [];\nconst hits = [];\nconst stats = { es_total: 0, es_with_guillemets: 0, es_with_double_angle: 0, es_with_curly: 0, es_with_straight: 0 };\nfunction txt(v) { if (v === null || v === undefined) { return ''; } return (typeof v === 'string') ? v : JSON.stringify(v); }\nfor (let i = 0; i < pages.length; i++) {\n  const b = pages[i].json || {};\n  if (!Array.isArray(b.keys)) { badPages.push(i + 1); continue; }\n  for (const k of b.keys) {\n    if (k.is_archived) { continue; }\n    keysSeen++;\n    let en = '';\n    let es = null;\n    for (const tr of (k.translations || [])) {\n      if (tr.language_iso === 'en') { en = txt(tr.translation); }\n      if (tr.language_iso === 'es') { es = tr; }\n    }\n    if (!es) { continue; }\n    const v = txt(es.translation);\n    if (!v) { continue; }\n    stats.es_total++;\n    const g = /[\\u00ab\\u00bb]/.test(v);\n    const d = /<<|>>/.test(v);\n    if (g) { stats.es_with_guillemets++; }\n    if (d) { stats.es_with_double_angle++; }\n    if (/[\\u201c\\u201d]/.test(v)) { stats.es_with_curly++; }\n    if (/\"/.test(v)) { stats.es_with_straight++; }\n    if (g || d) {\n      const kn = k.key_name || {};\n      hits.push({\n        key_id: k.key_id,\n        key: kn.web || kn.other || kn.ios || kn.android || '',\n        translation_id: es.translation_id,\n        is_plural: !!k.is_plural,\n        form: g && d ? 'both' : (g ? 'guillemets' : 'double_angle'),\n        en: en,\n        es: v,\n        en_has_curly: /[\\u201c\\u201d]/.test(en),\n        en_has_straight: /\"/.test(en),\n        en_has_angle: /<<|>>|[\\u00ab\\u00bb]/.test(en),\n        modified_by: es.modified_by_email || '',\n        modified_at: es.modified_at || '',\n        statuses: (es.custom_translation_statuses || []).map(function (s) { return s.title; }).join(',')\n      });\n    }\n  }\n}\nreturn [{ json: { expected_total: expected.total, pages_expected: expected.pages, pages_received: pages.length, bad_pages: badPages, keys_seen: keysSeen, stats: stats, hit_count: hits.length, hits: hits } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Count Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Keys": {
+      "main": [
+        [
+          {
+            "node": "Expand Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand Pages": {
+      "main": [
+        [
+          {
+            "node": "Fetch Keys Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Keys Page": {
+      "main": [
+        [
+          {
+            "node": "Scan Spanish Quotes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "N9ds2bT35PC03JbB",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-24T10:28:30.045Z",
+      "updatedAt": "2026-09-24T10:28:30.045Z"
+    }
+  ],
+  "activeVersion": null
+}
