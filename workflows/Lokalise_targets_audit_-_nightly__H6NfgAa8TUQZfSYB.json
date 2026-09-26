@@ -1,0 +1,2814 @@
+{
+  "id": "H6NfgAa8TUQZfSYB",
+  "name": "Lokalise targets audit - nightly",
+  "description": "Weekdays 04:00 Madrid: audits one active Lokalise project (glossary + style guide, all translated strings), files an INTERNAT Task with the workbook, posts summary + thread to #i18n-team.",
+  "active": true,
+  "activeVersionId": "9a52f3f0-ddd5-45b6-b7c8-b09e4b8eaa6f",
+  "createdAt": "2026-09-25T11:31:57.565Z",
+  "updatedAt": "2026-09-25T18:03:28.111Z",
+  "isArchived": false,
+  "versionId": "5910020e-c8af-4bdd-96a5-f1e6d1d88f53",
+  "versionCounter": 12,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "8a8bc20d-6292-425a-97ad-b7ea9a6223bb",
+      "name": "Weekdays 04:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 4 * * 1-5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "be9764f4-ec5b-4e9f-9385-9c050e66a0e7",
+      "name": "Read rotation log",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "WLdY3s15GBJjEsSq"
+        },
+        "returnAll": true
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "55766304-47cc-47ed-95e4-2ab103d92bf1",
+      "name": "Read active projects",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "zgduWw2eDaFthPf6"
+        },
+        "returnAll": true
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "8eb7e62e-7641-4895-b142-20434ffdad89",
+      "name": "Pick today's project",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Set to a Lokalise project_id to force a manual re-run of one project; leave '' for normal rotation.\nconst FORCE_PROJECT_ID = '';\nconst EXCLUDE = ['18564477693fc9bba4cec8.54789459'];\n// Product families: finish every project of a family before moving on; smaller families first.\nconst FAMILIES = [['chatbot', 'chat ai'], ['chat ai', 'chat ai'], ['mobitrace', 'mobitrace'], ['personality', 'personality'], ['qrcreate', 'qr'], ['my qr code', 'qr'], ['pdf editor', 'pdf editor'], ['realchecker', 'realchecker'], ['resumewise', 'resumewise'], ['unicopy', 'unicopy'], ['vin checker', 'vin checker'], ['wapp', 'wapp'], ['my image', 'my image']];\nfunction fam(n) { const s = String(n).toLowerCase(); for (const f of FAMILIES) { if (s.indexOf(f[0]) !== -1) { return f[1]; } } return s; }\nconst active = $('Read active projects').all().map(function (i) { return i.json; })\n  .filter(function (r) { return String(r.active).toLowerCase() === 'true' && r.project_id && EXCLUDE.indexOf(r.project_id) === -1; });\nif (!active.length) { throw new Error('No active projects in lokalise_project_labels'); }\nconst size = {};\nfor (const it of $('Fetch project sizes').all()) {\n  const b = it.json.body !== undefined ? it.json.body : it.json;\n  for (const p of ((b && b.projects) || [])) { size[p.project_id] = Number((p.statistics && p.statistics.keys_total) || 0); }\n}\nconst log = $('Read rotation log').all().map(function (i) { return i.json || {}; }).filter(function (r) { return r.project_id; });\nlet cycle = 1;\nfor (const r of log) { cycle = Math.max(cycle, Number(r.cycle || 1)); }\nfunction doneIn(c) { const s = {}; for (const r of log) { if (Number(r.cycle || 1) === c) { s[r.project_id] = true; } } return s; }\nlet done = doneIn(cycle);\nif (active.every(function (p) { return done[p.project_id]; })) { cycle = cycle + 1; done = {}; }\nconst due = active.filter(function (p) { return !done[p.project_id]; });\nconst famSize = {};\nconst famStarted = {};\nfor (const p of active) {\n  const f = fam(p.project_name);\n  famSize[f] = (famSize[f] || 0) + (size[p.project_id] || 0);\n  if (done[p.project_id]) { famStarted[f] = true; }\n}\ndue.sort(function (a, b) {\n  const fa = fam(a.project_name), fb = fam(b.project_name);\n  const sa = famStarted[fa] ? 0 : 1, sb = famStarted[fb] ? 0 : 1;\n  if (sa !== sb) { return sa - sb; }\n  if (famSize[fa] !== famSize[fb]) { return famSize[fa] - famSize[fb]; }\n  if (fa !== fb) { return fa < fb ? -1 : 1; }\n  return (size[a.project_id] || 0) - (size[b.project_id] || 0);\n});\nconst forced = FORCE_PROJECT_ID ? active.find(function (r) { return r.project_id === FORCE_PROJECT_ID; }) : null;\nconst p = forced || due[0];\nconst queue = due.map(function (d) { return String(d.project_name).replace(/^\"|\"$/g, '') + ' (' + (size[d.project_id] || '?') + ')'; });\nconst today = $now.setZone('Europe/Madrid').toFormat('yyyy-MM-dd');\nreturn [{ json: { project_id: p.project_id, project_name: String(p.project_name).replace(/^\"|\"$/g, ''), family: fam(p.project_name), keys_total: size[p.project_id] || null, cycle: cycle, rotation_size: active.length, remaining_in_cycle: due.length, queue: queue, run_date: today } }];\n"
+      }
+    },
+    {
+      "id": "b0867a5d-1094-42a6-92ff-8b86c41a3f0a",
+      "name": "Fetch project languages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        100
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/languages?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "b004ba7d-a467-4a47-a492-6cc6613f54da",
+      "name": "Fetch glossary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        100
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.body.meta.nextCursor }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body.meta || !$response.body.meta.nextCursor }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20,
+              "requestInterval": 700
+            }
+          }
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "4996b17f-0aea-4a13-be67-d11f3bd6a648",
+      "name": "Read style rules",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "84k8s1DOCgCOuI6G"
+        },
+        "returnAll": true
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "a96628b1-cae9-4729-a1ec-94cfd52be26b",
+      "name": "Build language jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const RULES = {};\nlet GENERIC = [];\nconst JUDGE = {};\nfor (const it of $('Read style rules').all()) {\n  const r = it.json || {};\n  if (!r.iso) { continue; }\n  let list = [];\n  try { list = JSON.parse(r.rules_json || '[]'); } catch (e) { throw new Error('targets_audit_style_rules: bad rules_json for ' + r.iso + ': ' + e.message); }\n  if (r.iso === '*') { GENERIC = list; } else { RULES[r.iso] = list; JUDGE[r.iso] = r.judgement || ''; }\n}\nif (!Object.keys(RULES).length) { throw new Error('targets_audit_style_rules is empty'); }\nconst FB = {};\nfor (const it of $('Read reviewer feedback').all()) {\n  const r = it.json || {};\n  if (!r.iso || !r.decision) { continue; }\n  if (!FB[r.iso]) { FB[r.iso] = []; }\n  FB[r.iso].push({ decision: r.decision, rule: String(r.rule || ''), en: String(r.en || '').slice(0, 200), translation: String(r.translation || '').slice(0, 200), reason: String(r.reason || r.issue || '').slice(0, 200), at: String(r.reviewed_at || '') });\n}\nfunction fbFor(iso) {\n  const all = (FB[iso] || []).slice().sort(function (a, b) { return a.at < b.at ? 1 : -1; });\n  const rej = all.filter(function (x) { return x.decision === 'rejected'; }).slice(0, 25);\n  const app = all.filter(function (x) { return x.decision === 'approved'; }).slice(0, 12);\n  return rej.concat(app);\n}\nconst pick = $(\"Pick today's project\").first().json;\nlet langs = [];\nfor (const it of $('Fetch project languages').all()) {\n  const b = it.json.body !== undefined ? it.json.body : it.json;\n  if (b && Array.isArray(b.languages)) { langs = langs.concat(b.languages); }\n}\nif (!langs.length) { throw new Error('No languages returned for ' + pick.project_name + ' (' + pick.project_id + ')'); }\nconst enLang = langs.find(function (l) { return l.lang_iso === 'en'; });\nif (!enLang) { throw new Error('Project has no en language: ' + pick.project_name); }\nconst EXCL = ['en', 'pst', 'ps', 'cus', 'pt_old', 'ja'];\n\nconst ISO_BY_ID = { 765: 'cs', 767: 'da', 666: 'de', 761: 'el', 640: 'en', 1056: 'es', 10154: 'et', 768: 'fi', 818: 'fil', 673: 'fr', 793: 'hr', 773: 'hu', 757: 'id', 734: 'it', 733: 'ko', 10152: 'lt', 10153: 'lv', 749: 'ms', 737: 'nl', 760: 'no', 759: 'no', 748: 'pl', 708: 'pt', 770: 'ro', 799: 'sk', 10159: 'sl', 754: 'sv', 753: 'th', 744: 'tr', 769: 'uk', 774: 'vi' };\nlet terms = [];\nfor (const it of $('Fetch glossary').all()) {\n  const b = it.json.body !== undefined ? it.json.body : it.json;\n  const arr = (b && (b.data || b.glossary_terms || b.terms)) || [];\n  terms = terms.concat(arr);\n}\nif (!terms.length) { throw new Error('Glossary fetch returned no terms'); }\n\nconst TAGS = [\n  ['personality', []], ['realchecker', ['realchecker']], ['mobitrace', ['mobitrace']], ['qrcreate', ['my qr code', 'qrcreate']],\n  ['my qr code', ['my qr code']], ['pdf editor', ['pdf editor']], ['resumewise', ['resumewise']], ['unicopy', ['unicopy']],\n  ['wapp', ['wapp']], ['chat ai', ['chat ai']], ['chatbot', ['chat ai']], ['my image', ['my image']], ['vin checker', ['vin checker']]\n];\nconst pname = pick.project_name.toLowerCase();\nlet ptags = [];\nfor (const t of TAGS) { if (pname.indexOf(t[0]) !== -1) { ptags = t[1]; break; } }\nconst isPersonality = pname.indexOf('personality') !== -1;\nfunction yes(v) { return v === true || v === 1 || String(v).toLowerCase() === 'yes' || String(v).toLowerCase() === 'true'; }\nfunction tagList(t) {\n  const raw = t.tags || [];\n  const arr = Array.isArray(raw) ? raw : String(raw).split(',');\n  return arr.map(function (x) { return String(typeof x === 'object' && x ? (x.name || x.tag || '') : x).trim().toLowerCase(); }).filter(function (x) { return x; });\n}\nconst inScope = terms.filter(function (t) {\n  const tg = tagList(t);\n  if (!tg.length || tg.indexOf('shared') !== -1) { return true; }\n  return tg.some(function (x) { return ptags.indexOf(x) !== -1; });\n});\n\nconst jobs = [];\nfor (const l of langs) {\n  const iso = l.lang_iso;\n  if (EXCL.indexOf(iso) !== -1) { continue; }\n  const gl = [];\n  for (const t of inScope) {\n    const src = String(t.term || '').trim();\n    if (!src) { continue; }\n    let tgt = '';\n    let tnote = '';\n    for (const tr of (t.translations || [])) {\n      const tiso = tr.langIso || tr.lang_iso || ISO_BY_ID[tr.langId || tr.lang_id];\n      if (tiso === iso) { tgt = String(tr.translation || '').trim(); tnote = String(tr.description || '').trim(); }\n    }\n    const translatable = t.translatable === undefined ? true : yes(t.translatable);\n    if (translatable && !tgt && !yes(t.forbidden)) { continue; }\n    gl.push({ src: src, cs: yes(t.caseSensitive !== undefined ? t.caseSensitive : t.case_sensitive), tr: translatable, fb: yes(t.forbidden), tgt: tgt, note: (tnote || String(t.description || '')).slice(0, 200) });\n  }\n  const rules = (RULES[iso] || []).filter(function (r) { return !r.project || (r.project === 'personality' ? isPersonality : !isPersonality); })\n    .concat(GENERIC.filter(function (g) { return g.langs === '*' || g.langs.indexOf(iso) !== -1; }));\n  jobs.push({ json: {\n    project_id: pick.project_id, project_name: pick.project_name, run_date: pick.run_date,\n    iso: iso, lang_id: l.lang_id, en_id: enLang.lang_id, lang_name: l.lang_name,\n    is_personality: isPersonality, glossary: gl, rules: rules, judgement: JUDGE[iso] || '', feedback: fbFor(iso)\n  } });\n}\nif (!jobs.length) { throw new Error('No target languages to audit in ' + pick.project_name); }\njobs.sort(function (a, b) { return a.json.lang_name < b.json.lang_name ? -1 : 1; });\nreturn jobs;\n"
+      }
+    },
+    {
+      "id": "c049a4f7-44eb-41dd-a280-76737fbf0cc2",
+      "name": "Audit each language",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1760,
+        100
+      ],
+      "parameters": {
+        "mode": "each",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ME3cLqQy0Dlzm6si"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "59df0130-9156-445d-8a93-6d258f207d0e",
+      "name": "Aggregate results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const NL = String.fromCharCode(10);\nconst jobs = $('Build language jobs').all().map(function (i) { return i.json; });\nconst res = $input.all().map(function (i) { return i.json || {}; });\nconst pick = $(\"Pick today's project\").first().json;\nconst langs = [];\nfor (let i = 0; i < jobs.length; i++) {\n  const j = jobs[i];\n  let r = res.find(function (x) { return x.iso === j.iso; });\n  if (!r) { r = { iso: j.iso, lang_name: j.lang_name, findings: [], errors: ['sub-workflow failed: ' + JSON.stringify((res[i] || {}).error || res[i] || 'no result').slice(0, 200)], strings_checked: 0, failed: true }; }\n  const f = r.findings || [];\n  const g = f.filter(function (x) { return x.check === 'Glossary'; }).length;\n  const s = f.filter(function (x) { return x.check === 'Style'; }).length;\n  const h = f.filter(function (x) { return x.severity === 'High'; }).length;\n  const notChecked = r.failed || (r.strings_checked === 0);\n  langs.push({ iso: j.iso, name: j.lang_name, glossary: g, style: s, high: h, strings: r.strings_checked || 0, findings: f, errors: r.errors || [], triage_ok: r.triage_ok !== false, overflow: r.overflow || 0, conflicts: r.glossary_conflicts || [], not_checked: notChecked });\n}\nconst checked = langs.filter(function (l) { return !l.not_checked; });\nconst withF = checked.filter(function (l) { return l.glossary + l.style > 0; });\nconst clean = checked.filter(function (l) { return l.glossary + l.style === 0; });\nconst failed = langs.filter(function (l) { return l.not_checked; });\nconst noTriage = langs.filter(function (l) { return !l.not_checked && !l.triage_ok; });\nconst tg = langs.reduce(function (a, l) { return a + l.glossary; }, 0);\nconst ts = langs.reduce(function (a, l) { return a + l.style; }, 0);\nconst th = langs.reduce(function (a, l) { return a + l.high; }, 0);\nconst strings = langs.reduce(function (a, l) { return a + l.strings; }, 0);\n\nconst summary = '*Linguistic audit — ' + pick.project_name + '*  ·  ' + langs.length + ' languages  ·  all translated strings' + NL +\n  '*Totals*  Glossary: ' + tg + '  ·  Style: ' + ts + '   (' + th + ' high severity)';\n\nconst d = [];\nd.push('*Languages with findings (' + withF.length + ' of ' + langs.length + ')*');\nfor (const l of withF) { d.push('• *' + l.name + '* — Glossary: ' + l.glossary + ' · Style: ' + l.style); }\nif (clean.length) { d.push(':white_check_mark: ' + clean.length + ' languages clean.'); }\nif (failed.length) { d.push(':warning: Not checked: ' + failed.map(function (l) { return l.name; }).join(', ') + '.'); }\nif (noTriage.length) { d.push(':warning: LLM triage unavailable, only brand/forbidden-term hits reported: ' + noTriage.map(function (l) { return l.name; }).join(', ') + '.'); }\nconst detail = d.join(NL);\n\nconst j = [];\nj.push('h3. Linguistic audit — ' + pick.project_name + ' — ' + pick.run_date);\nj.push('Scope: all translated strings (' + strings + ' strings, ' + langs.length + ' languages). Checks: glossary adherence and style-guide compliance — mechanical rules from each style guide, LLM triage of every candidate, plus an LLM style-guide review of the 20 longest strings per language. Spelling and accuracy against the English source are not checked.');\nj.push('');\nj.push('||Language||Strings||Glossary||Style||High||');\nfor (const l of langs) { j.push('|' + l.name + '|' + l.strings + '|' + (l.not_checked ? 'not checked' : l.glossary) + '|' + (l.not_checked ? '-' : l.style) + '|' + (l.not_checked ? '-' : l.high) + '|'); }\nj.push('|*Total*|' + strings + '|*' + tg + '*|*' + ts + '*|*' + th + '*|');\nconst errs = langs.filter(function (l) { return l.errors.length; });\nif (errs.length) { j.push(''); j.push('*Errors*'); for (const l of errs) { j.push('* ' + l.name + ': ' + l.errors.join('; ').slice(0, 300)); } }\nconst ov = langs.filter(function (l) { return l.overflow > 0; });\nif (ov.length) { j.push(''); j.push('*Candidates over the per-language triage cap (not reviewed):* ' + ov.map(function (l) { return l.name + ' ' + l.overflow; }).join(', ')); }\nconst cf = langs.filter(function (l) { return l.conflicts.length; });\nif (cf.length) { j.push(''); j.push('*Possible glossary vs style-guide conflicts (check the glossary, not the translation)*'); for (const l of cf) { for (const c of l.conflicts) { j.push('* ' + l.name + ': ' + String(c).slice(0, 250)); } } }\nj.push('');\nj.push('Workbook with every finding attached (one row per finding; filter by Language). Rotation: nightly on weekdays, one product per run — ' + pick.rotation_size + ' products.');\n\nconst safe = pick.project_name.replace(/[\\\\/:*?\"<>|]/g, '-');\nreturn [{ json: {\n  project_id: pick.project_id, project_name: pick.project_name, run_date: pick.run_date,\n  languages: langs.length, glossary: tg, style: ts, high: th,\n  not_checked: failed.map(function (l) { return l.iso; }).join(','),\n  slack_summary: summary, slack_detail: detail,\n  jira_summary: 'Linguistic audit – ' + pick.project_name + ' – ' + pick.run_date,\n  jira_description: j.join(NL),\n  file_name: 'Linguistic audit - ' + safe + ' - ' + pick.run_date + '.xlsx',\n  langs: langs\n} }];\n"
+      }
+    },
+    {
+      "id": "609037be-a7ff-4741-bb54-76587d334b59",
+      "name": "Create Jira ticket",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://futuremedia.atlassian.net/rest/api/2/issue",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ fields: { project: { key: \"INTERNAT\" }, issuetype: { name: \"Task\" }, summary: $json.jira_summary, description: $json.jira_description, labels: [\"linguistic_audit\", \"nightly_targets_audit\"] } }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "QJte7dJbX10mIzJI",
+          "name": "Jira SW Cloud account"
+        }
+      },
+      "disabled": false
+    },
+    {
+      "id": "a207dac5-8177-4ae0-9f7a-1daad86f9e46",
+      "name": "Build findings rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const a = $('Aggregate results').first().json;\nconst out = [];\nlet n = 0;\nfunction base(l) { return { 'Reject? (x)': '', 'Reason (optional)': '', ID: '', Language: l.name, ISO: l.iso, Check: '', Severity: '', 'Rule / term': '', Key: '', 'Key description': '', English: '', Translation: '', Issue: '', Suggestion: '', 'Found by': '' }; }\nfor (const l of a.langs) {\n  if (l.not_checked) { const r = base(l); r.Issue = 'NOT CHECKED \\u2014 ' + (l.errors.join('; ') || 'no strings'); out.push({ json: r }); continue; }\n  if (!l.findings.length) { const r = base(l); r.Issue = 'No issues found for this language (' + l.strings + ' strings checked)'; out.push({ json: r }); continue; }\n  for (const f of l.findings) {\n    n++;\n    const r = base(l);\n    r.ID = 'F' + String(n).padStart(4, '0');\n    r.Check = f.check; r.Severity = f.severity; r['Rule / term'] = f.rule; r.Key = f.key; r['Key description'] = f.key_description || '';\n    r.English = String(f.en || '').slice(0, 30000); r.Translation = String(f.translation || '').slice(0, 30000);\n    r.Issue = f.issue; r.Suggestion = f.suggestion; r['Found by'] = f.found_by;\n    out.push({ json: r });\n  }\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "f7fef456-7c10-4c25-b768-e7718ec1cbdf",
+      "name": "Convert to xlsx",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        2640,
+        100
+      ],
+      "parameters": {
+        "operation": "xlsx",
+        "binaryPropertyName": "data",
+        "options": {
+          "fileName": "={{ $('Aggregate results').first().json.file_name }}",
+          "sheetName": "Findings",
+          "headerRow": true
+        }
+      }
+    },
+    {
+      "id": "f0c4a110-b63b-4d88-b414-0f079c299aa6",
+      "name": "Attach workbook to Jira",
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [
+        2860,
+        100
+      ],
+      "parameters": {
+        "resource": "issueAttachment",
+        "operation": "add",
+        "jiraVersion": "cloud",
+        "issueKey": "={{ $('Create Jira ticket').first().json.key }}",
+        "binaryPropertyName": "data"
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "QJte7dJbX10mIzJI",
+          "name": "Jira SW Cloud account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "disabled": false
+    },
+    {
+      "id": "b0171547-44ab-43c9-8262-fff35b7c88c0",
+      "name": "Post summary to i18n-team",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        3080,
+        100
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C094NS33FN0"
+        },
+        "text": "={{ $('Aggregate results').first().json.slack_summary }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "executeOnce": true,
+      "webhookId": "bbd01039-8ced-405a-b9da-ff0c1cf39fb8",
+      "disabled": false
+    },
+    {
+      "id": "f539f4af-2d6d-4853-a8f3-1142f11e9b69",
+      "name": "Post language details in thread",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        3300,
+        100
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C094NS33FN0"
+        },
+        "text": "={{ $('Aggregate results').first().json.slack_detail }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false,
+          "thread_ts": {
+            "replyValues": {
+              "thread_ts": "={{ $('Post summary to i18n-team').first().json.message_timestamp }}"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "executeOnce": true,
+      "webhookId": "c71cb020-32f7-43af-995a-57ad22e1b5f8",
+      "disabled": false
+    },
+    {
+      "id": "c3b253b1-f9d2-4bbe-96e2-48788499b419",
+      "name": "Post Jira link in thread",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        3520,
+        100
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C094NS33FN0"
+        },
+        "text": "=Jira: <https://futuremedia.atlassian.net/browse/{{ $('Create Jira ticket').first().json.key }}|{{ $('Create Jira ticket').first().json.key }}> — workbook attached.\nReview sheet: <{{ $('Create review sheet').first().json.spreadsheetUrl }}|open> — put *x* in _Reject?_ (or delete the row), then react :white_check_mark: on the summary above.",
+        "otherOptions": {
+          "includeLinkToWorkflow": false,
+          "thread_ts": {
+            "replyValues": {
+              "thread_ts": "={{ $('Post summary to i18n-team').first().json.message_timestamp }}"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "executeOnce": true,
+      "webhookId": "7a09991a-4239-43eb-a859-43716c1c74de",
+      "disabled": false
+    },
+    {
+      "id": "7f20297f-1335-4601-b87d-06451e163d51",
+      "name": "Log rotation",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3740,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "WLdY3s15GBJjEsSq"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [],
+          "schema": [
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "project_id",
+              "id": "project_id",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "project_name",
+              "id": "project_name",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "audited_at",
+              "id": "audited_at",
+              "required": false,
+              "type": "dateTime"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "jira_key",
+              "id": "jira_key",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "languages",
+              "id": "languages",
+              "required": false,
+              "type": "number"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "glossary_findings",
+              "id": "glossary_findings",
+              "required": false,
+              "type": "number"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "style_findings",
+              "id": "style_findings",
+              "required": false,
+              "type": "number"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "high_findings",
+              "id": "high_findings",
+              "required": false,
+              "type": "number"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "not_checked",
+              "id": "not_checked",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "cycle",
+              "id": "cycle",
+              "required": false,
+              "type": "number"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "sheet_id",
+              "id": "sheet_id",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "slack_ts",
+              "id": "slack_ts",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "ingested",
+              "id": "ingested",
+              "required": false,
+              "type": "string"
+            }
+          ],
+          "value": {
+            "audited_at": "={{ $now.toISO() }}",
+            "cycle": "={{ $(\"Pick today's project\").first().json.cycle }}",
+            "glossary_findings": "={{ $('Aggregate results').first().json.glossary }}",
+            "high_findings": "={{ $('Aggregate results').first().json.high }}",
+            "ingested": "no",
+            "jira_key": "={{ $('Create Jira ticket').first().json.key }}",
+            "languages": "={{ $('Aggregate results').first().json.languages }}",
+            "not_checked": "={{ $('Aggregate results').first().json.not_checked }}",
+            "project_id": "={{ $('Aggregate results').first().json.project_id }}",
+            "project_name": "={{ $('Aggregate results').first().json.project_name }}",
+            "sheet_id": "={{ $('Create review sheet').first().json.spreadsheetId }}",
+            "slack_ts": "={{ $('Post summary to i18n-team').first().json.message_timestamp }}",
+            "style_findings": "={{ $('Aggregate results').first().json.style }}"
+          }
+        }
+      },
+      "executeOnce": true,
+      "disabled": false
+    },
+    {
+      "id": "78b4b041-0b36-4a5e-9d43-66b4b1807b6b",
+      "name": "Run manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "6f5af475-5d79-4b8b-b9f5-36726679d677",
+      "name": "Sticky Note 06e16239",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -320
+      ],
+      "parameters": {
+        "content": "## Lokalise targets audit - nightly\n\nWeekdays 04:00 Europe/Madrid. Picks the active project (lokalise_project_labels, minus My QR Code html) audited longest ago, audits every translated string in every target language (glossary + style guide, no spelling), files an INTERNAT Task with the workbook and posts to #i18n-team: summary on top, languages + Jira link in thread.\n\n**Change rules** in data table targets_audit_style_rules (one row per language, iso * = generic rules). **Rotation state** in data table targets_audit_rotation — delete a row to re-audit a project sooner. Each language runs in the worker sub-workflow ME3cLqQy0Dlzm6si.",
+        "color": 4,
+        "width": 640,
+        "height": 260
+      }
+    },
+    {
+      "id": "51663ef1-d58b-4fc3-8a48-3e4c36e7b74a",
+      "name": "Read reviewer feedback",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1430,
+        260
+      ],
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "zIhywBksdBpwbHp1"
+        },
+        "operation": "get",
+        "resource": "row",
+        "returnAll": true
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "id": "0f1a2b3c-5e6d-4405-b17c-d3c5d710cbe4",
+      "name": "Fetch project sizes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        550,
+        260
+      ],
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "GET",
+        "options": {
+          "timeout": 60000
+        },
+        "url": "https://api.lokalise.com/api2/projects?limit=100&include_statistics=1"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "executeOnce": true
+    },
+    {
+      "id": "38a71472-4d08-44d1-96e2-873627818826",
+      "name": "Create review sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2310,
+        260
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "create",
+        "resource": "spreadsheet",
+        "sheetsUi": {
+          "sheetValues": [
+            {
+              "hidden": false,
+              "title": "Findings"
+            },
+            {
+              "hidden": true,
+              "title": "_ids"
+            }
+          ]
+        },
+        "title": "={{ $('Aggregate results').first().json.file_name.replace('.xlsx', '') }}"
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Gt1NY0PXKDxBUQGy",
+          "name": "Google Sheets account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "executeOnce": true
+    },
+    {
+      "id": "9e3ac7ab-7816-431e-ad72-9fd224ff2b5b",
+      "name": "Write findings to sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2640,
+        260
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "schema": [
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Reject? (x)",
+              "id": "Reject? (x)",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Reason (optional)",
+              "id": "Reason (optional)",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "ID",
+              "id": "ID",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Language",
+              "id": "Language",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "ISO",
+              "id": "ISO",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Check",
+              "id": "Check",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Severity",
+              "id": "Severity",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Rule / term",
+              "id": "Rule / term",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Key",
+              "id": "Key",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Key description",
+              "id": "Key description",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "English",
+              "id": "English",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Translation",
+              "id": "Translation",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Issue",
+              "id": "Issue",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Suggestion",
+              "id": "Suggestion",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Found by",
+              "id": "Found by",
+              "required": false,
+              "type": "string"
+            }
+          ],
+          "value": {}
+        },
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Create review sheet').first().json.spreadsheetId }}"
+        },
+        "operation": "append",
+        "options": {
+          "cellFormat": "RAW",
+          "useAppend": true
+        },
+        "resource": "sheet",
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Findings"
+        }
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Gt1NY0PXKDxBUQGy",
+          "name": "Google Sheets account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "12157ac1-2120-477c-93b1-b28a9591e0de",
+      "name": "Write IDs to hidden tab",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2860,
+        260
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "schema": [
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Reject? (x)",
+              "id": "Reject? (x)",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Reason (optional)",
+              "id": "Reason (optional)",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "ID",
+              "id": "ID",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Language",
+              "id": "Language",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "ISO",
+              "id": "ISO",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Check",
+              "id": "Check",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Severity",
+              "id": "Severity",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Rule / term",
+              "id": "Rule / term",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Key",
+              "id": "Key",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Key description",
+              "id": "Key description",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "English",
+              "id": "English",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Translation",
+              "id": "Translation",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Issue",
+              "id": "Issue",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Suggestion",
+              "id": "Suggestion",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "Found by",
+              "id": "Found by",
+              "required": false,
+              "type": "string"
+            }
+          ],
+          "value": {}
+        },
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Create review sheet').first().json.spreadsheetId }}"
+        },
+        "operation": "append",
+        "options": {
+          "cellFormat": "RAW",
+          "useAppend": true
+        },
+        "resource": "sheet",
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "_ids"
+        }
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Gt1NY0PXKDxBUQGy",
+          "name": "Google Sheets account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "f32aefd2-970c-4e58-822d-92544a2b54de",
+      "name": "Move sheet to audit folder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3080,
+        420
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "method": "PATCH",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "options": {
+          "timeout": 30000
+        },
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "addParents",
+              "value": "1XuEi6ey5T1GvOYGdJWmvkdMUDyD9NkR3"
+            },
+            {
+              "name": "removeParents",
+              "value": "root"
+            },
+            {
+              "name": "supportsAllDrives",
+              "value": "true"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "url": "={{ 'https://www.googleapis.com/drive/v3/files/' + $('Create review sheet').first().json.spreadsheetId }}"
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Gt1NY0PXKDxBUQGy",
+          "name": "Google Sheets account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "executeOnce": true
+    }
+  ],
+  "connections": {
+    "Weekdays 04:00": {
+      "main": [
+        [
+          {
+            "node": "Read rotation log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read rotation log": {
+      "main": [
+        [
+          {
+            "node": "Read active projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick today's project": {
+      "main": [
+        [
+          {
+            "node": "Fetch project languages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch project languages": {
+      "main": [
+        [
+          {
+            "node": "Fetch glossary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch glossary": {
+      "main": [
+        [
+          {
+            "node": "Read style rules",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build language jobs": {
+      "main": [
+        [
+          {
+            "node": "Audit each language",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit each language": {
+      "main": [
+        [
+          {
+            "node": "Aggregate results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate results": {
+      "main": [
+        [
+          {
+            "node": "Create Jira ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to xlsx": {
+      "main": [
+        [
+          {
+            "node": "Attach workbook to Jira",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach workbook to Jira": {
+      "main": [
+        [
+          {
+            "node": "Post summary to i18n-team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post summary to i18n-team": {
+      "main": [
+        [
+          {
+            "node": "Post language details in thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post language details in thread": {
+      "main": [
+        [
+          {
+            "node": "Post Jira link in thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Jira link in thread": {
+      "main": [
+        [
+          {
+            "node": "Log rotation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run manually": {
+      "main": [
+        [
+          {
+            "node": "Read rotation log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read style rules": {
+      "main": [
+        [
+          {
+            "node": "Read reviewer feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read reviewer feedback": {
+      "main": [
+        [
+          {
+            "node": "Build language jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read active projects": {
+      "main": [
+        [
+          {
+            "node": "Fetch project sizes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch project sizes": {
+      "main": [
+        [
+          {
+            "node": "Pick today's project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Jira ticket": {
+      "main": [
+        [
+          {
+            "node": "Create review sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create review sheet": {
+      "main": [
+        [
+          {
+            "node": "Build findings rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build findings rows": {
+      "main": [
+        [
+          {
+            "node": "Write findings to sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write findings to sheet": {
+      "main": [
+        [
+          {
+            "node": "Write IDs to hidden tab",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write IDs to hidden tab": {
+      "main": [
+        [
+          {
+            "node": "Convert to xlsx",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Move sheet to audit folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Madrid",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "staticData": {
+    "node:Weekdays 04:00": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    }
+  },
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "H6NfgAa8TUQZfSYB",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-25T11:31:57.567Z",
+      "updatedAt": "2026-09-25T11:31:57.567Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "9a52f3f0-ddd5-45b6-b7c8-b09e4b8eaa6f",
+    "workflowId": "H6NfgAa8TUQZfSYB",
+    "nodes": [
+      {
+        "id": "8a8bc20d-6292-425a-97ad-b7ea9a6223bb",
+        "name": "Weekdays 04:00",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "0 0 4 * * 1-5"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "be9764f4-ec5b-4e9f-9385-9c050e66a0e7",
+        "name": "Read rotation log",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          220,
+          100
+        ],
+        "parameters": {
+          "resource": "row",
+          "operation": "get",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "WLdY3s15GBJjEsSq"
+          },
+          "returnAll": true
+        },
+        "alwaysOutputData": true
+      },
+      {
+        "id": "55766304-47cc-47ed-95e4-2ab103d92bf1",
+        "name": "Read active projects",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          440,
+          100
+        ],
+        "parameters": {
+          "resource": "row",
+          "operation": "get",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "zgduWw2eDaFthPf6"
+          },
+          "returnAll": true
+        },
+        "executeOnce": true
+      },
+      {
+        "id": "8eb7e62e-7641-4895-b142-20434ffdad89",
+        "name": "Pick today's project",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          660,
+          100
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "// Set to a Lokalise project_id to force a manual re-run of one project; leave '' for normal rotation.\nconst FORCE_PROJECT_ID = '';\nconst EXCLUDE = ['18564477693fc9bba4cec8.54789459'];\n// Product families: finish every project of a family before moving on; smaller families first.\nconst FAMILIES = [['chatbot', 'chat ai'], ['chat ai', 'chat ai'], ['mobitrace', 'mobitrace'], ['personality', 'personality'], ['qrcreate', 'qr'], ['my qr code', 'qr'], ['pdf editor', 'pdf editor'], ['realchecker', 'realchecker'], ['resumewise', 'resumewise'], ['unicopy', 'unicopy'], ['vin checker', 'vin checker'], ['wapp', 'wapp'], ['my image', 'my image']];\nfunction fam(n) { const s = String(n).toLowerCase(); for (const f of FAMILIES) { if (s.indexOf(f[0]) !== -1) { return f[1]; } } return s; }\nconst active = $('Read active projects').all().map(function (i) { return i.json; })\n  .filter(function (r) { return String(r.active).toLowerCase() === 'true' && r.project_id && EXCLUDE.indexOf(r.project_id) === -1; });\nif (!active.length) { throw new Error('No active projects in lokalise_project_labels'); }\nconst size = {};\nfor (const it of $('Fetch project sizes').all()) {\n  const b = it.json.body !== undefined ? it.json.body : it.json;\n  for (const p of ((b && b.projects) || [])) { size[p.project_id] = Number((p.statistics && p.statistics.keys_total) || 0); }\n}\nconst log = $('Read rotation log').all().map(function (i) { return i.json || {}; }).filter(function (r) { return r.project_id; });\nlet cycle = 1;\nfor (const r of log) { cycle = Math.max(cycle, Number(r.cycle || 1)); }\nfunction doneIn(c) { const s = {}; for (const r of log) { if (Number(r.cycle || 1) === c) { s[r.project_id] = true; } } return s; }\nlet done = doneIn(cycle);\nif (active.every(function (p) { return done[p.project_id]; })) { cycle = cycle + 1; done = {}; }\nconst due = active.filter(function (p) { return !done[p.project_id]; });\nconst famSize = {};\nconst famStarted = {};\nfor (const p of active) {\n  const f = fam(p.project_name);\n  famSize[f] = (famSize[f] || 0) + (size[p.project_id] || 0);\n  if (done[p.project_id]) { famStarted[f] = true; }\n}\ndue.sort(function (a, b) {\n  const fa = fam(a.project_name), fb = fam(b.project_name);\n  const sa = famStarted[fa] ? 0 : 1, sb = famStarted[fb] ? 0 : 1;\n  if (sa !== sb) { return sa - sb; }\n  if (famSize[fa] !== famSize[fb]) { return famSize[fa] - famSize[fb]; }\n  if (fa !== fb) { return fa < fb ? -1 : 1; }\n  return (size[a.project_id] || 0) - (size[b.project_id] || 0);\n});\nconst forced = FORCE_PROJECT_ID ? active.find(function (r) { return r.project_id === FORCE_PROJECT_ID; }) : null;\nconst p = forced || due[0];\nconst queue = due.map(function (d) { return String(d.project_name).replace(/^\"|\"$/g, '') + ' (' + (size[d.project_id] || '?') + ')'; });\nconst today = $now.setZone('Europe/Madrid').toFormat('yyyy-MM-dd');\nreturn [{ json: { project_id: p.project_id, project_name: String(p.project_name).replace(/^\"|\"$/g, ''), family: fam(p.project_name), keys_total: size[p.project_id] || null, cycle: cycle, rotation_size: active.length, remaining_in_cycle: due.length, queue: queue, run_date: today } }];\n"
+        }
+      },
+      {
+        "id": "b0867a5d-1094-42a6-92ff-8b86c41a3f0a",
+        "name": "Fetch project languages",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          880,
+          100
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/languages?limit=500",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "retryOnFail": true,
+        "maxTries": 5,
+        "waitBetweenTries": 5000,
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "VW7WtJP8PzJMR813",
+            "name": "Lokalise read-only"
+          }
+        }
+      },
+      {
+        "id": "b004ba7d-a467-4a47-a492-6cc6613f54da",
+        "name": "Fetch glossary",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1100,
+          100
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "options": {
+            "timeout": 60000,
+            "pagination": {
+              "pagination": {
+                "paginationMode": "updateAParameterInEachRequest",
+                "parameters": {
+                  "parameters": [
+                    {
+                      "type": "qs",
+                      "name": "cursor",
+                      "value": "={{ $response.body.meta.nextCursor }}"
+                    }
+                  ]
+                },
+                "paginationCompleteWhen": "other",
+                "completeExpression": "={{ !$response.body.meta || !$response.body.meta.nextCursor }}",
+                "limitPagesFetched": true,
+                "maxRequests": 20,
+                "requestInterval": 700
+              }
+            }
+          }
+        },
+        "executeOnce": true,
+        "retryOnFail": true,
+        "maxTries": 5,
+        "waitBetweenTries": 5000,
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "VW7WtJP8PzJMR813",
+            "name": "Lokalise read-only"
+          }
+        }
+      },
+      {
+        "id": "4996b17f-0aea-4a13-be67-d11f3bd6a648",
+        "name": "Read style rules",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          1320,
+          100
+        ],
+        "parameters": {
+          "resource": "row",
+          "operation": "get",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "84k8s1DOCgCOuI6G"
+          },
+          "returnAll": true
+        },
+        "executeOnce": true
+      },
+      {
+        "id": "a96628b1-cae9-4729-a1ec-94cfd52be26b",
+        "name": "Build language jobs",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1540,
+          100
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const RULES = {};\nlet GENERIC = [];\nconst JUDGE = {};\nfor (const it of $('Read style rules').all()) {\n  const r = it.json || {};\n  if (!r.iso) { continue; }\n  let list = [];\n  try { list = JSON.parse(r.rules_json || '[]'); } catch (e) { throw new Error('targets_audit_style_rules: bad rules_json for ' + r.iso + ': ' + e.message); }\n  if (r.iso === '*') { GENERIC = list; } else { RULES[r.iso] = list; JUDGE[r.iso] = r.judgement || ''; }\n}\nif (!Object.keys(RULES).length) { throw new Error('targets_audit_style_rules is empty'); }\nconst FB = {};\nfor (const it of $('Read reviewer feedback').all()) {\n  const r = it.json || {};\n  if (!r.iso || !r.decision) { continue; }\n  if (!FB[r.iso]) { FB[r.iso] = []; }\n  FB[r.iso].push({ decision: r.decision, rule: String(r.rule || ''), en: String(r.en || '').slice(0, 200), translation: String(r.translation || '').slice(0, 200), reason: String(r.reason || r.issue || '').slice(0, 200), at: String(r.reviewed_at || '') });\n}\nfunction fbFor(iso) {\n  const all = (FB[iso] || []).slice().sort(function (a, b) { return a.at < b.at ? 1 : -1; });\n  const rej = all.filter(function (x) { return x.decision === 'rejected'; }).slice(0, 25);\n  const app = all.filter(function (x) { return x.decision === 'approved'; }).slice(0, 12);\n  return rej.concat(app);\n}\nconst pick = $(\"Pick today's project\").first().json;\nlet langs = [];\nfor (const it of $('Fetch project languages').all()) {\n  const b = it.json.body !== undefined ? it.json.body : it.json;\n  if (b && Array.isArray(b.languages)) { langs = langs.concat(b.languages); }\n}\nif (!langs.length) { throw new Error('No languages returned for ' + pick.project_name + ' (' + pick.project_id + ')'); }\nconst enLang = langs.find(function (l) { return l.lang_iso === 'en'; });\nif (!enLang) { throw new Error('Project has no en language: ' + pick.project_name); }\nconst EXCL = ['en', 'pst', 'ps', 'cus', 'pt_old', 'ja'];\n\nconst ISO_BY_ID = { 765: 'cs', 767: 'da', 666: 'de', 761: 'el', 640: 'en', 1056: 'es', 10154: 'et', 768: 'fi', 818: 'fil', 673: 'fr', 793: 'hr', 773: 'hu', 757: 'id', 734: 'it', 733: 'ko', 10152: 'lt', 10153: 'lv', 749: 'ms', 737: 'nl', 760: 'no', 759: 'no', 748: 'pl', 708: 'pt', 770: 'ro', 799: 'sk', 10159: 'sl', 754: 'sv', 753: 'th', 744: 'tr', 769: 'uk', 774: 'vi' };\nlet terms = [];\nfor (const it of $('Fetch glossary').all()) {\n  const b = it.json.body !== undefined ? it.json.body : it.json;\n  const arr = (b && (b.data || b.glossary_terms || b.terms)) || [];\n  terms = terms.concat(arr);\n}\nif (!terms.length) { throw new Error('Glossary fetch returned no terms'); }\n\nconst TAGS = [\n  ['personality', []], ['realchecker', ['realchecker']], ['mobitrace', ['mobitrace']], ['qrcreate', ['my qr code', 'qrcreate']],\n  ['my qr code', ['my qr code']], ['pdf editor', ['pdf editor']], ['resumewise', ['resumewise']], ['unicopy', ['unicopy']],\n  ['wapp', ['wapp']], ['chat ai', ['chat ai']], ['chatbot', ['chat ai']], ['my image', ['my image']], ['vin checker', ['vin checker']]\n];\nconst pname = pick.project_name.toLowerCase();\nlet ptags = [];\nfor (const t of TAGS) { if (pname.indexOf(t[0]) !== -1) { ptags = t[1]; break; } }\nconst isPersonality = pname.indexOf('personality') !== -1;\nfunction yes(v) { return v === true || v === 1 || String(v).toLowerCase() === 'yes' || String(v).toLowerCase() === 'true'; }\nfunction tagList(t) {\n  const raw = t.tags || [];\n  const arr = Array.isArray(raw) ? raw : String(raw).split(',');\n  return arr.map(function (x) { return String(typeof x === 'object' && x ? (x.name || x.tag || '') : x).trim().toLowerCase(); }).filter(function (x) { return x; });\n}\nconst inScope = terms.filter(function (t) {\n  const tg = tagList(t);\n  if (!tg.length || tg.indexOf('shared') !== -1) { return true; }\n  return tg.some(function (x) { return ptags.indexOf(x) !== -1; });\n});\n\nconst jobs = [];\nfor (const l of langs) {\n  const iso = l.lang_iso;\n  if (EXCL.indexOf(iso) !== -1) { continue; }\n  const gl = [];\n  for (const t of inScope) {\n    const src = String(t.term || '').trim();\n    if (!src) { continue; }\n    let tgt = '';\n    let tnote = '';\n    for (const tr of (t.translations || [])) {\n      const tiso = tr.langIso || tr.lang_iso || ISO_BY_ID[tr.langId || tr.lang_id];\n      if (tiso === iso) { tgt = String(tr.translation || '').trim(); tnote = String(tr.description || '').trim(); }\n    }\n    const translatable = t.translatable === undefined ? true : yes(t.translatable);\n    if (translatable && !tgt && !yes(t.forbidden)) { continue; }\n    gl.push({ src: src, cs: yes(t.caseSensitive !== undefined ? t.caseSensitive : t.case_sensitive), tr: translatable, fb: yes(t.forbidden), tgt: tgt, note: (tnote || String(t.description || '')).slice(0, 200) });\n  }\n  const rules = (RULES[iso] || []).filter(function (r) { return !r.project || (r.project === 'personality' ? isPersonality : !isPersonality); })\n    .concat(GENERIC.filter(function (g) { return g.langs === '*' || g.langs.indexOf(iso) !== -1; }));\n  jobs.push({ json: {\n    project_id: pick.project_id, project_name: pick.project_name, run_date: pick.run_date,\n    iso: iso, lang_id: l.lang_id, en_id: enLang.lang_id, lang_name: l.lang_name,\n    is_personality: isPersonality, glossary: gl, rules: rules, judgement: JUDGE[iso] || '', feedback: fbFor(iso)\n  } });\n}\nif (!jobs.length) { throw new Error('No target languages to audit in ' + pick.project_name); }\njobs.sort(function (a, b) { return a.json.lang_name < b.json.lang_name ? -1 : 1; });\nreturn jobs;\n"
+        }
+      },
+      {
+        "id": "c049a4f7-44eb-41dd-a280-76737fbf0cc2",
+        "name": "Audit each language",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.2,
+        "position": [
+          1760,
+          100
+        ],
+        "parameters": {
+          "mode": "each",
+          "source": "database",
+          "workflowId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "ME3cLqQy0Dlzm6si"
+          },
+          "options": {
+            "waitForSubWorkflow": true
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "59df0130-9156-445d-8a93-6d258f207d0e",
+        "name": "Aggregate results",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1980,
+          100
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const NL = String.fromCharCode(10);\nconst jobs = $('Build language jobs').all().map(function (i) { return i.json; });\nconst res = $input.all().map(function (i) { return i.json || {}; });\nconst pick = $(\"Pick today's project\").first().json;\nconst langs = [];\nfor (let i = 0; i < jobs.length; i++) {\n  const j = jobs[i];\n  let r = res.find(function (x) { return x.iso === j.iso; });\n  if (!r) { r = { iso: j.iso, lang_name: j.lang_name, findings: [], errors: ['sub-workflow failed: ' + JSON.stringify((res[i] || {}).error || res[i] || 'no result').slice(0, 200)], strings_checked: 0, failed: true }; }\n  const f = r.findings || [];\n  const g = f.filter(function (x) { return x.check === 'Glossary'; }).length;\n  const s = f.filter(function (x) { return x.check === 'Style'; }).length;\n  const h = f.filter(function (x) { return x.severity === 'High'; }).length;\n  const notChecked = r.failed || (r.strings_checked === 0);\n  langs.push({ iso: j.iso, name: j.lang_name, glossary: g, style: s, high: h, strings: r.strings_checked || 0, findings: f, errors: r.errors || [], triage_ok: r.triage_ok !== false, overflow: r.overflow || 0, conflicts: r.glossary_conflicts || [], not_checked: notChecked });\n}\nconst checked = langs.filter(function (l) { return !l.not_checked; });\nconst withF = checked.filter(function (l) { return l.glossary + l.style > 0; });\nconst clean = checked.filter(function (l) { return l.glossary + l.style === 0; });\nconst failed = langs.filter(function (l) { return l.not_checked; });\nconst noTriage = langs.filter(function (l) { return !l.not_checked && !l.triage_ok; });\nconst tg = langs.reduce(function (a, l) { return a + l.glossary; }, 0);\nconst ts = langs.reduce(function (a, l) { return a + l.style; }, 0);\nconst th = langs.reduce(function (a, l) { return a + l.high; }, 0);\nconst strings = langs.reduce(function (a, l) { return a + l.strings; }, 0);\n\nconst summary = '*Linguistic audit — ' + pick.project_name + '*  ·  ' + langs.length + ' languages  ·  all translated strings' + NL +\n  '*Totals*  Glossary: ' + tg + '  ·  Style: ' + ts + '   (' + th + ' high severity)';\n\nconst d = [];\nd.push('*Languages with findings (' + withF.length + ' of ' + langs.length + ')*');\nfor (const l of withF) { d.push('• *' + l.name + '* — Glossary: ' + l.glossary + ' · Style: ' + l.style); }\nif (clean.length) { d.push(':white_check_mark: ' + clean.length + ' languages clean.'); }\nif (failed.length) { d.push(':warning: Not checked: ' + failed.map(function (l) { return l.name; }).join(', ') + '.'); }\nif (noTriage.length) { d.push(':warning: LLM triage unavailable, only brand/forbidden-term hits reported: ' + noTriage.map(function (l) { return l.name; }).join(', ') + '.'); }\nconst detail = d.join(NL);\n\nconst j = [];\nj.push('h3. Linguistic audit — ' + pick.project_name + ' — ' + pick.run_date);\nj.push('Scope: all translated strings (' + strings + ' strings, ' + langs.length + ' languages). Checks: glossary adherence and style-guide compliance — mechanical rules from each style guide, LLM triage of every candidate, plus an LLM style-guide review of the 20 longest strings per language. Spelling and accuracy against the English source are not checked.');\nj.push('');\nj.push('||Language||Strings||Glossary||Style||High||');\nfor (const l of langs) { j.push('|' + l.name + '|' + l.strings + '|' + (l.not_checked ? 'not checked' : l.glossary) + '|' + (l.not_checked ? '-' : l.style) + '|' + (l.not_checked ? '-' : l.high) + '|'); }\nj.push('|*Total*|' + strings + '|*' + tg + '*|*' + ts + '*|*' + th + '*|');\nconst errs = langs.filter(function (l) { return l.errors.length; });\nif (errs.length) { j.push(''); j.push('*Errors*'); for (const l of errs) { j.push('* ' + l.name + ': ' + l.errors.join('; ').slice(0, 300)); } }\nconst ov = langs.filter(function (l) { return l.overflow > 0; });\nif (ov.length) { j.push(''); j.push('*Candidates over the per-language triage cap (not reviewed):* ' + ov.map(function (l) { return l.name + ' ' + l.overflow; }).join(', ')); }\nconst cf = langs.filter(function (l) { return l.conflicts.length; });\nif (cf.length) { j.push(''); j.push('*Possible glossary vs style-guide conflicts (check the glossary, not the translation)*'); for (const l of cf) { for (const c of l.conflicts) { j.push('* ' + l.name + ': ' + String(c).slice(0, 250)); } } }\nj.push('');\nj.push('Workbook with every finding attached (one row per finding; filter by Language). Rotation: nightly on weekdays, one product per run — ' + pick.rotation_size + ' products.');\n\nconst safe = pick.project_name.replace(/[\\\\/:*?\"<>|]/g, '-');\nreturn [{ json: {\n  project_id: pick.project_id, project_name: pick.project_name, run_date: pick.run_date,\n  languages: langs.length, glossary: tg, style: ts, high: th,\n  not_checked: failed.map(function (l) { return l.iso; }).join(','),\n  slack_summary: summary, slack_detail: detail,\n  jira_summary: 'Linguistic audit – ' + pick.project_name + ' – ' + pick.run_date,\n  jira_description: j.join(NL),\n  file_name: 'Linguistic audit - ' + safe + ' - ' + pick.run_date + '.xlsx',\n  langs: langs\n} }];\n"
+        }
+      },
+      {
+        "id": "609037be-a7ff-4741-bb54-76587d334b59",
+        "name": "Create Jira ticket",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2200,
+          100
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://futuremedia.atlassian.net/rest/api/2/issue",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "jiraSoftwareCloudApi",
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ fields: { project: { key: \"INTERNAT\" }, issuetype: { name: \"Task\" }, summary: $json.jira_summary, description: $json.jira_description, labels: [\"linguistic_audit\", \"nightly_targets_audit\"] } }) }}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "executeOnce": true,
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 5000,
+        "credentials": {
+          "jiraSoftwareCloudApi": {
+            "id": "QJte7dJbX10mIzJI",
+            "name": "Jira SW Cloud account"
+          }
+        },
+        "disabled": false
+      },
+      {
+        "id": "a207dac5-8177-4ae0-9f7a-1daad86f9e46",
+        "name": "Build findings rows",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2420,
+          100
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const a = $('Aggregate results').first().json;\nconst out = [];\nlet n = 0;\nfunction base(l) { return { 'Reject? (x)': '', 'Reason (optional)': '', ID: '', Language: l.name, ISO: l.iso, Check: '', Severity: '', 'Rule / term': '', Key: '', 'Key description': '', English: '', Translation: '', Issue: '', Suggestion: '', 'Found by': '' }; }\nfor (const l of a.langs) {\n  if (l.not_checked) { const r = base(l); r.Issue = 'NOT CHECKED \\u2014 ' + (l.errors.join('; ') || 'no strings'); out.push({ json: r }); continue; }\n  if (!l.findings.length) { const r = base(l); r.Issue = 'No issues found for this language (' + l.strings + ' strings checked)'; out.push({ json: r }); continue; }\n  for (const f of l.findings) {\n    n++;\n    const r = base(l);\n    r.ID = 'F' + String(n).padStart(4, '0');\n    r.Check = f.check; r.Severity = f.severity; r['Rule / term'] = f.rule; r.Key = f.key; r['Key description'] = f.key_description || '';\n    r.English = String(f.en || '').slice(0, 30000); r.Translation = String(f.translation || '').slice(0, 30000);\n    r.Issue = f.issue; r.Suggestion = f.suggestion; r['Found by'] = f.found_by;\n    out.push({ json: r });\n  }\n}\nreturn out;\n"
+        }
+      },
+      {
+        "id": "f7fef456-7c10-4c25-b768-e7718ec1cbdf",
+        "name": "Convert to xlsx",
+        "type": "n8n-nodes-base.convertToFile",
+        "typeVersion": 1.1,
+        "position": [
+          2640,
+          100
+        ],
+        "parameters": {
+          "operation": "xlsx",
+          "binaryPropertyName": "data",
+          "options": {
+            "fileName": "={{ $('Aggregate results').first().json.file_name }}",
+            "sheetName": "Findings",
+            "headerRow": true
+          }
+        }
+      },
+      {
+        "id": "f0c4a110-b63b-4d88-b414-0f079c299aa6",
+        "name": "Attach workbook to Jira",
+        "type": "n8n-nodes-base.jira",
+        "typeVersion": 1,
+        "position": [
+          2860,
+          100
+        ],
+        "parameters": {
+          "resource": "issueAttachment",
+          "operation": "add",
+          "jiraVersion": "cloud",
+          "issueKey": "={{ $('Create Jira ticket').first().json.key }}",
+          "binaryPropertyName": "data"
+        },
+        "credentials": {
+          "jiraSoftwareCloudApi": {
+            "id": "QJte7dJbX10mIzJI",
+            "name": "Jira SW Cloud account"
+          }
+        },
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 5000,
+        "disabled": false
+      },
+      {
+        "id": "b0171547-44ab-43c9-8262-fff35b7c88c0",
+        "name": "Post summary to i18n-team",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.3,
+        "position": [
+          3080,
+          100
+        ],
+        "parameters": {
+          "resource": "message",
+          "operation": "post",
+          "select": "channel",
+          "channelId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "C094NS33FN0"
+          },
+          "text": "={{ $('Aggregate results').first().json.slack_summary }}",
+          "otherOptions": {
+            "includeLinkToWorkflow": false
+          }
+        },
+        "credentials": {
+          "slackApi": {
+            "id": "CXa5wwj5tndNAnHG",
+            "name": "i18n assignment bot"
+          }
+        },
+        "executeOnce": true,
+        "webhookId": "bbd01039-8ced-405a-b9da-ff0c1cf39fb8",
+        "disabled": false
+      },
+      {
+        "id": "f539f4af-2d6d-4853-a8f3-1142f11e9b69",
+        "name": "Post language details in thread",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.3,
+        "position": [
+          3300,
+          100
+        ],
+        "parameters": {
+          "resource": "message",
+          "operation": "post",
+          "select": "channel",
+          "channelId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "C094NS33FN0"
+          },
+          "text": "={{ $('Aggregate results').first().json.slack_detail }}",
+          "otherOptions": {
+            "includeLinkToWorkflow": false,
+            "thread_ts": {
+              "replyValues": {
+                "thread_ts": "={{ $('Post summary to i18n-team').first().json.message_timestamp }}"
+              }
+            }
+          }
+        },
+        "credentials": {
+          "slackApi": {
+            "id": "CXa5wwj5tndNAnHG",
+            "name": "i18n assignment bot"
+          }
+        },
+        "executeOnce": true,
+        "webhookId": "c71cb020-32f7-43af-995a-57ad22e1b5f8",
+        "disabled": false
+      },
+      {
+        "id": "c3b253b1-f9d2-4bbe-96e2-48788499b419",
+        "name": "Post Jira link in thread",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.3,
+        "position": [
+          3520,
+          100
+        ],
+        "parameters": {
+          "resource": "message",
+          "operation": "post",
+          "select": "channel",
+          "channelId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "C094NS33FN0"
+          },
+          "text": "=Jira: <https://futuremedia.atlassian.net/browse/{{ $('Create Jira ticket').first().json.key }}|{{ $('Create Jira ticket').first().json.key }}> — workbook attached.\nReview sheet: <{{ $('Create review sheet').first().json.spreadsheetUrl }}|open> — put *x* in _Reject?_ (or delete the row), then react :white_check_mark: on the summary above.",
+          "otherOptions": {
+            "includeLinkToWorkflow": false,
+            "thread_ts": {
+              "replyValues": {
+                "thread_ts": "={{ $('Post summary to i18n-team').first().json.message_timestamp }}"
+              }
+            }
+          }
+        },
+        "credentials": {
+          "slackApi": {
+            "id": "CXa5wwj5tndNAnHG",
+            "name": "i18n assignment bot"
+          }
+        },
+        "executeOnce": true,
+        "webhookId": "7a09991a-4239-43eb-a859-43716c1c74de",
+        "disabled": false
+      },
+      {
+        "id": "7f20297f-1335-4601-b87d-06451e163d51",
+        "name": "Log rotation",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          3740,
+          100
+        ],
+        "parameters": {
+          "resource": "row",
+          "operation": "insert",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "WLdY3s15GBJjEsSq"
+          },
+          "columns": {
+            "mappingMode": "defineBelow",
+            "matchingColumns": [],
+            "schema": [
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "project_id",
+                "id": "project_id",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "project_name",
+                "id": "project_name",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "audited_at",
+                "id": "audited_at",
+                "required": false,
+                "type": "dateTime"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "jira_key",
+                "id": "jira_key",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "languages",
+                "id": "languages",
+                "required": false,
+                "type": "number"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "glossary_findings",
+                "id": "glossary_findings",
+                "required": false,
+                "type": "number"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "style_findings",
+                "id": "style_findings",
+                "required": false,
+                "type": "number"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "high_findings",
+                "id": "high_findings",
+                "required": false,
+                "type": "number"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "not_checked",
+                "id": "not_checked",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "cycle",
+                "id": "cycle",
+                "required": false,
+                "type": "number"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "sheet_id",
+                "id": "sheet_id",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "slack_ts",
+                "id": "slack_ts",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "ingested",
+                "id": "ingested",
+                "required": false,
+                "type": "string"
+              }
+            ],
+            "value": {
+              "audited_at": "={{ $now.toISO() }}",
+              "cycle": "={{ $(\"Pick today's project\").first().json.cycle }}",
+              "glossary_findings": "={{ $('Aggregate results').first().json.glossary }}",
+              "high_findings": "={{ $('Aggregate results').first().json.high }}",
+              "ingested": "no",
+              "jira_key": "={{ $('Create Jira ticket').first().json.key }}",
+              "languages": "={{ $('Aggregate results').first().json.languages }}",
+              "not_checked": "={{ $('Aggregate results').first().json.not_checked }}",
+              "project_id": "={{ $('Aggregate results').first().json.project_id }}",
+              "project_name": "={{ $('Aggregate results').first().json.project_name }}",
+              "sheet_id": "={{ $('Create review sheet').first().json.spreadsheetId }}",
+              "slack_ts": "={{ $('Post summary to i18n-team').first().json.message_timestamp }}",
+              "style_findings": "={{ $('Aggregate results').first().json.style }}"
+            }
+          }
+        },
+        "executeOnce": true,
+        "disabled": false
+      },
+      {
+        "id": "78b4b041-0b36-4a5e-9d43-66b4b1807b6b",
+        "name": "Run manually",
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1,
+        "position": [
+          0,
+          200
+        ],
+        "parameters": {}
+      },
+      {
+        "id": "6f5af475-5d79-4b8b-b9f5-36726679d677",
+        "name": "Sticky Note 06e16239",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          0,
+          -320
+        ],
+        "parameters": {
+          "content": "## Lokalise targets audit - nightly\n\nWeekdays 04:00 Europe/Madrid. Picks the active project (lokalise_project_labels, minus My QR Code html) audited longest ago, audits every translated string in every target language (glossary + style guide, no spelling), files an INTERNAT Task with the workbook and posts to #i18n-team: summary on top, languages + Jira link in thread.\n\n**Change rules** in data table targets_audit_style_rules (one row per language, iso * = generic rules). **Rotation state** in data table targets_audit_rotation — delete a row to re-audit a project sooner. Each language runs in the worker sub-workflow ME3cLqQy0Dlzm6si.",
+          "color": 4,
+          "width": 640,
+          "height": 260
+        }
+      },
+      {
+        "id": "51663ef1-d58b-4fc3-8a48-3e4c36e7b74a",
+        "name": "Read reviewer feedback",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          1430,
+          260
+        ],
+        "parameters": {
+          "dataTableId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "zIhywBksdBpwbHp1"
+          },
+          "operation": "get",
+          "resource": "row",
+          "returnAll": true
+        },
+        "alwaysOutputData": true,
+        "executeOnce": true
+      },
+      {
+        "id": "0f1a2b3c-5e6d-4405-b17c-d3c5d710cbe4",
+        "name": "Fetch project sizes",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          550,
+          260
+        ],
+        "parameters": {
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "method": "GET",
+          "options": {
+            "timeout": 60000
+          },
+          "url": "https://api.lokalise.com/api2/projects?limit=100&include_statistics=1"
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "VW7WtJP8PzJMR813",
+            "name": "Lokalise read-only"
+          }
+        },
+        "retryOnFail": true,
+        "maxTries": 5,
+        "waitBetweenTries": 5000,
+        "executeOnce": true
+      },
+      {
+        "id": "38a71472-4d08-44d1-96e2-873627818826",
+        "name": "Create review sheet",
+        "type": "n8n-nodes-base.googleSheets",
+        "typeVersion": 4.7,
+        "position": [
+          2310,
+          260
+        ],
+        "parameters": {
+          "authentication": "oAuth2",
+          "operation": "create",
+          "resource": "spreadsheet",
+          "sheetsUi": {
+            "sheetValues": [
+              {
+                "hidden": false,
+                "title": "Findings"
+              },
+              {
+                "hidden": true,
+                "title": "_ids"
+              }
+            ]
+          },
+          "title": "={{ $('Aggregate results').first().json.file_name.replace('.xlsx', '') }}"
+        },
+        "credentials": {
+          "googleSheetsOAuth2Api": {
+            "id": "Gt1NY0PXKDxBUQGy",
+            "name": "Google Sheets account"
+          }
+        },
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 5000,
+        "executeOnce": true
+      },
+      {
+        "id": "9e3ac7ab-7816-431e-ad72-9fd224ff2b5b",
+        "name": "Write findings to sheet",
+        "type": "n8n-nodes-base.googleSheets",
+        "typeVersion": 4.7,
+        "position": [
+          2640,
+          260
+        ],
+        "parameters": {
+          "authentication": "oAuth2",
+          "columns": {
+            "mappingMode": "autoMapInputData",
+            "schema": [
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Reject? (x)",
+                "id": "Reject? (x)",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Reason (optional)",
+                "id": "Reason (optional)",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "ID",
+                "id": "ID",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Language",
+                "id": "Language",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "ISO",
+                "id": "ISO",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Check",
+                "id": "Check",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Severity",
+                "id": "Severity",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Rule / term",
+                "id": "Rule / term",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Key",
+                "id": "Key",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Key description",
+                "id": "Key description",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "English",
+                "id": "English",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Translation",
+                "id": "Translation",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Issue",
+                "id": "Issue",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Suggestion",
+                "id": "Suggestion",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Found by",
+                "id": "Found by",
+                "required": false,
+                "type": "string"
+              }
+            ],
+            "value": {}
+          },
+          "documentId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "={{ $('Create review sheet').first().json.spreadsheetId }}"
+          },
+          "operation": "append",
+          "options": {
+            "cellFormat": "RAW",
+            "useAppend": true
+          },
+          "resource": "sheet",
+          "sheetName": {
+            "__rl": true,
+            "mode": "name",
+            "value": "Findings"
+          }
+        },
+        "credentials": {
+          "googleSheetsOAuth2Api": {
+            "id": "Gt1NY0PXKDxBUQGy",
+            "name": "Google Sheets account"
+          }
+        },
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 5000
+      },
+      {
+        "id": "12157ac1-2120-477c-93b1-b28a9591e0de",
+        "name": "Write IDs to hidden tab",
+        "type": "n8n-nodes-base.googleSheets",
+        "typeVersion": 4.7,
+        "position": [
+          2860,
+          260
+        ],
+        "parameters": {
+          "authentication": "oAuth2",
+          "columns": {
+            "mappingMode": "autoMapInputData",
+            "schema": [
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Reject? (x)",
+                "id": "Reject? (x)",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Reason (optional)",
+                "id": "Reason (optional)",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "ID",
+                "id": "ID",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Language",
+                "id": "Language",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "ISO",
+                "id": "ISO",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Check",
+                "id": "Check",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Severity",
+                "id": "Severity",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Rule / term",
+                "id": "Rule / term",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Key",
+                "id": "Key",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Key description",
+                "id": "Key description",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "English",
+                "id": "English",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Translation",
+                "id": "Translation",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Issue",
+                "id": "Issue",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Suggestion",
+                "id": "Suggestion",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "Found by",
+                "id": "Found by",
+                "required": false,
+                "type": "string"
+              }
+            ],
+            "value": {}
+          },
+          "documentId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "={{ $('Create review sheet').first().json.spreadsheetId }}"
+          },
+          "operation": "append",
+          "options": {
+            "cellFormat": "RAW",
+            "useAppend": true
+          },
+          "resource": "sheet",
+          "sheetName": {
+            "__rl": true,
+            "mode": "name",
+            "value": "_ids"
+          }
+        },
+        "credentials": {
+          "googleSheetsOAuth2Api": {
+            "id": "Gt1NY0PXKDxBUQGy",
+            "name": "Google Sheets account"
+          }
+        },
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 5000
+      },
+      {
+        "id": "f32aefd2-970c-4e58-822d-92544a2b54de",
+        "name": "Move sheet to audit folder",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3080,
+          420
+        ],
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "method": "PATCH",
+          "nodeCredentialType": "googleSheetsOAuth2Api",
+          "options": {
+            "timeout": 30000
+          },
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "addParents",
+                "value": "1XuEi6ey5T1GvOYGdJWmvkdMUDyD9NkR3"
+              },
+              {
+                "name": "removeParents",
+                "value": "root"
+              },
+              {
+                "name": "supportsAllDrives",
+                "value": "true"
+              }
+            ]
+          },
+          "sendQuery": true,
+          "url": "={{ 'https://www.googleapis.com/drive/v3/files/' + $('Create review sheet').first().json.spreadsheetId }}"
+        },
+        "credentials": {
+          "googleSheetsOAuth2Api": {
+            "id": "Gt1NY0PXKDxBUQGy",
+            "name": "Google Sheets account"
+          }
+        },
+        "onError": "continueRegularOutput",
+        "executeOnce": true
+      }
+    ],
+    "connections": {
+      "Weekdays 04:00": {
+        "main": [
+          [
+            {
+              "node": "Read rotation log",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read rotation log": {
+        "main": [
+          [
+            {
+              "node": "Read active projects",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Pick today's project": {
+        "main": [
+          [
+            {
+              "node": "Fetch project languages",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch project languages": {
+        "main": [
+          [
+            {
+              "node": "Fetch glossary",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch glossary": {
+        "main": [
+          [
+            {
+              "node": "Read style rules",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build language jobs": {
+        "main": [
+          [
+            {
+              "node": "Audit each language",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Audit each language": {
+        "main": [
+          [
+            {
+              "node": "Aggregate results",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Aggregate results": {
+        "main": [
+          [
+            {
+              "node": "Create Jira ticket",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Convert to xlsx": {
+        "main": [
+          [
+            {
+              "node": "Attach workbook to Jira",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Attach workbook to Jira": {
+        "main": [
+          [
+            {
+              "node": "Post summary to i18n-team",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Post summary to i18n-team": {
+        "main": [
+          [
+            {
+              "node": "Post language details in thread",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Post language details in thread": {
+        "main": [
+          [
+            {
+              "node": "Post Jira link in thread",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Post Jira link in thread": {
+        "main": [
+          [
+            {
+              "node": "Log rotation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Run manually": {
+        "main": [
+          [
+            {
+              "node": "Read rotation log",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read style rules": {
+        "main": [
+          [
+            {
+              "node": "Read reviewer feedback",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read reviewer feedback": {
+        "main": [
+          [
+            {
+              "node": "Build language jobs",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read active projects": {
+        "main": [
+          [
+            {
+              "node": "Fetch project sizes",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch project sizes": {
+        "main": [
+          [
+            {
+              "node": "Pick today's project",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create Jira ticket": {
+        "main": [
+          [
+            {
+              "node": "Create review sheet",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create review sheet": {
+        "main": [
+          [
+            {
+              "node": "Build findings rows",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build findings rows": {
+        "main": [
+          [
+            {
+              "node": "Write findings to sheet",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Write findings to sheet": {
+        "main": [
+          [
+            {
+              "node": "Write IDs to hidden tab",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Write IDs to hidden tab": {
+        "main": [
+          [
+            {
+              "node": "Convert to xlsx",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Move sheet to audit folder",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Maria Sica (via MCP)",
+    "name": "Try moving review sheet into audit folder",
+    "description": "Added nodes: Move sheet to audit folder\nConnections: 1 added, 0 removed",
+    "autosaved": false,
+    "createdAt": "2026-09-25T15:19:05.945Z",
+    "updatedAt": "2026-09-25T15:19:05.945Z",
+    "workflowPublishHistory": [
+      {
+        "id": 2065,
+        "workflowId": "H6NfgAa8TUQZfSYB",
+        "versionId": "9a52f3f0-ddd5-45b6-b7c8-b09e4b8eaa6f",
+        "event": "activated",
+        "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
+        "createdAt": "2026-09-25T15:19:16.788Z"
+      }
+    ]
+  }
+}
