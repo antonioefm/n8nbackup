@@ -1,0 +1,578 @@
+{
+  "id": "ME3cLqQy0Dlzm6si",
+  "name": "Lokalise targets audit - language worker",
+  "description": "Sub-workflow for the nightly targets audit: one language per call. Read-only Lokalise fetch, glossary + style-guide checks, OpenAI triage, returns findings only.",
+  "active": true,
+  "activeVersionId": "36fd74f9-f272-4b47-9ac8-d8f579e5ff77",
+  "createdAt": "2026-09-25T11:27:58.428Z",
+  "updatedAt": "2026-09-25T14:46:34.552Z",
+  "isArchived": false,
+  "versionId": "36fd74f9-f272-4b47-9ac8-d8f579e5ff77",
+  "versionCounter": 7,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "89fedc7a-a2fc-42ad-879a-0cdc3c59fce2",
+      "name": "When called by parent",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "c428ad69-a152-4311-9ef8-d137aa43a6b5",
+      "name": "Fetch keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?include_translations=1&disable_references=1&limit=1000&pagination=cursor&filter_translation_lang_ids={{ $json.en_id }},{{ $json.lang_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 150,
+              "requestInterval": 700
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "1da1d629-9067-40f6-a1bd-a83eabdff38b",
+      "name": "Run checks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const NL = String.fromCharCode(10);\nconst job = $('When called by parent').first().json;\nconst iso = job.iso;\nconst pages = $input.all();\nconst errors = [];\nlet keys = [];\nfor (const p of pages) {\n  const j = p.json || {};\n  const body = j.body !== undefined ? j.body : j;\n  if (body && Array.isArray(body.keys)) { keys = keys.concat(body.keys); }\n  else { errors.push('Lokalise page without keys array: ' + JSON.stringify(body).slice(0, 200)); }\n}\n\nconst UB = '(?:(?<![\\\\p{L}\\\\p{N}_])(?=[\\\\p{L}\\\\p{N}_])|(?<=[\\\\p{L}\\\\p{N}_])(?![\\\\p{L}\\\\p{N}_]))';\nfunction rx(src, flags) { return new RegExp(String(src).split('\\\\b').join(UB), 'u' + (flags || '')); }\nconst MARKUP = /\\[%[^\\]]*\\]|%\\d*\\$?[sdfx@]|\\{\\{[^}]*\\}\\}|%\\{[^}]*\\}|\\{[^}\\s]*\\}|<[^>]+>|&[a-zA-Z#0-9]+;|https?:\\/\\/\\S+|[\\w.+-]+@[\\w-]+\\.[\\w.]+|\\\\[nrt]/g;\nfunction strip(s) { return String(s || '').replace(MARKUP, ' '); }\nfunction pickText(tr) {\n  if (tr === null || tr === undefined) { return ''; }\n  if (typeof tr === 'object') { return Object.values(tr).filter(function (v) { return v; }).join(' ¦ '); }\n  const s = String(tr);\n  if (s.charAt(0) === '{' && s.indexOf('\"') !== -1) {\n    try { const o = JSON.parse(s); if (o && typeof o === 'object') { return Object.values(o).filter(function (v) { return v; }).join(' ¦ '); } } catch (e) { }\n  }\n  return s;\n}\n\nconst rows = [];\nconst META = {};\nlet archived = 0;\nfor (const k of keys) {\n  if (k.is_archived) { archived++; continue; }\n  const kn = k.key_name || {};\n  const name = typeof kn === 'string' ? kn : (kn.web || kn.other || kn.ios || kn.android || String(k.key_id));\n  let en = '';\n  let tgt = '';\n  for (const t of (k.translations || [])) {\n    if (t.language_iso === 'en') { en = pickText(t.translation); }\n    if (t.language_iso === iso) { tgt = pickText(t.translation); }\n  }\n  if (!en.trim() || !tgt.trim()) { continue; }\n  const tags = Array.isArray(k.tags) ? k.tags.map(String) : [];\n  META[name] = { d: String(k.description || k.context || '').trim().slice(0, 300), tags: tags.slice(0, 8) };\n  rows.push({ k: name, en: en, t: tgt });\n}\n\n// ---------- glossary ----------\nconst WORD = /[\\p{L}\\p{M}]+(?:['’\\-][\\p{L}\\p{M}]+)*/gu;\nfunction norm(s) { return String(s).normalize('NFC').replace(/[\\u00A0\\u202F\\u2009]/g, ' ').toLowerCase(); }\nfunction words(s) { return (String(s).match(WORD) || []).map(norm); }\nfunction variants(target) {\n  const out = [];\n  let rest = String(target);\n  const pr = /[（(]([^)）]*)[)）]/g;\n  let m;\n  while ((m = pr.exec(target)) !== null) { if (m[1].trim()) { out.push(m[1].trim()); } }\n  rest = rest.replace(pr, ' ');\n  for (const part of rest.split(/\\s*\\/\\s*|\\s+or\\s+|\\s*\\|\\s*/)) { if (part.trim()) { out.push(part.trim()); } }\n  return out.length ? out : [target];\n}\nfunction looseContains(text, phrase, ratio) {\n  const r = ratio || 0.7;\n  const toks = words(text);\n  if (!toks.length) { return false; }\n  let ws = words(phrase);\n  const longw = ws.filter(function (w) { return w.length >= 3; });\n  if (longw.length) { ws = longw; }\n  if (!ws.length) { return norm(text).indexOf(norm(phrase)) !== -1; }\n  for (const w of ws) {\n    const need = w.length <= 4 ? w : w.slice(0, Math.max(4, Math.floor(w.length * r)));\n    const ok = toks.some(function (t) { return t.indexOf(need) === 0 || (w.indexOf(t.slice(0, need.length)) === 0 && t.length >= need.length); });\n    if (!ok) { return false; }\n  }\n  return true;\n}\nfunction esc(s) { return String(s).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&'); }\nconst gl = (job.glossary || []).slice().sort(function (a, b) { return b.src.length - a.src.length; });\nfor (const t of gl) {\n  t.srx = new RegExp('(?<![\\\\p{L}\\\\p{N}])' + esc(t.src) + '(?![\\\\p{L}\\\\p{N}])', 'u' + (t.cs ? '' : 'i'));\n}\n// Thai has no spaces: prefix matching on words is meaningless, use substring.\nconst NOSPACE = iso === 'th';\n\nconst cands = [];\nconst hits = {};\nconst CAP_RULE = 25;\nconst CAP_TERM = 5;\nfunction add(c) {\n  const hk = c.type + ':' + c.rule;\n  hits[hk] = (hits[hk] || 0) + 1;\n  const cap = c.type === 'style' ? CAP_RULE : CAP_TERM;\n  if (hits[hk] > cap) { return; }\n  cands.push(c);\n}\n\nfor (const r of rows) {\n  const enS = strip(r.en);\n  if (!enS.trim()) { continue; }\n  const consumed = [];\n  for (const t of gl) {\n    if (!t.srx.test(enS)) { continue; }\n    const low = t.src.toLowerCase();\n    if (consumed.some(function (c) { return c.indexOf(low) !== -1; })) { continue; }\n    consumed.push(low);\n    if (!t.tr) {\n      if (r.t.indexOf(t.src) === -1) {\n        add({ type: 'glossary', sub: 'brand_not_preserved', rule: t.src, expected: t.src, sev: 'High', conf: 'high', key: r.k, en: r.en, target: r.t, note: t.note });\n      }\n      continue;\n    }\n    if (!t.tgt) { continue; }\n    const vs = variants(t.tgt);\n    const found = vs.some(function (v) { return NOSPACE ? norm(r.t).indexOf(norm(v)) !== -1 : looseContains(r.t, v); });\n    if (found) { continue; }\n    const cov = t.src.length / Math.max(enS.trim().length, 1);\n    add({ type: 'glossary', sub: 'term_missing', rule: t.src, expected: t.tgt, sev: 'Medium', conf: cov > 0.6 ? 'high' : (cov > 0.25 ? 'medium' : 'low'), key: r.k, en: r.en, target: r.t, note: t.note });\n  }\n  for (const t of gl) {\n    if (!t.fb) { continue; }\n    const bad = t.tgt || t.src;\n    const f = NOSPACE ? norm(r.t).indexOf(norm(bad)) !== -1 : looseContains(r.t, bad, 0.9);\n    if (f) { add({ type: 'glossary', sub: 'forbidden_used', rule: t.src, expected: '', sev: 'High', conf: 'high', key: r.k, en: r.en, target: r.t, note: t.note }); }\n  }\n}\n\n// ---------- style ----------\nconst rules = [];\nfor (const r of (job.rules || [])) {\n  try {\n    rules.push({ r: r, f: rx(r.forbid, r.flags), w: r.when_source ? new RegExp(r.when_source, 'iu') : null });\n  } catch (e) { errors.push('bad regex in rule ' + r.id + ': ' + e.message); }\n}\nfor (const row of rows) {\n  const tS = strip(row.t);\n  const enS = strip(row.en).trim();\n  for (const x of rules) {\n    if (x.w && !x.w.test(enS)) { continue; }\n    const m = x.f.exec(x.r.raw ? row.t : tS);\n    if (!m) { continue; }\n    add({ type: 'style', sub: x.r.id, rule: x.r.id, expected: x.r.suggest || '', sev: x.r.sev, conf: 'rule', key: row.k, en: row.en, target: row.t, note: x.r.desc, match: m[0] });\n  }\n}\n\n// ---------- prioritise for triage ----------\nfunction prio(c) {\n  if (c.sub === 'brand_not_preserved' || c.sub === 'forbidden_used') { return 0; }\n  if (c.type === 'style' && c.sev === 'High') { return 1; }\n  if (c.sub === 'term_missing' && c.conf === 'high') { return 2; }\n  if (c.type === 'style' && c.sev === 'Medium') { return 3; }\n  if (c.sub === 'term_missing' && c.conf === 'medium') { return 4; }\n  if (c.type === 'style') { return 5; }\n  return 6;\n}\ncands.sort(function (a, b) { return prio(a) - prio(b); });\nconst MAX_SEND = 160;\nconst send = cands.slice(0, MAX_SEND);\nconst overflow = cands.length - send.length;\nfunction cut(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n) + '…' : s; }\nconst candPayload = send.map(function (c, i) {\n  c.id = 'c' + (i + 1);\n  const mt = META[c.key] || {};\n  return { id: c.id, key: c.key, key_description: mt.d || undefined, key_tags: mt.tags && mt.tags.length ? mt.tags : undefined, check: c.type, kind: c.sub, rule_or_term: c.rule, expected: c.expected, rule_text: c.type === 'style' ? c.note : undefined, glossary_note: c.type === 'glossary' ? cut(c.note, 200) : undefined, matched: c.match, confidence: c.conf, en: cut(c.en, 500), target: cut(c.target, 500) };\n});\n\nconst candKeys = {};\nfor (const c of send) { candKeys[c.key] = true; }\nconst seenT = {};\nconst sample = rows.filter(function (r) { return r.t.length >= 40 && !candKeys[r.k]; })\n  .sort(function (a, b) { return b.t.length - a.t.length; })\n  .filter(function (r) { const s = r.t.slice(0, 80); if (seenT[s]) { return false; } seenT[s] = true; return true; })\n  .slice(0, 20)\n  .map(function (r, i) { const mt = META[r.k] || {}; return { sid: 's' + (i + 1), key: r.k, key_description: mt.d || undefined, key_tags: mt.tags && mt.tags.length ? mt.tags : undefined, en: cut(r.en, 700), target: cut(r.t, 700) }; });\n\nconst systemic = {};\nfor (const hk in hits) {\n  const cap = hk.indexOf('style:') === 0 ? CAP_RULE : CAP_TERM;\n  if (hits[hk] > cap) { systemic[hk] = hits[hk]; }\n}\n\nconst SYS = [\n  'You are a senior ' + job.lang_name + ' (' + iso + ') localization reviewer auditing shipped UI and email strings of the product \"' + job.project_name + '\".',\n  'Automatic checks flagged CANDIDATES against the team glossary and the ' + job.lang_name + ' style guide. Most candidates are false positives. Your job is triage: keep only what a native ' + job.lang_name + ' reviewer would call a real defect against the stated rule or glossary term. DEFAULT IS DROP; if unsure, drop.',\n  'Glossary term_missing: drop when the translation uses the approved term with different inflection, compounding or word order, when the English term is used in a different sense, or when the approved term does not fit the sentence and the translator worked around it sensibly. Keep only when a genuinely different word was chosen. Read glossary_note: it often allows variants.',\n  'brand_not_preserved / forbidden_used: near-certain; keep unless the target clearly contains the brand in another legitimate form (e.g. inside a URL or placeholder) or the English uses the word generically, not as the brand.',\n  'Style candidates: the regex hit is only a hint; check the actual string (e.g. a capitalised pronoun that starts a sentence or refers to a third party is not a formality error). If a style hit is caused by a glossary-mandated term, drop it and say so in glossary_conflicts.',\n  'Also review the SAMPLE strings against these ' + job.lang_name + ' style-guide rules and report only clear breaches: ' + (job.judgement || 'none') + (job.is_personality ? ' This is a Personality product.' : ''),\n  'Every candidate and sample item carries its Lokalise key name, key_description and key_tags. Key-name segments are namespaces (e.g. emails.welcome.subject, checkout.buttons.pay, legal.terms.section_3, test.questions.q12) that tell you where and how the string is used. Whenever you are unsure whether a string is a button, label, heading, sentence, email, legal text, test item or a third-party/brand reference, read the key name, description and tags before deciding, and let that context settle label-vs-sentence rules, formality, brand usage and whether a glossary term applies in that sense.',\n  'Judge each candidate ONLY against its own rule_or_term. Never use a candidate to report a different problem (another rule, formality, another term) — other problems have their own candidates. Glossary terms are often context-specific: if the English uses the word in another sense (verb vs noun, generic word vs UI label) or the approved target clearly belongs to a different context, drop it. A faithful rephrase with the same meaning is not a defect.',\n  'For every kept candidate also give \"certainty\": \"high\" only if a native reviewer would certainly ask for a change; otherwise \"low\" (low items are discarded).',\n  'sample_findings must contain ONLY clear breaches that need a change. Never list strings that are fine, acceptable, or need no action. An empty list is the normal result.',\n  'Reviewer precedent: reviewer_feedback lists earlier decisions by the i18n lead for this language. \"rejected\" means she deleted the finding as not a real defect (reason given); \"approved\" means she kept it. Follow that precedent: drop candidates that match the pattern of a rejected item and keep those that match approved ones.',\n  'General precedents from review (all languages): a button, link or CTA that rephrases the English but keeps its function (e.g. \"View details\" rendered as \"More information\" or \"See the information\") is NOT a glossary defect. A glossary term that is part of a fixed phrase (login credentials, customer support team, bank statement) does not have to use the standalone approved target. An established near-synonym (e.g. localización/ubicación) is not a defect unless glossary_note forbids it. A title or subject reworded to fit the message is not a term defect.',\n  'Never judge accuracy against the English source, spelling, placeholders or HTML — they are out of scope.',\n  'Severity: High = users see something clearly wrong (brand translated, forbidden term, formality rule broken in a prominent string). Medium = wrong approved term or style rule broken in a normal string. Low = stylistic drift or rarely seen string. At most a third of kept items may be High.',\n  'Write \"issue\" in English, one sentence, quoting the rule or approved term, e.g. \"Guide: \\'use du, not Sie\\' — string uses Ihr\". Write \"suggestion\" as the corrected fragment in ' + job.lang_name + ' (not the whole string).',\n  'Return ONLY JSON: {\"decisions\":[{\"id\":\"c1\",\"keep\":true,\"certainty\":\"high\",\"severity\":\"Medium\",\"issue\":\"...\",\"suggestion\":\"...\"}],\"sample_findings\":[{\"sid\":\"s1\",\"rule\":\"short rule name\",\"severity\":\"Low\",\"issue\":\"...\",\"suggestion\":\"...\"}],\"glossary_conflicts\":[\"...\"]}. Include a decision for EVERY candidate id.'\n].join(NL);\n\nconst payload = { language: job.lang_name, iso: iso, product: job.project_name, reviewer_feedback: job.feedback || [], candidates: candPayload, sample: sample };\nconst openaiBody = { model: 'gpt-4.1', temperature: 0, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: SYS }, { role: 'user', content: JSON.stringify(payload) }] };\n\nreturn [{ json: {\n  iso: iso, lang_name: job.lang_name, project_name: job.project_name,\n  keys_seen: keys.length, archived_skipped: archived, strings_checked: rows.length,\n  candidates_total: cands.length, sent: send.length, overflow: overflow, systemic: systemic,\n  sent_candidates: send.map(function (c) { return { id: c.id, type: c.type, sub: c.sub, rule: c.rule, sev: c.sev, key: c.key, d: (META[c.key] || {}).d || '', en: c.en, target: c.target, expected: c.expected, note: c.note }; }),\n  sample: sample,\n  has_work: rows.length > 0,\n  errors: errors,\n  openai_body: JSON.stringify(openaiBody)\n} }];\n"
+      }
+    },
+    {
+      "id": "f1dbe891-146b-4f33-ad23-b231597f134f",
+      "name": "Anything to review?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.has_work }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "c676e773-43dc-4c91-9404-58c840d45253",
+      "name": "Ask OpenAI to triage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        -100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.openai_body }}",
+        "options": {
+          "timeout": 240000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "openAiApi": {
+          "id": "yra2iG8pnmCKhZIc",
+          "name": "Futuremedia - n8n project"
+        }
+      }
+    },
+    {
+      "id": "106f5b5d-8e57-4095-96d0-ef1ec4e266d5",
+      "name": "Parse triage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        -100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const prep = $('Run checks').first().json;\nconst resp = $input.first().json || {};\nlet parsed = null;\nlet triageError = '';\ntry {\n  const txt = resp.choices[0].message.content;\n  parsed = JSON.parse(String(txt).replace(/^```json|```$/g, '').trim());\n} catch (e) {\n  triageError = 'LLM triage failed: ' + (resp.error ? JSON.stringify(resp.error).slice(0, 200) : String(e.message || e));\n}\nconst SEV = { High: 1, Medium: 1, Low: 1 };\nfunction sev(s, d) { return SEV[s] ? s : d; }\nconst byId = {};\nfor (const c of prep.sent_candidates) { byId[c.id] = c; }\nconst bySid = {};\nfor (const s of prep.sample) { bySid[s.sid] = s; }\nconst findings = [];\nconst keptRules = {};\nif (parsed && Array.isArray(parsed.decisions)) {\n  for (const d of parsed.decisions) {\n    const c = byId[d.id];\n    if (!c || d.keep !== true || String(d.certainty || 'high').toLowerCase() === 'low') { continue; }\n    keptRules[c.type + ':' + c.rule] = c;\n    findings.push({ check: c.type === 'glossary' ? 'Glossary' : 'Style', severity: sev(d.severity, c.sev), rule: c.type === 'glossary' ? (c.sub + ': ' + c.rule) : c.rule, key: c.key, key_description: c.d || '', en: c.en, translation: c.target, issue: String(d.issue || c.note || ''), suggestion: String(d.suggestion || c.expected || ''), found_by: 'automatic check + LLM triage' });\n  }\n} else {\n  for (const c of prep.sent_candidates) {\n    if (c.sub !== 'brand_not_preserved' && c.sub !== 'forbidden_used') { continue; }\n    findings.push({ check: 'Glossary', severity: 'High', rule: c.sub + ': ' + c.rule, key: c.key, key_description: c.d || '', en: c.en, translation: c.target, issue: c.sub === 'brand_not_preserved' ? ('Brand name \"' + c.rule + '\" is not kept verbatim.') : ('Forbidden term \"' + c.rule + '\" used.'), suggestion: c.expected, found_by: 'automatic check (triage unavailable)' });\n  }\n}\nif (parsed && Array.isArray(parsed.sample_findings)) {\n  for (const f of parsed.sample_findings) {\n    const s = bySid[f.sid];\n    if (!s) { continue; }\n    if (/\\bno (issue|action|change|problem)|acceptable|appropriate|correctly|is fine|no breach|not a breach|remains clear/i.test(String(f.issue || ''))) { continue; }\n    findings.push({ check: 'Style', severity: sev(f.severity, 'Low'), rule: 'sample: ' + String(f.rule || 'style guide'), key: s.key, key_description: s.key_description || '', en: s.en, translation: s.target, issue: String(f.issue || ''), suggestion: String(f.suggestion || ''), found_by: 'LLM style-guide sample' });\n  }\n}\nfor (const hk in prep.systemic) {\n  const c = keptRules[hk];\n  if (!c) { continue; }\n  findings.push({ check: c.type === 'glossary' ? 'Glossary' : 'Style', severity: c.sev, rule: c.type === 'glossary' ? (c.sub + ': ' + c.rule) : c.rule, key: '(multiple)', en: '', translation: '', issue: 'Systemic: the check fired on ' + prep.systemic[hk] + ' strings; only the first ' + (c.type === 'style' ? 25 : 5) + ' were reviewed. Likely one consistent choice — fix with a sweep, not key by key.', suggestion: c.expected || '', found_by: 'automatic check' });\n}\n// ---------- reviewer precedent (deterministic) ----------\nconst fb = ($('When called by parent').first().json.feedback) || [];\nfunction ruleLabel(c) { return c.type === 'glossary' ? (c.sub + ': ' + c.rule) : c.rule; }\nfunction tkey(rule, t) { return String(rule) + '|' + String(t || '').slice(0, 150); }\nconst APP = {}, REJ = {}, APP_RULE = {}, REJ_RULE = {};\nfor (const x of fb) {\n  if (x.decision === 'approved') { APP[tkey(x.rule, x.translation)] = true; APP_RULE[x.rule] = true; }\n  if (x.decision === 'rejected') { REJ[tkey(x.rule, x.translation)] = true; REJ_RULE[x.rule] = true; }\n}\nconst keptIds = {};\nif (parsed && Array.isArray(parsed.decisions)) {\n  for (const d of parsed.decisions) { if (d.keep === true && String(d.certainty || 'high').toLowerCase() !== 'low') { keptIds[d.id] = true; } }\n}\nfor (let i = findings.length - 1; i >= 0; i--) {\n  const f = findings[i];\n  if (f.found_by.indexOf('LLM triage') !== -1 && REJ[tkey(f.rule, f.translation)]) { findings.splice(i, 1); }\n}\nif (parsed && Array.isArray(parsed.decisions)) {\n  for (const c of prep.sent_candidates) {\n    if (keptIds[c.id]) { continue; }\n    const rl = ruleLabel(c);\n    const exact = APP[tkey(rl, c.target)];\n    const ruleLevel = c.type === 'style' && APP_RULE[rl] && !REJ_RULE[rl];\n    if (!exact && !ruleLevel) { continue; }\n    findings.push({ check: c.type === 'glossary' ? 'Glossary' : 'Style', severity: c.sev === 'High' ? 'Medium' : c.sev, rule: rl, key: c.key, key_description: c.d || '', en: c.en, translation: c.target, issue: (c.type === 'style' ? 'Guide: ' + c.note : 'Glossary: approved term \\u201c' + c.expected + '\\u201d not used.'), suggestion: c.expected || '', found_by: exact ? 'reviewer precedent (approved earlier)' : 'automatic check + reviewer precedent' });\n  }\n}\nconst seenF = {};\nconst deduped = [];\nfor (const f of findings) {\n  const fk = f.key + '|' + String(f.issue || '').toLowerCase().replace(/[^\\p{L}\\p{N}]+/gu, ' ').trim();\n  if (seenF[fk]) { continue; }\n  seenF[fk] = true;\n  deduped.push(f);\n}\nfindings.length = 0;\nfor (const f of deduped) { findings.push(f); }\nconst order = { High: 0, Medium: 1, Low: 2 };\nfindings.sort(function (a, b) { return (a.check < b.check ? -1 : a.check > b.check ? 1 : 0) || order[a.severity] - order[b.severity]; });\nconst errors = prep.errors.slice();\nif (triageError) { errors.push(triageError); }\nreturn [{ json: {\n  iso: prep.iso, lang_name: prep.lang_name, strings_checked: prep.strings_checked, keys_seen: prep.keys_seen,\n  candidates_total: prep.candidates_total, overflow: prep.overflow, triage_ok: !triageError,\n  glossary_conflicts: parsed && Array.isArray(parsed.glossary_conflicts) ? parsed.glossary_conflicts.slice(0, 10) : [],\n  findings: findings, errors: errors\n} }];\n"
+      }
+    },
+    {
+      "id": "d29473b1-15d3-4734-b3a8-d9fa1266aca1",
+      "name": "Nothing to review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        120
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const prep = $('Run checks').first().json;\nreturn [{ json: { iso: prep.iso, lang_name: prep.lang_name, strings_checked: 0, keys_seen: prep.keys_seen, candidates_total: 0, overflow: 0, triage_ok: true, glossary_conflicts: [], findings: [], errors: prep.errors.concat(prep.keys_seen === 0 ? ['no keys returned'] : []) } }];\n"
+      }
+    },
+    {
+      "id": "f07c854f-fcf7-47c0-8223-6894420088ba",
+      "name": "Sticky Note 3531e4b6",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -320
+      ],
+      "parameters": {
+        "content": "## Targets audit - language worker\n\nCalled once per target language by **Lokalise targets audit - nightly**. Fetches one language + EN (read-only token, 700 ms between pages), runs glossary + mechanical style-guide checks, sends every candidate plus the 20 longest strings to OpenAI for triage, and returns only the findings.\n\nSuccessful runs are not saved (large payloads). Rules live in the parent workflow's *Build language jobs* node.",
+        "color": 4,
+        "width": 520,
+        "height": 240
+      }
+    }
+  ],
+  "connections": {
+    "When called by parent": {
+      "main": [
+        [
+          {
+            "node": "Fetch keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch keys": {
+      "main": [
+        [
+          {
+            "node": "Run checks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run checks": {
+      "main": [
+        [
+          {
+            "node": "Anything to review?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything to review?": {
+      "main": [
+        [
+          {
+            "node": "Ask OpenAI to triage",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Nothing to review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask OpenAI to triage": {
+      "main": [
+        [
+          {
+            "node": "Parse triage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Madrid",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "ME3cLqQy0Dlzm6si",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-25T11:27:58.431Z",
+      "updatedAt": "2026-09-25T11:27:58.431Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "36fd74f9-f272-4b47-9ac8-d8f579e5ff77",
+    "workflowId": "ME3cLqQy0Dlzm6si",
+    "nodes": [
+      {
+        "id": "89fedc7a-a2fc-42ad-879a-0cdc3c59fce2",
+        "name": "When called by parent",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "c428ad69-a152-4311-9ef8-d137aa43a6b5",
+        "name": "Fetch keys",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          240,
+          0
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?include_translations=1&disable_references=1&limit=1000&pagination=cursor&filter_translation_lang_ids={{ $json.en_id }},{{ $json.lang_id }}",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "options": {
+            "timeout": 120000,
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            },
+            "pagination": {
+              "pagination": {
+                "paginationMode": "updateAParameterInEachRequest",
+                "parameters": {
+                  "parameters": [
+                    {
+                      "type": "qs",
+                      "name": "cursor",
+                      "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                    }
+                  ]
+                },
+                "paginationCompleteWhen": "other",
+                "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+                "limitPagesFetched": true,
+                "maxRequests": 150,
+                "requestInterval": 700
+              }
+            }
+          }
+        },
+        "retryOnFail": true,
+        "maxTries": 5,
+        "waitBetweenTries": 5000,
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "VW7WtJP8PzJMR813",
+            "name": "Lokalise read-only"
+          }
+        }
+      },
+      {
+        "id": "1da1d629-9067-40f6-a1bd-a83eabdff38b",
+        "name": "Run checks",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          480,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const NL = String.fromCharCode(10);\nconst job = $('When called by parent').first().json;\nconst iso = job.iso;\nconst pages = $input.all();\nconst errors = [];\nlet keys = [];\nfor (const p of pages) {\n  const j = p.json || {};\n  const body = j.body !== undefined ? j.body : j;\n  if (body && Array.isArray(body.keys)) { keys = keys.concat(body.keys); }\n  else { errors.push('Lokalise page without keys array: ' + JSON.stringify(body).slice(0, 200)); }\n}\n\nconst UB = '(?:(?<![\\\\p{L}\\\\p{N}_])(?=[\\\\p{L}\\\\p{N}_])|(?<=[\\\\p{L}\\\\p{N}_])(?![\\\\p{L}\\\\p{N}_]))';\nfunction rx(src, flags) { return new RegExp(String(src).split('\\\\b').join(UB), 'u' + (flags || '')); }\nconst MARKUP = /\\[%[^\\]]*\\]|%\\d*\\$?[sdfx@]|\\{\\{[^}]*\\}\\}|%\\{[^}]*\\}|\\{[^}\\s]*\\}|<[^>]+>|&[a-zA-Z#0-9]+;|https?:\\/\\/\\S+|[\\w.+-]+@[\\w-]+\\.[\\w.]+|\\\\[nrt]/g;\nfunction strip(s) { return String(s || '').replace(MARKUP, ' '); }\nfunction pickText(tr) {\n  if (tr === null || tr === undefined) { return ''; }\n  if (typeof tr === 'object') { return Object.values(tr).filter(function (v) { return v; }).join(' ¦ '); }\n  const s = String(tr);\n  if (s.charAt(0) === '{' && s.indexOf('\"') !== -1) {\n    try { const o = JSON.parse(s); if (o && typeof o === 'object') { return Object.values(o).filter(function (v) { return v; }).join(' ¦ '); } } catch (e) { }\n  }\n  return s;\n}\n\nconst rows = [];\nconst META = {};\nlet archived = 0;\nfor (const k of keys) {\n  if (k.is_archived) { archived++; continue; }\n  const kn = k.key_name || {};\n  const name = typeof kn === 'string' ? kn : (kn.web || kn.other || kn.ios || kn.android || String(k.key_id));\n  let en = '';\n  let tgt = '';\n  for (const t of (k.translations || [])) {\n    if (t.language_iso === 'en') { en = pickText(t.translation); }\n    if (t.language_iso === iso) { tgt = pickText(t.translation); }\n  }\n  if (!en.trim() || !tgt.trim()) { continue; }\n  const tags = Array.isArray(k.tags) ? k.tags.map(String) : [];\n  META[name] = { d: String(k.description || k.context || '').trim().slice(0, 300), tags: tags.slice(0, 8) };\n  rows.push({ k: name, en: en, t: tgt });\n}\n\n// ---------- glossary ----------\nconst WORD = /[\\p{L}\\p{M}]+(?:['’\\-][\\p{L}\\p{M}]+)*/gu;\nfunction norm(s) { return String(s).normalize('NFC').replace(/[\\u00A0\\u202F\\u2009]/g, ' ').toLowerCase(); }\nfunction words(s) { return (String(s).match(WORD) || []).map(norm); }\nfunction variants(target) {\n  const out = [];\n  let rest = String(target);\n  const pr = /[（(]([^)）]*)[)）]/g;\n  let m;\n  while ((m = pr.exec(target)) !== null) { if (m[1].trim()) { out.push(m[1].trim()); } }\n  rest = rest.replace(pr, ' ');\n  for (const part of rest.split(/\\s*\\/\\s*|\\s+or\\s+|\\s*\\|\\s*/)) { if (part.trim()) { out.push(part.trim()); } }\n  return out.length ? out : [target];\n}\nfunction looseContains(text, phrase, ratio) {\n  const r = ratio || 0.7;\n  const toks = words(text);\n  if (!toks.length) { return false; }\n  let ws = words(phrase);\n  const longw = ws.filter(function (w) { return w.length >= 3; });\n  if (longw.length) { ws = longw; }\n  if (!ws.length) { return norm(text).indexOf(norm(phrase)) !== -1; }\n  for (const w of ws) {\n    const need = w.length <= 4 ? w : w.slice(0, Math.max(4, Math.floor(w.length * r)));\n    const ok = toks.some(function (t) { return t.indexOf(need) === 0 || (w.indexOf(t.slice(0, need.length)) === 0 && t.length >= need.length); });\n    if (!ok) { return false; }\n  }\n  return true;\n}\nfunction esc(s) { return String(s).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&'); }\nconst gl = (job.glossary || []).slice().sort(function (a, b) { return b.src.length - a.src.length; });\nfor (const t of gl) {\n  t.srx = new RegExp('(?<![\\\\p{L}\\\\p{N}])' + esc(t.src) + '(?![\\\\p{L}\\\\p{N}])', 'u' + (t.cs ? '' : 'i'));\n}\n// Thai has no spaces: prefix matching on words is meaningless, use substring.\nconst NOSPACE = iso === 'th';\n\nconst cands = [];\nconst hits = {};\nconst CAP_RULE = 25;\nconst CAP_TERM = 5;\nfunction add(c) {\n  const hk = c.type + ':' + c.rule;\n  hits[hk] = (hits[hk] || 0) + 1;\n  const cap = c.type === 'style' ? CAP_RULE : CAP_TERM;\n  if (hits[hk] > cap) { return; }\n  cands.push(c);\n}\n\nfor (const r of rows) {\n  const enS = strip(r.en);\n  if (!enS.trim()) { continue; }\n  const consumed = [];\n  for (const t of gl) {\n    if (!t.srx.test(enS)) { continue; }\n    const low = t.src.toLowerCase();\n    if (consumed.some(function (c) { return c.indexOf(low) !== -1; })) { continue; }\n    consumed.push(low);\n    if (!t.tr) {\n      if (r.t.indexOf(t.src) === -1) {\n        add({ type: 'glossary', sub: 'brand_not_preserved', rule: t.src, expected: t.src, sev: 'High', conf: 'high', key: r.k, en: r.en, target: r.t, note: t.note });\n      }\n      continue;\n    }\n    if (!t.tgt) { continue; }\n    const vs = variants(t.tgt);\n    const found = vs.some(function (v) { return NOSPACE ? norm(r.t).indexOf(norm(v)) !== -1 : looseContains(r.t, v); });\n    if (found) { continue; }\n    const cov = t.src.length / Math.max(enS.trim().length, 1);\n    add({ type: 'glossary', sub: 'term_missing', rule: t.src, expected: t.tgt, sev: 'Medium', conf: cov > 0.6 ? 'high' : (cov > 0.25 ? 'medium' : 'low'), key: r.k, en: r.en, target: r.t, note: t.note });\n  }\n  for (const t of gl) {\n    if (!t.fb) { continue; }\n    const bad = t.tgt || t.src;\n    const f = NOSPACE ? norm(r.t).indexOf(norm(bad)) !== -1 : looseContains(r.t, bad, 0.9);\n    if (f) { add({ type: 'glossary', sub: 'forbidden_used', rule: t.src, expected: '', sev: 'High', conf: 'high', key: r.k, en: r.en, target: r.t, note: t.note }); }\n  }\n}\n\n// ---------- style ----------\nconst rules = [];\nfor (const r of (job.rules || [])) {\n  try {\n    rules.push({ r: r, f: rx(r.forbid, r.flags), w: r.when_source ? new RegExp(r.when_source, 'iu') : null });\n  } catch (e) { errors.push('bad regex in rule ' + r.id + ': ' + e.message); }\n}\nfor (const row of rows) {\n  const tS = strip(row.t);\n  const enS = strip(row.en).trim();\n  for (const x of rules) {\n    if (x.w && !x.w.test(enS)) { continue; }\n    const m = x.f.exec(x.r.raw ? row.t : tS);\n    if (!m) { continue; }\n    add({ type: 'style', sub: x.r.id, rule: x.r.id, expected: x.r.suggest || '', sev: x.r.sev, conf: 'rule', key: row.k, en: row.en, target: row.t, note: x.r.desc, match: m[0] });\n  }\n}\n\n// ---------- prioritise for triage ----------\nfunction prio(c) {\n  if (c.sub === 'brand_not_preserved' || c.sub === 'forbidden_used') { return 0; }\n  if (c.type === 'style' && c.sev === 'High') { return 1; }\n  if (c.sub === 'term_missing' && c.conf === 'high') { return 2; }\n  if (c.type === 'style' && c.sev === 'Medium') { return 3; }\n  if (c.sub === 'term_missing' && c.conf === 'medium') { return 4; }\n  if (c.type === 'style') { return 5; }\n  return 6;\n}\ncands.sort(function (a, b) { return prio(a) - prio(b); });\nconst MAX_SEND = 160;\nconst send = cands.slice(0, MAX_SEND);\nconst overflow = cands.length - send.length;\nfunction cut(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n) + '…' : s; }\nconst candPayload = send.map(function (c, i) {\n  c.id = 'c' + (i + 1);\n  const mt = META[c.key] || {};\n  return { id: c.id, key: c.key, key_description: mt.d || undefined, key_tags: mt.tags && mt.tags.length ? mt.tags : undefined, check: c.type, kind: c.sub, rule_or_term: c.rule, expected: c.expected, rule_text: c.type === 'style' ? c.note : undefined, glossary_note: c.type === 'glossary' ? cut(c.note, 200) : undefined, matched: c.match, confidence: c.conf, en: cut(c.en, 500), target: cut(c.target, 500) };\n});\n\nconst candKeys = {};\nfor (const c of send) { candKeys[c.key] = true; }\nconst seenT = {};\nconst sample = rows.filter(function (r) { return r.t.length >= 40 && !candKeys[r.k]; })\n  .sort(function (a, b) { return b.t.length - a.t.length; })\n  .filter(function (r) { const s = r.t.slice(0, 80); if (seenT[s]) { return false; } seenT[s] = true; return true; })\n  .slice(0, 20)\n  .map(function (r, i) { const mt = META[r.k] || {}; return { sid: 's' + (i + 1), key: r.k, key_description: mt.d || undefined, key_tags: mt.tags && mt.tags.length ? mt.tags : undefined, en: cut(r.en, 700), target: cut(r.t, 700) }; });\n\nconst systemic = {};\nfor (const hk in hits) {\n  const cap = hk.indexOf('style:') === 0 ? CAP_RULE : CAP_TERM;\n  if (hits[hk] > cap) { systemic[hk] = hits[hk]; }\n}\n\nconst SYS = [\n  'You are a senior ' + job.lang_name + ' (' + iso + ') localization reviewer auditing shipped UI and email strings of the product \"' + job.project_name + '\".',\n  'Automatic checks flagged CANDIDATES against the team glossary and the ' + job.lang_name + ' style guide. Most candidates are false positives. Your job is triage: keep only what a native ' + job.lang_name + ' reviewer would call a real defect against the stated rule or glossary term. DEFAULT IS DROP; if unsure, drop.',\n  'Glossary term_missing: drop when the translation uses the approved term with different inflection, compounding or word order, when the English term is used in a different sense, or when the approved term does not fit the sentence and the translator worked around it sensibly. Keep only when a genuinely different word was chosen. Read glossary_note: it often allows variants.',\n  'brand_not_preserved / forbidden_used: near-certain; keep unless the target clearly contains the brand in another legitimate form (e.g. inside a URL or placeholder) or the English uses the word generically, not as the brand.',\n  'Style candidates: the regex hit is only a hint; check the actual string (e.g. a capitalised pronoun that starts a sentence or refers to a third party is not a formality error). If a style hit is caused by a glossary-mandated term, drop it and say so in glossary_conflicts.',\n  'Also review the SAMPLE strings against these ' + job.lang_name + ' style-guide rules and report only clear breaches: ' + (job.judgement || 'none') + (job.is_personality ? ' This is a Personality product.' : ''),\n  'Every candidate and sample item carries its Lokalise key name, key_description and key_tags. Key-name segments are namespaces (e.g. emails.welcome.subject, checkout.buttons.pay, legal.terms.section_3, test.questions.q12) that tell you where and how the string is used. Whenever you are unsure whether a string is a button, label, heading, sentence, email, legal text, test item or a third-party/brand reference, read the key name, description and tags before deciding, and let that context settle label-vs-sentence rules, formality, brand usage and whether a glossary term applies in that sense.',\n  'Judge each candidate ONLY against its own rule_or_term. Never use a candidate to report a different problem (another rule, formality, another term) — other problems have their own candidates. Glossary terms are often context-specific: if the English uses the word in another sense (verb vs noun, generic word vs UI label) or the approved target clearly belongs to a different context, drop it. A faithful rephrase with the same meaning is not a defect.',\n  'For every kept candidate also give \"certainty\": \"high\" only if a native reviewer would certainly ask for a change; otherwise \"low\" (low items are discarded).',\n  'sample_findings must contain ONLY clear breaches that need a change. Never list strings that are fine, acceptable, or need no action. An empty list is the normal result.',\n  'Reviewer precedent: reviewer_feedback lists earlier decisions by the i18n lead for this language. \"rejected\" means she deleted the finding as not a real defect (reason given); \"approved\" means she kept it. Follow that precedent: drop candidates that match the pattern of a rejected item and keep those that match approved ones.',\n  'General precedents from review (all languages): a button, link or CTA that rephrases the English but keeps its function (e.g. \"View details\" rendered as \"More information\" or \"See the information\") is NOT a glossary defect. A glossary term that is part of a fixed phrase (login credentials, customer support team, bank statement) does not have to use the standalone approved target. An established near-synonym (e.g. localización/ubicación) is not a defect unless glossary_note forbids it. A title or subject reworded to fit the message is not a term defect.',\n  'Never judge accuracy against the English source, spelling, placeholders or HTML — they are out of scope.',\n  'Severity: High = users see something clearly wrong (brand translated, forbidden term, formality rule broken in a prominent string). Medium = wrong approved term or style rule broken in a normal string. Low = stylistic drift or rarely seen string. At most a third of kept items may be High.',\n  'Write \"issue\" in English, one sentence, quoting the rule or approved term, e.g. \"Guide: \\'use du, not Sie\\' — string uses Ihr\". Write \"suggestion\" as the corrected fragment in ' + job.lang_name + ' (not the whole string).',\n  'Return ONLY JSON: {\"decisions\":[{\"id\":\"c1\",\"keep\":true,\"certainty\":\"high\",\"severity\":\"Medium\",\"issue\":\"...\",\"suggestion\":\"...\"}],\"sample_findings\":[{\"sid\":\"s1\",\"rule\":\"short rule name\",\"severity\":\"Low\",\"issue\":\"...\",\"suggestion\":\"...\"}],\"glossary_conflicts\":[\"...\"]}. Include a decision for EVERY candidate id.'\n].join(NL);\n\nconst payload = { language: job.lang_name, iso: iso, product: job.project_name, reviewer_feedback: job.feedback || [], candidates: candPayload, sample: sample };\nconst openaiBody = { model: 'gpt-4.1', temperature: 0, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: SYS }, { role: 'user', content: JSON.stringify(payload) }] };\n\nreturn [{ json: {\n  iso: iso, lang_name: job.lang_name, project_name: job.project_name,\n  keys_seen: keys.length, archived_skipped: archived, strings_checked: rows.length,\n  candidates_total: cands.length, sent: send.length, overflow: overflow, systemic: systemic,\n  sent_candidates: send.map(function (c) { return { id: c.id, type: c.type, sub: c.sub, rule: c.rule, sev: c.sev, key: c.key, d: (META[c.key] || {}).d || '', en: c.en, target: c.target, expected: c.expected, note: c.note }; }),\n  sample: sample,\n  has_work: rows.length > 0,\n  errors: errors,\n  openai_body: JSON.stringify(openaiBody)\n} }];\n"
+        }
+      },
+      {
+        "id": "f1dbe891-146b-4f33-ad23-b231597f134f",
+        "name": "Anything to review?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          720,
+          0
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.has_work }}",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        }
+      },
+      {
+        "id": "c676e773-43dc-4c91-9404-58c840d45253",
+        "name": "Ask OpenAI to triage",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          960,
+          -100
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.openai.com/v1/chat/completions",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "openAiApi",
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ $json.openai_body }}",
+          "options": {
+            "timeout": 240000
+          }
+        },
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 5000,
+        "onError": "continueRegularOutput",
+        "credentials": {
+          "openAiApi": {
+            "id": "yra2iG8pnmCKhZIc",
+            "name": "Futuremedia - n8n project"
+          }
+        }
+      },
+      {
+        "id": "106f5b5d-8e57-4095-96d0-ef1ec4e266d5",
+        "name": "Parse triage",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1200,
+          -100
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const prep = $('Run checks').first().json;\nconst resp = $input.first().json || {};\nlet parsed = null;\nlet triageError = '';\ntry {\n  const txt = resp.choices[0].message.content;\n  parsed = JSON.parse(String(txt).replace(/^```json|```$/g, '').trim());\n} catch (e) {\n  triageError = 'LLM triage failed: ' + (resp.error ? JSON.stringify(resp.error).slice(0, 200) : String(e.message || e));\n}\nconst SEV = { High: 1, Medium: 1, Low: 1 };\nfunction sev(s, d) { return SEV[s] ? s : d; }\nconst byId = {};\nfor (const c of prep.sent_candidates) { byId[c.id] = c; }\nconst bySid = {};\nfor (const s of prep.sample) { bySid[s.sid] = s; }\nconst findings = [];\nconst keptRules = {};\nif (parsed && Array.isArray(parsed.decisions)) {\n  for (const d of parsed.decisions) {\n    const c = byId[d.id];\n    if (!c || d.keep !== true || String(d.certainty || 'high').toLowerCase() === 'low') { continue; }\n    keptRules[c.type + ':' + c.rule] = c;\n    findings.push({ check: c.type === 'glossary' ? 'Glossary' : 'Style', severity: sev(d.severity, c.sev), rule: c.type === 'glossary' ? (c.sub + ': ' + c.rule) : c.rule, key: c.key, key_description: c.d || '', en: c.en, translation: c.target, issue: String(d.issue || c.note || ''), suggestion: String(d.suggestion || c.expected || ''), found_by: 'automatic check + LLM triage' });\n  }\n} else {\n  for (const c of prep.sent_candidates) {\n    if (c.sub !== 'brand_not_preserved' && c.sub !== 'forbidden_used') { continue; }\n    findings.push({ check: 'Glossary', severity: 'High', rule: c.sub + ': ' + c.rule, key: c.key, key_description: c.d || '', en: c.en, translation: c.target, issue: c.sub === 'brand_not_preserved' ? ('Brand name \"' + c.rule + '\" is not kept verbatim.') : ('Forbidden term \"' + c.rule + '\" used.'), suggestion: c.expected, found_by: 'automatic check (triage unavailable)' });\n  }\n}\nif (parsed && Array.isArray(parsed.sample_findings)) {\n  for (const f of parsed.sample_findings) {\n    const s = bySid[f.sid];\n    if (!s) { continue; }\n    if (/\\bno (issue|action|change|problem)|acceptable|appropriate|correctly|is fine|no breach|not a breach|remains clear/i.test(String(f.issue || ''))) { continue; }\n    findings.push({ check: 'Style', severity: sev(f.severity, 'Low'), rule: 'sample: ' + String(f.rule || 'style guide'), key: s.key, key_description: s.key_description || '', en: s.en, translation: s.target, issue: String(f.issue || ''), suggestion: String(f.suggestion || ''), found_by: 'LLM style-guide sample' });\n  }\n}\nfor (const hk in prep.systemic) {\n  const c = keptRules[hk];\n  if (!c) { continue; }\n  findings.push({ check: c.type === 'glossary' ? 'Glossary' : 'Style', severity: c.sev, rule: c.type === 'glossary' ? (c.sub + ': ' + c.rule) : c.rule, key: '(multiple)', en: '', translation: '', issue: 'Systemic: the check fired on ' + prep.systemic[hk] + ' strings; only the first ' + (c.type === 'style' ? 25 : 5) + ' were reviewed. Likely one consistent choice — fix with a sweep, not key by key.', suggestion: c.expected || '', found_by: 'automatic check' });\n}\n// ---------- reviewer precedent (deterministic) ----------\nconst fb = ($('When called by parent').first().json.feedback) || [];\nfunction ruleLabel(c) { return c.type === 'glossary' ? (c.sub + ': ' + c.rule) : c.rule; }\nfunction tkey(rule, t) { return String(rule) + '|' + String(t || '').slice(0, 150); }\nconst APP = {}, REJ = {}, APP_RULE = {}, REJ_RULE = {};\nfor (const x of fb) {\n  if (x.decision === 'approved') { APP[tkey(x.rule, x.translation)] = true; APP_RULE[x.rule] = true; }\n  if (x.decision === 'rejected') { REJ[tkey(x.rule, x.translation)] = true; REJ_RULE[x.rule] = true; }\n}\nconst keptIds = {};\nif (parsed && Array.isArray(parsed.decisions)) {\n  for (const d of parsed.decisions) { if (d.keep === true && String(d.certainty || 'high').toLowerCase() !== 'low') { keptIds[d.id] = true; } }\n}\nfor (let i = findings.length - 1; i >= 0; i--) {\n  const f = findings[i];\n  if (f.found_by.indexOf('LLM triage') !== -1 && REJ[tkey(f.rule, f.translation)]) { findings.splice(i, 1); }\n}\nif (parsed && Array.isArray(parsed.decisions)) {\n  for (const c of prep.sent_candidates) {\n    if (keptIds[c.id]) { continue; }\n    const rl = ruleLabel(c);\n    const exact = APP[tkey(rl, c.target)];\n    const ruleLevel = c.type === 'style' && APP_RULE[rl] && !REJ_RULE[rl];\n    if (!exact && !ruleLevel) { continue; }\n    findings.push({ check: c.type === 'glossary' ? 'Glossary' : 'Style', severity: c.sev === 'High' ? 'Medium' : c.sev, rule: rl, key: c.key, key_description: c.d || '', en: c.en, translation: c.target, issue: (c.type === 'style' ? 'Guide: ' + c.note : 'Glossary: approved term \\u201c' + c.expected + '\\u201d not used.'), suggestion: c.expected || '', found_by: exact ? 'reviewer precedent (approved earlier)' : 'automatic check + reviewer precedent' });\n  }\n}\nconst seenF = {};\nconst deduped = [];\nfor (const f of findings) {\n  const fk = f.key + '|' + String(f.issue || '').toLowerCase().replace(/[^\\p{L}\\p{N}]+/gu, ' ').trim();\n  if (seenF[fk]) { continue; }\n  seenF[fk] = true;\n  deduped.push(f);\n}\nfindings.length = 0;\nfor (const f of deduped) { findings.push(f); }\nconst order = { High: 0, Medium: 1, Low: 2 };\nfindings.sort(function (a, b) { return (a.check < b.check ? -1 : a.check > b.check ? 1 : 0) || order[a.severity] - order[b.severity]; });\nconst errors = prep.errors.slice();\nif (triageError) { errors.push(triageError); }\nreturn [{ json: {\n  iso: prep.iso, lang_name: prep.lang_name, strings_checked: prep.strings_checked, keys_seen: prep.keys_seen,\n  candidates_total: prep.candidates_total, overflow: prep.overflow, triage_ok: !triageError,\n  glossary_conflicts: parsed && Array.isArray(parsed.glossary_conflicts) ? parsed.glossary_conflicts.slice(0, 10) : [],\n  findings: findings, errors: errors\n} }];\n"
+        }
+      },
+      {
+        "id": "d29473b1-15d3-4734-b3a8-d9fa1266aca1",
+        "name": "Nothing to review",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          960,
+          120
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const prep = $('Run checks').first().json;\nreturn [{ json: { iso: prep.iso, lang_name: prep.lang_name, strings_checked: 0, keys_seen: prep.keys_seen, candidates_total: 0, overflow: 0, triage_ok: true, glossary_conflicts: [], findings: [], errors: prep.errors.concat(prep.keys_seen === 0 ? ['no keys returned'] : []) } }];\n"
+        }
+      },
+      {
+        "id": "f07c854f-fcf7-47c0-8223-6894420088ba",
+        "name": "Sticky Note 3531e4b6",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          0,
+          -320
+        ],
+        "parameters": {
+          "content": "## Targets audit - language worker\n\nCalled once per target language by **Lokalise targets audit - nightly**. Fetches one language + EN (read-only token, 700 ms between pages), runs glossary + mechanical style-guide checks, sends every candidate plus the 20 longest strings to OpenAI for triage, and returns only the findings.\n\nSuccessful runs are not saved (large payloads). Rules live in the parent workflow's *Build language jobs* node.",
+          "color": 4,
+          "width": 520,
+          "height": 240
+        }
+      }
+    ],
+    "connections": {
+      "When called by parent": {
+        "main": [
+          [
+            {
+              "node": "Fetch keys",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch keys": {
+        "main": [
+          [
+            {
+              "node": "Run checks",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Run checks": {
+        "main": [
+          [
+            {
+              "node": "Anything to review?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Anything to review?": {
+        "main": [
+          [
+            {
+              "node": "Ask OpenAI to triage",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Nothing to review",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Ask OpenAI to triage": {
+        "main": [
+          [
+            {
+              "node": "Parse triage",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Maria Sica (via MCP)",
+    "name": "Deterministic reviewer precedent",
+    "description": "Updated nodes: Parse triage",
+    "autosaved": false,
+    "createdAt": "2026-09-25T14:46:34.554Z",
+    "updatedAt": "2026-09-25T14:46:34.554Z",
+    "workflowPublishHistory": [
+      {
+        "id": 2061,
+        "workflowId": "ME3cLqQy0Dlzm6si",
+        "versionId": "36fd74f9-f272-4b47-9ac8-d8f579e5ff77",
+        "event": "activated",
+        "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
+        "createdAt": "2026-09-25T14:50:52.023Z"
+      }
+    ]
+  }
+}
