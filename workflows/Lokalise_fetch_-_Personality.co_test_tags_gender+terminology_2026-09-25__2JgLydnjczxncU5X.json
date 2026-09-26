@@ -1,0 +1,321 @@
+{
+  "id": "2JgLydnjczxncU5X",
+  "name": "Lokalise fetch - Personality.co test tags gender+terminology 2026-09-25",
+  "description": "READ ONLY. Fetches Personality.co keys tagged test:* (anxiety, bt, et, fa, ma, ndt, occ, ocd, ps, so) with all target translations for gender and test-name terminology check.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-25T07:28:13.069Z",
+  "updatedAt": "2026-09-25T07:31:24.147Z",
+  "isArchived": false,
+  "versionId": "62a88b6e-bcc4-49bb-bc2d-8813c3b5ff36",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "9f2ba85a-9d61-4d5e-9376-9b67fa19be86",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "e855d1f5-e468-4b4f-a80d-757c5d04f579",
+      "name": "Languages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/31393214664f295f94dd86.76792605/languages?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "aa121697-bb28-46a1-8f03-2a5a30a35d34",
+      "name": "Expand tags",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const TAGS = ['test:anxiety','test:bt','test:et','test:fa','test:ma','test:ndt','test:occ','test:ocd','test:ps','test:so'];\nconst EXCL = ['pst','ps','cus','pt_old'];\nconst langs = ($input.first().json.languages || []).filter(l => !EXCL.includes(l.lang_iso));\nif (!langs.length) throw new Error('no languages returned');\nconst ids = langs.map(l => l.lang_id).join(',');\nreturn TAGS.map(tag => ({ json: { tag, langs: langs.map(l => l.lang_iso), url: 'https://api.lokalise.com/api2/projects/31393214664f295f94dd86.76792605/keys?include_translations=1&disable_references=1&limit=500&pagination=cursor&filter_tags=' + encodeURIComponent(tag) + '&filter_translation_lang_ids=' + ids } }));"
+      }
+    },
+    {
+      "id": "3c898c3b-2947-41a6-97a0-8f2232bddc77",
+      "name": "Fetch keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 50,
+              "requestInterval": 700
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "ee1eab62-21e8-450f-9d3f-af88adb5ea81",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const pages = $input.all(); const errors = []; const byId = {}; let seen = 0, archived = 0;\nconst langs = $('Expand tags').first().json.langs;\npages.forEach((it, i) => {\n  const b = it.json.body || it.json;\n  if (!Array.isArray(b.keys)) { errors.push('page ' + i + ': ' + JSON.stringify(it.json).slice(0, 300)); return; }\n  for (const k of b.keys) {\n    seen++;\n    if (k.is_archived) { archived++; continue; }\n    if (byId[k.key_id]) continue;\n    const kn = k.key_name || {}; const name = kn.web || kn.other || kn.ios || kn.android || String(k.key_id);\n    const t = {}, m = {}; let en = '';\n    for (const tr of (k.translations || [])) {\n      let txt = tr.translation; if (txt && typeof txt === 'object') txt = JSON.stringify(txt);\n      if (tr.language_iso === 'en') { en = txt || ''; continue; }\n      if (!txt) continue;\n      t[tr.language_iso] = txt;\n      m[tr.language_iso] = (tr.is_reviewed ? 1 : 0) + '|' + (tr.is_unverified ? 1 : 0) + '|' + (tr.modified_by_email || '');\n    }\n    byId[k.key_id] = { id: k.key_id, k: name, en, tags: (k.tags || []).filter(x => x.startsWith('test:')), d: k.description || '', t, m };\n  }\n});\nconst rows = Object.values(byId);\nreturn [{ json: { pages: pages.length, keys_seen: seen, archived, unique: rows.length, langs, errors, rows } }];"
+      }
+    },
+    {
+      "id": "a28f9427-e74c-4761-95ee-f361c29aa447",
+      "name": "Build batches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const LANGS = ['fr','es','it','pt','pl','ro','lt','lv','de','nl','da','no','sv'];\nconst NAMES = {fr:'French',es:'Spanish (Spain)',it:'Italian',pt:'Portuguese (Brazil)',pl:'Polish',ro:'Romanian',lt:'Lithuanian',lv:'Latvian',de:'German',nl:'Dutch',da:'Danish',no:'Norwegian Bokmål',sv:'Swedish'};\nconst NEUTRAL_RULE = {\n fr:'Style guide: aim for gender-neutral sentences using epicene words or phrasings. When impossible and addressing the user directly, add the feminine mark in parentheses, e.g. \"facturé(e)\". A masculine-only form addressed to the user (without (e)) is a violation. Feminine-only is a violation.',\n it:'Style guide: use expressions valid for both genders (e.g. \"ti diamo il benvenuto\"). If a periphrase is impossible, use the o/a format, e.g. \"informato/a\". Masculine-only or feminine-only forms addressed to the user are violations.',\n es:'Style guide has no specific gender rule; team rule: gender-neutral phrasing when addressing or describing the user. Masculine-only or feminine-only forms referring to the user are violations; dual forms like \"o/a\" are tolerated but should be reported as Low.',\n pt:'Style guide: write in a gender-neutral way that sounds natural; avoid articles/endings in parentheses such as \"do(a) usuário(a)\" (report parentheses as Low). Masculine-only or feminine-only forms referring to the user are violations. Exception: the brand Personality/Personality.co always takes masculine.',\n pl:'Style guide: use gender-neutral forms, e.g. impersonal \"Popełniono trzy błędy\" rather than \"Popełniłeś trzy błędy\". Gendered past-tense verbs, adjectives or nouns referring to the user are violations; slash/parenthesis dual forms should be reported as Low.',\n ro:'Style guide: avoid unnecessary gendered phrasing. Masculine-only or feminine-only forms referring to the user are violations.',\n lt:'No specific style-guide rule; team rule: gender-neutral phrasing when referring to the user. Masculine-only or feminine-only forms referring to the user are violations.',\n lv:'Style guide: variable gender endings like \"viņš(-a)\" must NEVER be used; rephrase gender-neutrally. Masculine-only or feminine-only forms referring to the user are violations, and any (-a)/(-s) style dual endings are violations.',\n de:'Style guide: generic masculine (generisches Maskulinum) instead of gendering; no gender star, colon, Binnen-I or double naming. Generic masculine is CORRECT here. Violations are: gender star/colon/Binnen-I, double naming (Leserinnen und Leser), or feminine-only forms referring to the user.',\n nl:'No specific style-guide rule; team rule: gender-neutral language. Gendered nouns or pronouns referring to the user (e.g. hij/zij, -ster/-es forms) are violations.',\n da:'Style guide: use gender-neutral language whenever possible, e.g. \"ophavsperson\" rather than \"ophavsmand\". Gendered nouns/pronouns (han/hun, -mand, -inde) referring to the user are violations.',\n no:'Style guide: use gender-neutral language whenever possible, e.g. \"talsperson\" rather than \"talsmann\". Gendered nouns/pronouns (han/hun, -mann, -inne) referring to the user are violations.',\n sv:'Style guide: use gender-neutral language whenever possible, e.g. \"upphovsperson\" rather than \"upphovsman\". Gendered nouns/pronouns (han/hon, -man, -inna) referring to the user are violations; \"hen\" is acceptable.'\n};\nconst FA = 'This string belongs to the FEMALE ARCHETYPE test. The reader is a woman and the archetypes (The Maiden, The Lover, The Nurturer, The Queen, The Warrior, The Sage, The Mystic, The Rebel) are female. Everything referring to the user or the archetype MUST be grammatically FEMININE only. Violations: any masculine form (article, noun, adjective, participle, pronoun, verb agreement) referring to the user or the archetype; any dual/inclusive form such as (e), o/a, (-a), gender star; and an unmarked/masculine archetype noun where a natural feminine form exists in this language (e.g. Dutch \"De Krijger\" instead of \"De Krijgster\", Polish \"Mędrzec\" instead of \"Mędrczyni\"). The style guide gender-neutrality rule does NOT apply to this test.';\nconst MA = 'This string belongs to the MALE ARCHETYPE test. The reader is a man and the archetypes (The King, The Warrior, The Lover, The Sage, The Rebel, The Provider, The Explorer, The Craftsman) are male. Everything referring to the user or the archetype MUST be grammatically MASCULINE only. Violations: any feminine form referring to the user or the archetype; any dual/inclusive form such as (e), o/a, (-a), gender star. The style guide gender-neutrality rule does NOT apply to this test.';\nconst TESTNAME = {'test:anxiety':'Anxiety','test:bt':'Bipolar','test:et':'Empath','test:ndt':'Neurodivergence','test:occ':'Occupation','test:ocd':'OCD','test:ps':'Psychopath','test:so':'Sociopath'};\nconst rows = $input.first().json.rows;\nconst out = [];\nfor (const lang of LANGS) {\n  for (const tag of Object.keys(TESTNAME).concat(['test:fa','test:ma'])) {\n    const items = rows.filter(r => r.tags.includes(tag) && r.t[lang] && /[A-Za-z]{3}/.test(r.en) && !/^Level \\d+$/.test(r.en))\n      .map(r => ({ id: r.id, en: r.en, tr: r.t[lang] }));\n    let rule;\n    if (tag === 'test:fa') rule = FA; else if (tag === 'test:ma') rule = MA;\n    else rule = 'This string belongs to the ' + TESTNAME[tag] + ' test, which is for readers of ANY gender. Use gender-neutral language, or follow the language style guide for addressing both genders. ' + NEUTRAL_RULE[lang];\n    for (let i = 0; i < items.length; i += 30) {\n      const chunk = items.slice(i, i + 30);\n      const sys = 'You are a senior ' + NAMES[lang] + ' linguist reviewing translations of a personality-test website for GRAMMATICAL GENDER only. Do not comment on meaning, style, terminology, typos or punctuation. ' + rule + ' Only report genuine gender violations you are sure about; third-person generic references to other people (e.g. \"others\", \"people around you\") are not the user. Return JSON: {\"findings\":[{\"id\":<id>,\"issue\":\"wrong_gender\"|\"dual_form\"|\"gendered_in_neutral\"|\"masculine_noun_for_female\",\"evidence\":\"exact offending substring from tr\",\"suggestion\":\"the full corrected translation\",\"explanation\":\"one short sentence in English\"}]}. Return {\"findings\":[]} if nothing is wrong.';\n      out.push({ json: { lang, tag, n: chunk.length, body: { model: 'gpt-4.1', temperature: 0, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: sys }, { role: 'user', content: JSON.stringify(chunk) } ] } } });\n    }\n  }\n}\nreturn out;\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "d075a175-5e14-44db-b2b4-a32ec379a1c3",
+      "name": "OpenAI gender check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1568,
+        0
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "method": "POST",
+        "nodeCredentialType": "openAiApi",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchInterval": 1500,
+              "batchSize": 5
+            }
+          },
+          "timeout": 180000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "https://api.openai.com/v1/chat/completions"
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "yra2iG8pnmCKhZIc",
+          "name": "Futuremedia - n8n project"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "05033cd2-b77f-4dce-af10-17a06d90a470",
+      "name": "Collect",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const reqs = $('Build batches').all();\nconst res = $input.all();\nconst findings = []; const errors = []; let batches = 0;\nres.forEach((it, i) => {\n  const meta = reqs[i] ? reqs[i].json : {};\n  try {\n    const c = it.json.choices[0].message.content;\n    const p = JSON.parse(c); batches++;\n    for (const f of (p.findings || [])) findings.push(Object.assign({ lang: meta.lang, tag: meta.tag }, f));\n  } catch (e) { errors.push({ i, lang: meta.lang, tag: meta.tag, err: String(e), raw: JSON.stringify(it.json).slice(0, 300) }); }\n});\nreturn [{ json: { requests: reqs.length, responses: res.length, batches, errors, findings } }];\n",
+        "mode": "runOnceForAllItems"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Languages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Languages": {
+      "main": [
+        [
+          {
+            "node": "Expand tags",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand tags": {
+      "main": [
+        [
+          {
+            "node": "Fetch keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch keys": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape": {
+      "main": [
+        [
+          {
+            "node": "Build batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build batches": {
+      "main": [
+        [
+          {
+            "node": "OpenAI gender check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI gender check": {
+      "main": [
+        [
+          {
+            "node": "Collect",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "2JgLydnjczxncU5X",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-25T07:28:13.073Z",
+      "updatedAt": "2026-09-25T07:28:13.073Z"
+    }
+  ],
+  "activeVersion": null
+}
