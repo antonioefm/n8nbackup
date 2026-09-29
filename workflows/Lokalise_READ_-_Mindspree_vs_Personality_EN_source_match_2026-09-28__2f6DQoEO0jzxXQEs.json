@@ -1,0 +1,160 @@
+{
+  "id": "2f6DQoEO0jzxXQEs",
+  "name": "Lokalise READ - Mindspree vs Personality EN source match 2026-09-28",
+  "description": "Read-only. Fetches EN source of Personality.co, Personality Members area and Mindspree; fuzzy-matches Mindspree strings against Personality.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-28T12:14:18.630Z",
+  "updatedAt": "2026-09-28T12:15:58.091Z",
+  "isArchived": false,
+  "versionId": "5112771b-9d71-4195-96f8-3a82d34f4ea1",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "78ba790b-07b6-4187-bbf5-50c38ce6d437",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "3afabb1d-0519-4e42-b48f-28ccb6528fce",
+      "name": "Build URLs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const P = { pc: '31393214664f295f94dd86.76792605', members: '9933660066825e9a8005c8.58526829', mindspree: '2746345369c281440b9d57.82826222' };\nconst out = [];\nfor (const [t, id] of Object.entries(P)) for (const page of [1, 2, 3, 4]) out.push({ json: { t, url: 'https://api.lokalise.com/api2/projects/' + id + '/keys?include_translations=1&disable_references=1&filter_translation_lang_ids=640&limit=5000&page=' + page } });\nreturn out;"
+      }
+    },
+    {
+      "id": "5ed86c0c-46c8-496b-b0dd-994fb67015ec",
+      "name": "Fetch keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2500
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "bbc2cdaf-5819-4539-8a39-90e0f87828b6",
+      "name": "Compare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst src = $('Build URLs').all();\nconst D = { pc: [], members: [], mindspree: [] }; const bad = [];\n$input.all().forEach((it, i) => { const t = src[i].json.t; const b = it.json;\n  if (!Array.isArray(b.keys)) { bad.push(t + ':' + i); return; }\n  for (const k of b.keys) { if (k.is_archived) continue; const kn = typeof k.key_name === 'object' ? (k.key_name.web || k.key_name.other || Object.values(k.key_name)[0]) : k.key_name;\n    const tr = (k.translations || []).find(x => x.language_iso === 'en' || x.language_id === 640); if (!tr) continue;\n    let txt = tr.translation; if (k.is_plural && typeof txt === 'string') { try { const o = JSON.parse(txt); txt = o.other || o.one || Object.values(o)[0] || ''; } catch (e) {} }\n    if (typeof txt !== 'string' || !txt.trim()) continue; D[t].push([kn, txt, (k.tags || []).join('|')]); } });\nconst norm = s => s.replace(/<[^>]+>/g, ' ').replace(/\\{\\{[^}]*\\}\\}|\\{[^}]*\\}|\\[%[^\\]]*\\]|%\\d*\\$?[sd@]/g, ' PH ').replace(/&nbsp;|\\u00a0/g, ' ').replace(/[\\u2018\\u2019]/g, \"'\").replace(/[\\u201c\\u201d]/g, '\"').replace(/[\\u2013\\u2014]/g, '-').toLowerCase().replace(/\\s+/g, ' ').replace(/[\\s.!?:;,…]+$/, '').trim();\nconst toks = s => Array.from(new Set(s.split(/[^\\p{L}\\p{N}]+/u).filter(w => w.length > 1)));\nconst words = s => (s.replace(/<[^>]+>/g, ' ').match(/[\\p{L}\\p{N}]+/gu) || []).length;\nfunction lev(a, b) { if (a === b) return 0; const m = a.length, n = b.length; if (!m) return n; if (!n) return m; let p = new Array(n + 1), c = new Array(n + 1); for (let j = 0; j <= n; j++) p[j] = j; for (let i = 1; i <= m; i++) { c[0] = i; const ai = a.charCodeAt(i - 1); for (let j = 1; j <= n; j++) { c[j] = Math.min(p[j] + 1, c[j - 1] + 1, p[j - 1] + (ai === b.charCodeAt(j - 1) ? 0 : 1)); } [p, c] = [c, p]; } return p[n]; }\nconst corpus = []; const exact = new Map(), nmap = new Map(); const inv = new Map();\nfor (const t of ['pc', 'members']) for (const [kn, txt] of D[t]) { const n = norm(txt); const idx = corpus.length; corpus.push({ t, kn, txt, n });\n  if (!exact.has(txt)) exact.set(txt, idx); if (!nmap.has(n)) nmap.set(n, idx);\n  for (const w of toks(n)) { if (!inv.has(w)) inv.set(w, []); inv.get(w).push(idx); } }\nconst band = s => s >= 100 ? '100' : s >= 95 ? '95-99' : s >= 85 ? '85-94' : s >= 75 ? '75-84' : s >= 50 ? '50-74' : '<50';\nconst rows = []; const agg = {}; const aggW = {}; let totW = 0;\nfor (const [kn, txt, tags] of D.mindspree) { const n = norm(txt); const w = words(txt); totW += w; let cls, score = 0, bi = -1;\n  if (exact.has(txt)) { cls = '100 exact'; score = 100; bi = exact.get(txt); }\n  else if (nmap.has(n)) { cls = '100 normalized'; score = 100; bi = nmap.get(n); }\n  else { const tk = toks(n); const cnt = new Map();\n    for (const w2 of tk) { const l = inv.get(w2); if (!l || l.length > 3000) continue; for (const x of l) cnt.set(x, (cnt.get(x) || 0) + 1); }\n    const cand = [...cnt.entries()].map(([x, c]) => [x, 2 * c / (tk.length + toks(corpus[x].n).length)]).sort((a, b) => b[1] - a[1]).slice(0, 15);\n    for (const [x] of cand) { const cn = corpus[x].n; if (Math.abs(cn.length - n.length) > Math.max(n.length, cn.length) * 0.6) continue; if (n.length > 1500 || cn.length > 1500) continue;\n      const s = Math.round(100 * (1 - lev(n, cn) / Math.max(n.length, cn.length))); if (s > score) { score = s; bi = x; } }\n    if (score >= 100) score = 99; cls = band(score); }\n  agg[cls] = (agg[cls] || 0) + 1; aggW[cls] = (aggW[cls] || 0) + w;\n  const b = bi >= 0 ? corpus[bi] : null; rows.push([kn, txt.slice(0, 400), tags, cls, score, w, b ? b.t : '', b ? b.kn : '', b ? b.txt.slice(0, 400) : '']); }\nconst mEx = new Set(D.mindspree.map(r => norm(r[1]))); const rev = {};\nfor (const t of ['pc', 'members']) { const u = new Set(D[t].map(r => norm(r[1]))); let hit = 0; for (const x of u) if (mEx.has(x)) hit++; rev[t] = { keys: D[t].length, unique: u.size, uniqueInMindspree: hit }; }\nreturn [{ json: { bad, counts: { pc: D.pc.length, members: D.members.length, mindspree: D.mindspree.length }, totW, agg, aggW, rev, rows } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Build URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build URLs": {
+      "main": [
+        [
+          {
+            "node": "Fetch keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch keys": {
+      "main": [
+        [
+          {
+            "node": "Compare",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "2f6DQoEO0jzxXQEs",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-28T12:14:18.632Z",
+      "updatedAt": "2026-09-28T12:14:18.632Z"
+    }
+  ],
+  "activeVersion": null
+}
