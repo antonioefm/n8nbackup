@@ -1,0 +1,160 @@
+{
+  "id": "8gtSg7Ugef2bjXZB",
+  "name": "Lokalise READ - Personality.co ES consistency scan + snapshot 2026-09-28",
+  "description": "Read-only. ES term/quote consistency counts in Personality.co and Mindspree + snapshot of 27 PC keys.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-28T12:45:07.503Z",
+  "updatedAt": "2026-09-28T13:13:36.666Z",
+  "isArchived": false,
+  "versionId": "c6162118-f952-4702-b163-a1f62486bd5a",
+  "versionCounter": 6,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "33055cd1-9a57-423e-9590-684bd398c08e",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "f8b59fae-259b-43c0-8c47-a509b5c586ae",
+      "name": "Build URLs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst P = { pc: '31393214664f295f94dd86.76792605', ms: '2746345369c281440b9d57.82826222' };\nconst out = [];\nfor (const [t, id] of Object.entries(P)) for (const page of (t === 'pc' ? [1,2,3,4] : [1,2])) out.push({ json: { t, url: 'https://api.lokalise.com/api2/projects/' + id + '/keys?include_translations=1&disable_references=1&filter_translation_lang_ids=640,1056&limit=5000&page=' + page } });\nreturn out;"
+      }
+    },
+    {
+      "id": "c9d8865d-4c71-4982-91ab-167725307c4d",
+      "name": "Fetch keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2500
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "b674c51e-b993-400d-b541-b20e370f2580",
+      "name": "Scan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const src = $('Build URLs').all(); const rows = []; const bad = []; const cnt = { pc: 0, ms: 0 };\nconst strip = s => s.replace(/<[^>]*>/g, ' ');\nconst RE = /[\"\\u201e\\u2018\\u2019]|<<|>>|\\u00ab\\s|\\s\\u00bb|(^|[\\s(\\[:¿¡])'[^'\\n]{1,200}'(?=$|[\\s.,;:!?)\\]])/;\nconst unbal = s => { let d = 0, e = 0; for (const ch of s) { if (ch === '«') d++; else if (ch === '»') { d--; if (d < 0) return true; } else if (ch === '\\u201c') { if (d === 0) return true; e++; } else if (ch === '\\u201d') { e--; if (e < 0) return true; } } return d !== 0 || e !== 0; };\n$input.all().forEach((it, i) => { const t = src[i].json.t; const b = it.json; if (!Array.isArray(b.keys)) { bad.push(t + i); return; }\n  for (const k of b.keys) { if (k.is_archived) continue; const kn = typeof k.key_name === 'object' ? (k.key_name.web || Object.values(k.key_name)[0]) : k.key_name;\n    const en = (k.translations || []).find(x => x.language_iso === 'en'); const es = (k.translations || []).find(x => x.language_iso === 'es'); if (!es || !es.translation) continue; cnt[t]++;\n    const v = typeof es.translation === 'string' ? es.translation : JSON.stringify(es.translation); const s = strip(v);\n    const why = []; if (RE.test(s)) why.push('pattern'); if (unbal(s)) why.push('unbalanced'); if (/\\.»/.test(s) && !/\\.\\.»|…»/.test(s)) why.push('period_inside');\n    if (why.length) rows.push({ p: t, id: k.key_id, kn, why, en: en ? en.translation : '', es: v, by: es.modified_by_email, rev: !!es.is_reviewed }); } });\nreturn [{ json: { bad, cnt, n: rows.length, rows } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Build URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build URLs": {
+      "main": [
+        [
+          {
+            "node": "Fetch keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch keys": {
+      "main": [
+        [
+          {
+            "node": "Scan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "8gtSg7Ugef2bjXZB",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-28T12:45:07.506Z",
+      "updatedAt": "2026-09-28T12:45:07.506Z"
+    }
+  ],
+  "activeVersion": null
+}
