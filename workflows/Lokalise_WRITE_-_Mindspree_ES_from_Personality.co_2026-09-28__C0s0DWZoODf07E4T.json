@@ -1,0 +1,259 @@
+{
+  "id": "C0s0DWZoODf07E4T",
+  "name": "Lokalise WRITE - Mindspree ES from Personality.co 2026-09-28",
+  "description": "Copies Personality.co ES into Mindspree ES for 100% exact/normalized EN matches. Chunk MODE off/test/full; WRITE disabled between runs.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-28T12:24:12.962Z",
+  "updatedAt": "2026-09-28T12:29:09.724Z",
+  "isArchived": false,
+  "versionId": "8bd11c33-27ef-407e-b101-234fdddbfe81",
+  "versionCounter": 5,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "b8dc2a43-259e-4d85-991f-65baed439070",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "f4cd7ff0-f36b-4980-b042-f115a658ce30",
+      "name": "Build URLs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst P = { pc: ['31393214664f295f94dd86.76792605', [1, 2, 3, 4]], ms: ['2746345369c281440b9d57.82826222', [1, 2]] };\nconst out = [];\nfor (const [t, [id, pages]] of Object.entries(P)) for (const page of pages) out.push({ json: { t, url: 'https://api.lokalise.com/api2/projects/' + id + '/keys?include_translations=1&disable_references=1&filter_translation_lang_ids=640,1056&limit=5000&page=' + page } });\nreturn out;"
+      }
+    },
+    {
+      "id": "cc361363-7dbc-44bb-b417-3d933ae9f8d1",
+      "name": "Fetch keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2500
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "73128aba-ceb9-49b3-b3f3-797d3b845da9",
+      "name": "Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst INTERNAL = new Set(['maria@efuturemedia.com','maria+devs@efuturemedia.com','kseniya.krasovskaya@efuturemedia.com','raul@efuturemedia.com','support@lokalise.com','']);\nconst src = $('Build URLs').all();\nconst D = { pc: [], ms: [] }; const bad = [];\nconst kname = k => typeof k.key_name === 'object' ? (k.key_name.web || k.key_name.other || Object.values(k.key_name)[0]) : k.key_name;\n$input.all().forEach((it, i) => { const t = src[i].json.t; const b = it.json;\n  if (!Array.isArray(b.keys)) { bad.push(t + ':' + i); return; }\n  for (const k of b.keys) { if (k.is_archived) continue; const tr = {}; for (const x of (k.translations || [])) tr[x.language_iso] = x;\n    const en = tr.en, es = tr.es; if (!en || !en.translation) continue;\n    D[t].push({ id: k.key_id, kn: kname(k), pl: !!k.is_plural, en: en.translation, es: es ? (es.translation || '') : '', esBy: es ? (es.modified_by_email || '') : '' }); } });\nconst PH = /\\{\\{[^}]*\\}\\}|\\{[^}]*\\}|\\[%[^\\]]*\\]|%\\d*\\$?[sd@]/g;\nconst TAG = /<[^>]+>/g;\nconst base = s => s.replace(TAG, ' ').replace(PH, ' PH ').replace(/&nbsp;|\\u00a0/g, ' ').replace(/[\\u2018\\u2019]/g, \"'\").replace(/[\\u201c\\u201d]/g, '\"').replace(/[\\u2013\\u2014]/g, '-').replace(/\\s+/g, ' ').replace(/[\\s.!?:;,\\u2026]+$/, '').trim();\nconst norm = s => base(s).toLowerCase();\nconst SEP = '\\u0001';\nconst multi = (re, s) => (s.match(re) || []).slice().sort().join(SEP);\nfunction remap(re, pcEn, msEn, out) {\n  const a = pcEn.match(re) || [], b = msEn.match(re) || [];\n  if (a.join(SEP) === b.join(SEP)) return { out };\n  if (multi(re, out) !== multi(re, pcEn)) return { err: 'PC ES tokens differ from PC EN' };\n  if (a.length !== b.length) return { err: 'token count differs' };\n  const m = new Map(); for (let i = 0; i < a.length; i++) { if (m.has(a[i]) && m.get(a[i]) !== b[i]) return { err: 'token map conflict' }; m.set(a[i], b[i]); }\n  const keys = [...m.keys()].sort((x, y) => y.length - x.length);\n  keys.forEach((k, i) => { out = out.split(k).join('\\u0000' + i + '\\u0000'); });\n  keys.forEach((k, i) => { out = out.split('\\u0000' + i + '\\u0000').join(m.get(k)); });\n  if (multi(re, out) !== multi(re, msEn)) return { err: 'token check failed' };\n  return { out, changed: true };\n}\nconst tp = s => { const m = s.replace(/(<[^>]+>|\\s)+$/, '').match(/[.!?:;,\\u2026]+$/); return m ? m[0] : ''; };\nfunction adapt(pcEn, msEn, es) {\n  let out = es; const notes = [];\n  let r = remap(PH, pcEn, msEn, out); if (r.err) return { err: 'placeholders: ' + r.err }; if (r.changed) notes.push('placeholders'); out = r.out;\n  r = remap(TAG, pcEn, msEn, out); if (r.err) return { err: 'tags: ' + r.err }; if (r.changed) notes.push('tags'); out = r.out;\n  const a = base(pcEn), b = base(msEn);\n  if (a !== b) {\n    if (a.slice(1) === b.slice(1)) {\n      const up = b[0] === b[0].toUpperCase(); let inTag = false, done = false; let res = '';\n      for (const ch of out) { if (!done && !inTag && /\\p{L}/u.test(ch)) { res += up ? ch.toUpperCase() : ch.toLowerCase(); done = true; continue; } if (ch === '<') inTag = true; if (ch === '>') inTag = false; res += ch; }\n      out = res; notes.push('first-letter case');\n    } else return { err: 'case differs beyond first letter' };\n  }\n  const tpc = tp(pcEn), tms = tp(msEn);\n  if (tpc !== tms) {\n    if (/[!?\\u2026]/.test(tpc + tms)) return { err: 'trailing ?/!/... differs' };\n    const m = out.match(/([.!?:;,\\u2026]*)((?:<[^>]+>|\\s)*)$/);\n    if (m[1] !== tpc) return { err: 'ES trailing punctuation does not mirror PC EN' };\n    out = out.slice(0, out.length - m[0].length) + tms + m[2]; notes.push('trailing punctuation');\n  }\n  const lead = s => s.match(/^\\s*/)[0], trail = s => s.match(/\\s*$/)[0];\n  if (lead(pcEn) !== lead(msEn) || trail(pcEn) !== trail(msEn)) { out = lead(msEn) + out.replace(/^\\s+|\\s+$/g, '') + trail(msEn); notes.push('edge whitespace'); }\n  if (!notes.length) notes.push('quotes/dashes/spacing only; ES unchanged');\n  return { out, notes: notes.join(', ') };\n}\nconst ex = new Map(), nm = new Map(), allEx = new Set(), allNm = new Set();\nfor (const p of D.pc) { allEx.add(p.en); if (!p.pl) allNm.add(norm(p.en)); if (!p.es || !p.es.trim()) continue;\n  const a = ex.get(p.en) || []; a.push(p); ex.set(p.en, a); if (!p.pl) { const n = norm(p.en); const b2 = nm.get(n) || []; b2.push(p); nm.set(n, b2); } }\nfunction pick(c, kn) {\n  const same = c.filter(p => p.kn === kn); const nd = new Set(c.map(p => p.es)).size;\n  if (same.length) return { p: same[0], amb: nd > 1 ? 'same key name chosen of ' + nd + ' variants' : '' };\n  const g = new Map(); for (const p of c) { const e = g.get(p.es) || { n: 0, prot: 0, p }; e.n++; if (!INTERNAL.has(p.esBy)) e.prot++; g.set(p.es, e); }\n  const arr = [...g.values()].sort((x, y) => y.n - x.n || y.prot - x.prot);\n  if (arr.length === 1) return { p: arr[0].p, amb: '' };\n  if (arr[0].n === arr[1].n && arr[0].prot === arr[1].prot) return { p: null, amb: 'tie between ' + arr.length + ' variants' };\n  return { p: arr[0].p, amb: 'majority ' + arr[0].n + '/' + c.length };\n}\nconst rows = []; const cnt = {}; const byEmail = {};\nfor (const m of D.ms) {\n  let cls = '', c = null;\n  if (ex.has(m.en)) { cls = 'exact'; c = ex.get(m.en); }\n  else if (!m.pl && nm.has(norm(m.en))) { cls = 'normalized'; c = nm.get(norm(m.en)); }\n  else if (allEx.has(m.en) || (!m.pl && allNm.has(norm(m.en)))) cls = 'match_no_pc_es';\n  else continue;\n  let action = '', reason = '', after = '', s = null, amb = '';\n  if (!c) { action = 'skip'; reason = 'Personality ES empty'; }\n  else { const r = pick(c, m.kn); amb = r.amb;\n    if (!r.p) { action = 'manual'; reason = 'ambiguous source ES'; }\n    else { s = r.p;\n      if (cls === 'exact') after = s.es; else { const a = adapt(s.en, m.en, s.es); if (a.err) { action = 'manual'; reason = a.err; } else { after = a.out; reason = a.notes; } }\n      if (!action) { if (after === m.es) action = 'same'; else if (m.es && !INTERNAL.has(m.esBy)) { action = 'protected'; reason = 'MS ES last edited by ' + m.esBy; byEmail[m.esBy] = (byEmail[m.esBy] || 0) + 1; } else action = 'write'; } } }\n  cnt[cls + ':' + action] = (cnt[cls + ':' + action] || 0) + 1;\n  rows.push([m.id, m.kn, cls, action, reason, amb, m.pl ? 1 : 0, m.en, s ? s.en : '', s ? s.kn : '', m.es, m.esBy, after, s ? s.esBy : '']);\n}\nreturn [{ json: { bad, counts: { pc: D.pc.length, ms: D.ms.length }, cnt, byEmail, rows } }];"
+      }
+    },
+    {
+      "id": "17a3af64-220a-4296-8088-0ab0b5a2bc97",
+      "name": "Chunk",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const MODE = 'off';\nconst HOLD = new Set([822014520, 822022226, 822022371, 822022440, 822022459, 822022468, 822022682, 822022758, 822022765, 822022781, 822022791, 822022816, 822022918, 822023141]);\nconst rows = $input.first().json.rows.filter(r => r[3] === 'write' && !HOLD.has(r[0]));\nconst toTr = r => { let t = r[12]; if (r[6]) { try { t = JSON.parse(t); } catch (e) {} } return { language_iso: 'es', translation: t }; };\nlet sel = [];\nif (MODE === 'test') sel = rows.filter(r => r[0] === 822014621);\nif (MODE === 'full') sel = rows;\nconst out = [];\nfor (let i = 0; i < sel.length; i += 200) out.push({ json: { body: { keys: sel.slice(i, i + 200).map(r => ({ key_id: r[0], translations: [toTr(r)] })) } } });\nreturn out;"
+      }
+    },
+    {
+      "id": "bd146388-4f17-43db-8d31-cc1a3b21de8d",
+      "name": "WRITE",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "https://api.lokalise.com/api2/projects/2746345369c281440b9d57.82826222/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2500
+            }
+          }
+        }
+      },
+      "disabled": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "a82105f4-cbb1-499c-8363-83f9a605f2b7",
+      "name": "Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nlet ok = 0; const errors = []; const ids = [];\nfor (const it of $input.all()) { const b = it.json; for (const k of (b.keys || [])) { ok++; ids.push(k.key_id); } for (const e of (b.errors || [])) errors.push(e); }\nreturn [{ json: { ok, errors, ids } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Build URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build URLs": {
+      "main": [
+        [
+          {
+            "node": "Fetch keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch keys": {
+      "main": [
+        [
+          {
+            "node": "Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan": {
+      "main": [
+        [
+          {
+            "node": "Chunk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chunk": {
+      "main": [
+        [
+          {
+            "node": "WRITE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WRITE": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "C0s0DWZoODf07E4T",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-28T12:24:12.964Z",
+      "updatedAt": "2026-09-28T12:24:12.964Z"
+    }
+  ],
+  "activeVersion": null
+}
