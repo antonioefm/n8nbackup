@@ -1,0 +1,234 @@
+{
+  "id": "FGnodUR5ZVL0zvJh",
+  "name": "Lokalise WRITE (webhook) - PDF Editor monorepo fill untranslated 2026-09-29",
+  "description": "WRITE. PDF Editor monorepo: fills empty translations (guarded: only if still empty), unverified + unreviewed, verifies write. mode=test writes 1, mode=all writes rest.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-29T12:52:58.023Z",
+  "updatedAt": "2026-09-29T13:17:35.870Z",
+  "isArchived": false,
+  "versionId": "3ec9d9e6-a433-4613-89cf-5aac248e5d8d",
+  "versionCounter": 8,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "661e2201-e012-4073-8f37-84e2e2b22ded",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pdfmono-fill-27c161300360",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "webhookId": "e8835732-0def-41de-8a19-0823812de267"
+    },
+    {
+      "id": "3d7ad5cd-508e-43bf-904f-47edc894ac32",
+      "name": "Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const r = $input.first().json;\nif ((r.headers || {})['x-fill-secret'] !== 'cfabb602a3e7105a415b9e46c2e2c725f89107ec') throw new Error('bad secret');\nconst b = r.body || {}; const ITEMS = b.items;\nif (!Array.isArray(ITEMS) || !ITEMS.length) throw new Error('no items');\nconst LID = { nl: 737, fr: 673, de: 666, it: 734, ko: 733, ms: 749, pt: 708, es: 1056, sv: 754, th: 753, vi: 774 };\nconst kids = [...new Set(ITEMS.map(x => x[1]))];\nif (kids.length > 100) throw new Error('max 100 keys');\nreturn [{ json: { mode: b.mode === 'all' ? 'all' : 'test', items: ITEMS, url: 'https://api.lokalise.com/api2/projects/479073796a6095e8c10e35.09051894/keys?limit=100&include_translations=1&disable_references=1&filter_translation_lang_ids=' + Object.values(LID).join(',') + '&filter_key_ids=' + kids.join(',') } }];"
+      }
+    },
+    {
+      "id": "899173c5-c2c7-4c1a-b26d-61d390d6e258",
+      "name": "Fetch current",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "bbb84c00-b975-417b-a6a9-20ea6dc25e2f",
+      "name": "Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const PL = $('Payload').first().json; const b = $input.first().json;\nif (!Array.isArray(b.keys)) throw new Error('no keys array: ' + JSON.stringify(b).slice(0,300));\nconst cur = {}; const tags = {};\nfor (const k of b.keys) { tags[k.key_id] = k.tags || []; for (const t of (k.translations || [])) cur[t.translation_id] = { v: typeof t.translation === 'object' ? JSON.stringify(t.translation) : (t.translation || ''), iso: t.language_iso, kid: k.key_id }; }\nconst out = []; const skipped = [];\nfor (const [tid, kid, iso, v, old] of PL.items) { const c = cur[tid];\n  if (!c) { skipped.push({ tid, reason: 'not found' }); continue; }\n  if (c.kid !== kid || c.iso !== iso) { skipped.push({ tid, reason: 'key/lang mismatch' }); continue; }\n  if (c.v === v) { skipped.push({ tid, reason: 'already applied' }); continue; }\n  const expected = (typeof old === 'string') ? old : '';\n  if (c.v.trim() !== expected.trim()) { skipped.push({ tid, reason: 'changed since snapshot', now: c.v }); continue; }\n  out.push({ json: { tid, iso, newv: v, url: 'https://api.lokalise.com/api2/projects/479073796a6095e8c10e35.09051894/translations/' + tid, body: { translation: v, is_reviewed: false, is_unverified: true } } });\n  if (PL.mode === 'test') break; }\nconst noTag = Object.keys(tags).filter(k => !tags[k].includes('to_review'));\nif (!out.length) throw new Error('NOTHING TO WRITE skipped=' + JSON.stringify(skipped).slice(0,1500) + ' noTag=' + noTag.join(','));\nout[0].json.skipped = skipped; out[0].json.noTag = noTag;\nreturn out;"
+      }
+    },
+    {
+      "id": "5733e9aa-4e65-4acc-8451-ed018803056c",
+      "name": "PUT translation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 400
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "disabled": true
+    },
+    {
+      "id": "10425d71-5d5a-4cc2-b4b0-23deab45fd04",
+      "name": "Verify",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const sent = $('Guard').all().map(i => i.json); const res = $input.all().map(i => i.json);\nconst ok = [], bad = [];\nres.forEach((r, i) => { const s = sent[i]; const t = r.translation || {};\n  if (t.translation === s.newv && t.is_reviewed === false && t.is_unverified === true) ok.push(s.tid);\n  else bad.push({ tid: s.tid, got: JSON.stringify(r).slice(0, 300) }); });\nconst sk = sent[0].skipped || []; const odd = sk.filter(x => x.reason !== 'already applied');\nreturn [{ json: { mode: $('Payload').first().json.mode, written: ok.length, okTids: ok, bad, odd, alreadyApplied: sk.length - odd.length, noTag: sent[0].noTag } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Payload": {
+      "main": [
+        [
+          {
+            "node": "Fetch current",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch current": {
+      "main": [
+        [
+          {
+            "node": "Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard": {
+      "main": [
+        [
+          {
+            "node": "PUT translation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PUT translation": {
+      "main": [
+        [
+          {
+            "node": "Verify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "FGnodUR5ZVL0zvJh",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-29T12:52:58.025Z",
+      "updatedAt": "2026-09-29T12:52:58.025Z"
+    }
+  ],
+  "activeVersion": null
+}
