@@ -1,0 +1,300 @@
+{
+  "id": "4RBoDRFDKs0EOHP7",
+  "name": "Lokalise READ - PDF Editor monorepo untranslated + PDF Editor TM 2026-09-29",
+  "description": "READ ONLY. PDF Editor monorepo: untranslated keys per language + exact/case-insensitive/key-name TM matches from PDF Editor (frontend).",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-29T12:44:26.968Z",
+  "updatedAt": "2026-09-29T13:05:22.069Z",
+  "isArchived": false,
+  "versionId": "9f7756fb-d89c-43c4-88d5-2133d5f54e75",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "ba6eb645-e2b0-460b-ac64-25557ffabc17",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "31b8cc20-d94a-40e8-a41f-05a267dca0b3",
+      "name": "Plan langs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const P = [['mono','479073796a6095e8c10e35.09051894'],['pdf','1286096867dbf31146afc5.54950617']];\nreturn P.map(([tag,id]) => ({ json: { tag, pid: id, url: 'https://api.lokalise.com/api2/projects/' + id + '/languages?limit=500' } }));"
+      }
+    },
+    {
+      "id": "dc84b67e-42d7-4319-88e5-86c27d9dfe99",
+      "name": "Fetch langs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "a9c46193-e77a-4b08-b01d-fb2ee9c8ad42",
+      "name": "Plan lite",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const P = $('Plan langs').all().map(i => i.json);\nconst out = []; for (const p of P) for (const pg of [1,2,3]) out.push({ json: { tag: p.tag, pid: p.pid, url: 'https://api.lokalise.com/api2/projects/' + p.pid + '/keys?limit=5000&page=' + pg + '&disable_references=1' } });\nreturn out;"
+      }
+    },
+    {
+      "id": "5e03cd6d-5bd4-4dce-ae04-23603efabd5f",
+      "name": "Fetch lite",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "83deb1de-86a1-4dc9-8a4c-883e66503cfb",
+      "name": "Plan full",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const EXC = ['pst','ps','cus','pt_old'];\nconst P = $('Plan langs').all().map(i => i.json); const LR = $('Fetch langs').all().map(i => i.json);\nconst langs = {}; P.forEach((p, i) => { const arr = LR[i].languages; if (!Array.isArray(arr)) throw new Error('no languages for ' + p.tag + ': ' + JSON.stringify(LR[i]).slice(0,300)); langs[p.tag] = arr.filter(l => !EXC.includes(l.lang_iso)).map(l => [l.lang_iso, l.lang_id]); });\nconst req = $('Plan lite').all().map(i => i.json); const res = $input.all().map(i => i.json);\nconst ids = { mono: [], pdf: [] };\nres.forEach((b, i) => { if (!Array.isArray(b.keys)) throw new Error('no keys array ' + req[i].url + ' ' + JSON.stringify(b).slice(0,300)); ids[req[i].tag].push(...b.keys.map(k => k.key_id)); });\nconst out = [];\nfor (const p of P) { const u = [...new Set(ids[p.tag])]; const lid = langs[p.tag].map(x => x[1]).join(',');\n  for (let i = 0; i < u.length; i += 100) out.push({ json: { tag: p.tag, url: 'https://api.lokalise.com/api2/projects/' + p.pid + '/keys?limit=100&include_translations=1&disable_references=1&filter_translation_lang_ids=' + lid + '&filter_key_ids=' + u.slice(i, i+100).join(',') } }); }\nout[0].json.langs = langs; out[0].json.counts = { mono: new Set(ids.mono).size, pdf: new Set(ids.pdf).size };\nreturn out;"
+      }
+    },
+    {
+      "id": "e8a58fc2-a4d3-4246-9d51-09a0e7d684bf",
+      "name": "Fetch full",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "cc1fc052-937e-4b47-b03f-b076b613f759",
+      "name": "Analyze",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const req = $('Plan full').all().map(i => i.json); const res = $input.all().map(i => i.json);\nconst LING = ['daniel@dgmultilingualservices.com','qrcodelocalization@gmail.com','47natcha@gmail.com','therese.svardsten@gmail.com','mteres@terestraducciones.com','sara.guinot.trad@gmail.com','arandatrad@gmail.com','sabrathan@gmail.com','farahputri@gmail.com','dmluciahorea@gmail.com','roxanamoldovan25@gmail.com','root-translations@outlook.com','austra.muizniece@gmail.com','harald.roald@gmail.com','ellen.de.venter@outlook.com','ilaria.roncaglia@gmail.com','silke.luehrmann@gmx.de','boh.vozniuk@gmail.com','vidiasc@gmail.com','ivanaturcin@ymail.com','julius.valkiunas@gmail.com','jaromirvicari@me.com','karahansisman@gmail.com','katri.varvikko@gmail.com','kenneth@phraseit.dk','translation@cornell.hu','ruckova.lucia@gmail.com','marit.teichmann@gmail.com','michal.tosza@translators.org.pl','mteixeira@sacradomus.com','bruno@bsttranslations.com','nerissaneptuno@gmail.com','straus.translations@gmail.com','quentinnguyen.localize@gmail.com','futuremedia@sdl.com','silis.martins@gmail.com'];\nconst nm = k => typeof k.key_name === 'object' ? (k.key_name.web || k.key_name.other || k.key_name.ios || k.key_name.android) : k.key_name;\nconst S = t => typeof t.translation === 'object' ? JSON.stringify(t.translation) : (t.translation || '');\nconst norm = s => String(s || '').replace(/\\s+/g, ' ').trim();\nconst mono = [], pdf = [];\nres.forEach((b, i) => { if (!Array.isArray(b.keys)) throw new Error('no keys'); (req[i].tag === 'mono' ? mono : pdf).push(...b.keys); });\nconst mByName = {}, mByEn = {};\nfor (const k of mono) { const tr = {}; let en = ''; for (const t of k.translations || []) { tr[t.language_iso] = { v: S(t), by: t.modified_by_email, tid: t.translation_id }; if (t.language_iso === 'en') en = norm(S(t)); } const rec = { kid: k.key_id, k: nm(k), en, tr }; mByName[nm(k)] = rec; if (en) (mByEn[en] = mByEn[en] || []).push(rec); }\nconst byWho = {}, byWhoMono = {}; let pdfStrings = 0;\nconst cat = { match: 0, differs: 0, monoLingDiff: 0, noMonoKey: 0, enChangedSameName: 0, matchedByEnOnly: 0 };\nconst samples = { noMonoKey: [], enChangedSameName: [], differs: [], monoLingDiff: [] };\nconst lingPdfByLang = {};\nfor (const k of mono) for (const t of k.translations || []) { if (t.language_iso === 'en') continue; byWhoMono[t.modified_by_email] = (byWhoMono[t.modified_by_email] || 0) + 1; }\nfor (const k of pdf) { let en = ''; const tr = {}; for (const t of k.translations || []) { tr[t.language_iso] = { v: S(t), by: t.modified_by_email }; if (t.language_iso === 'en') en = norm(S(t)); }\n  for (const [iso, p] of Object.entries(tr)) { if (iso === 'en' || !p.v) continue; pdfStrings++; byWho[p.by] = (byWho[p.by] || 0) + 1; if (!LING.includes(p.by)) continue;\n    lingPdfByLang[iso] = (lingPdfByLang[iso] || 0) + 1;\n    const same = mByName[nm(k)]; let target = null; let how = '';\n    if (same && same.en === en) { target = same; how = 'name'; } else if (same && same.en !== en) { cat.enChangedSameName++; if (samples.enChangedSameName.length < 15) samples.enChangedSameName.push({ k: nm(k), iso, pdfEn: en, monoEn: same.en, pdf: p.v, mono: (same.tr[iso] || {}).v, by: p.by }); continue; }\n    else if (mByEn[en]) { target = mByEn[en][0]; how = 'en'; cat.matchedByEnOnly++; }\n    else { cat.noMonoKey++; if (samples.noMonoKey.length < 10) samples.noMonoKey.push({ k: nm(k), iso, en, by: p.by }); continue; }\n    const m = target.tr[iso] || { v: '' };\n    if (m.v === p.v) { cat.match++; continue; }\n    if (LING.includes(m.by)) { cat.monoLingDiff++; if (samples.monoLingDiff.length < 10) samples.monoLingDiff.push({ k: target.k, iso, pdf: p.v, pdfBy: p.by, mono: m.v, monoBy: m.by }); continue; }\n    cat.differs++; if (samples.differs.length < 20) samples.differs.push({ k: target.k, how, iso, pdf: p.v, pdfBy: p.by, mono: m.v, monoBy: m.by }); } }\nreturn [{ json: { pdfKeys: pdf.length, monoKeys: mono.length, pdfStrings, lingPdfStrings: Object.values(lingPdfByLang).reduce((a,b)=>a+b,0), lingPdfByLang, cat, byWho, byWhoMono, samples } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Plan langs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan langs": {
+      "main": [
+        [
+          {
+            "node": "Fetch langs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch langs": {
+      "main": [
+        [
+          {
+            "node": "Plan lite",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan lite": {
+      "main": [
+        [
+          {
+            "node": "Fetch lite",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch lite": {
+      "main": [
+        [
+          {
+            "node": "Plan full",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan full": {
+      "main": [
+        [
+          {
+            "node": "Fetch full",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch full": {
+      "main": [
+        [
+          {
+            "node": "Analyze",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "4RBoDRFDKs0EOHP7",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-29T12:44:26.970Z",
+      "updatedAt": "2026-09-29T12:44:26.970Z"
+    }
+  ],
+  "activeVersion": null
+}
