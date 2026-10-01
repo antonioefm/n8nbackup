@@ -1,0 +1,261 @@
+{
+  "id": "9auYQlsQ0W5s4GLi",
+  "name": "Personality.co – untranslated keys read + TM/glossary/fuzzy (read-only)",
+  "description": "Read-only: Personality.co untranslated keys with fuzzy matches, glossary hits and gender-context keys.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-30T11:13:11.246Z",
+  "updatedAt": "2026-09-30T11:13:17.140Z",
+  "isArchived": false,
+  "versionId": "132df54e-508f-49f7-bbd6-842a559765bc",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "bca14619-bf35-448e-bdbe-dd85e63bc86c",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "5100cae9-30dc-46f9-83a7-45674513c5c7",
+      "name": "Get Languages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/31393214664f295f94dd86.76792605/languages?limit=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "e8221a8d-b6bb-40a5-a818-28bf1dddf7f9",
+      "name": "Get Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/31393214664f295f94dd86.76792605/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "include_translations",
+              "value": "1"
+            },
+            {
+              "name": "limit",
+              "value": "5000"
+            },
+            {
+              "name": "filter_translation_lang_ids",
+              "value": "={{ $('Get Languages').first().json.languages.map(l => l.lang_id).join(',') }}"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "page",
+                    "value": "={{ $pageCount + 1 }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !Array.isArray($response.body.keys) || $response.body.keys.length < 5000 }}",
+              "limitPagesFetched": true,
+              "maxRequests": 10,
+              "requestInterval": 700
+            }
+          }
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "9b5ba70b-d846-4791-a95a-bad8da2c5efb",
+      "name": "Get Glossary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "pagination": {
+            "pagination": {
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.body.meta.nextCursor }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !($response.body.meta && $response.body.meta.nextCursor) }}",
+              "limitPagesFetched": true,
+              "maxRequests": 5,
+              "requestInterval": 700
+            }
+          }
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "d39b01b3-fc35-408d-a188-035b845d506a",
+      "name": "Analyze",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "\nconst EXCL = new Set(['pst','ps','cus','pt_old']);\nconst langList = $('Get Languages').first().json.languages;\nconst idToIso = {}; langList.forEach(l => idToIso[l.lang_id] = l.lang_iso);\nconst targets = langList.map(l => l.lang_iso).filter(i => i !== 'en' && !EXCL.has(i));\nlet all = [];\nfor (const it of $('Get Keys').all()) { if (!Array.isArray(it.json.keys)) throw new Error('keys missing: ' + JSON.stringify(it.json).slice(0,300)); all = all.concat(it.json.keys); }\nconst tr = (k, iso) => { const t = (k.translations||[]).find(x => x.language_iso === iso); if (!t) return ''; return typeof t.translation === 'string' ? t.translation : JSON.stringify(t.translation); };\nconst isEmpty = (k, iso) => { const t = (k.translations||[]).find(x => x.language_iso === iso); if (!t) return true; const v = t.translation; if (typeof v === 'string') return v.trim() === ''; if (v && typeof v === 'object') return Object.values(v).every(s => !String(s||'').trim()); return true; };\nconst name = k => typeof k.key_name === 'object' ? (k.key_name.web || k.key_name.other || Object.values(k.key_name)[0]) : k.key_name;\nconst active = all.filter(k => !k.is_archived);\nconst untrans = active.filter(k => targets.some(i => isEmpty(k, i)) || isEmpty(k,'en'));\nconst norm = s => String(s||'').toLowerCase().replace(/<[^>]+>/g,' ').replace(/[^\\p{L}\\p{N}\\s-]/gu,' ').replace(/\\s+/g,' ').trim();\nconst toks = s => new Set(norm(s).split(' ').filter(Boolean));\nconst dice = (a,b) => { if (!a.size||!b.size) return 0; let n=0; for (const x of a) if (b.has(x)) n++; return 2*n/(a.size+b.size); };\nconst lev = (a,b) => { if (a===b) return 1; const m=a.length,n=b.length; if(!m||!n) return 0; let p=Array(n+1).fill(0).map((_,j)=>j); for(let i=1;i<=m;i++){ const c=[i]; for(let j=1;j<=n;j++) c[j]=Math.min(p[j]+1,c[j-1]+1,p[j-1]+(a[i-1]===b[j-1]?0:1)); p=c;} return 1-p[n]/Math.max(m,n); };\nconst donors = active.filter(k => !untrans.includes(k) && tr(k,'en').trim());\nconst donorTok = donors.map(k => toks(tr(k,'en')));\nlet terms = []; for (const it of $('Get Glossary').all()) { const d = it.json.data || it.json.glossary_terms || []; terms = terms.concat(d); }\nconst out = untrans.map(k => {\n  const en = tr(k,'en'); const et = toks(en); const en_n = norm(en);\n  const cands = donors.map((d,i) => ({d, s: dice(et, donorTok[i])})).filter(x => x.s >= 0.4).sort((a,b)=>b.s-a.s).slice(0,25)\n    .map(x => ({ d: x.d, s: lev(en_n, norm(tr(x.d,'en'))) })).filter(x => x.s >= 0.55).sort((a,b)=>b.s-a.s).slice(0,4);\n  const missing = targets.filter(i => isEmpty(k,i));\n  const g = terms.filter(t => { const tt = norm(t.term); return tt && new RegExp('(^|\\\\s)'+tt.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')+'(\\\\s|$)').test(en_n); })\n    .map(t => ({ term: t.term, desc: t.description, forbidden: t.forbidden, translatable: t.translatable, tr: Object.fromEntries((t.translations||[]).filter(x=>x.translation).map(x => [idToIso[x.langId] || x.langId, x.translation])) }));\n  return {\n    key_id: k.key_id, key: name(k), tags: k.tags, description: k.description, is_plural: k.is_plural, char_limit: k.char_limit,\n    en, missing, existing: Object.fromEntries(targets.filter(i => !isEmpty(k,i)).map(i => [i, tr(k,i)])),\n    fuzzy: cands.map(x => ({ key: name(x.d), score: +x.s.toFixed(2), en: tr(x.d,'en'), tr: Object.fromEntries(missing.map(i => [i, tr(x.d,i)])) })),\n    glossary: g\n  };\n});\nconst ctxKeys = active.filter(k => /gender|non[- ]?binary|\\bmale\\b|\\bfemale\\b|\\bman\\b|\\bwoman\\b/i.test(tr(k,'en')) && !untrans.includes(k)).slice(0,40)\n  .map(k => ({ key: name(k), en: tr(k,'en'), tr: Object.fromEntries(targets.map(i => [i, tr(k,i)])) }));\nreturn [{ json: { total_keys: all.length, active: active.length, targets, untranslated_count: out.length, glossary_terms: terms.length, untranslated: out, gender_context: ctxKeys } }];\n"
+      },
+      "executeOnce": true
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Get Languages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Languages": {
+      "main": [
+        [
+          {
+            "node": "Get Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Keys": {
+      "main": [
+        [
+          {
+            "node": "Get Glossary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Glossary": {
+      "main": [
+        [
+          {
+            "node": "Analyze",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "9auYQlsQ0W5s4GLi",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-30T11:13:11.248Z",
+      "updatedAt": "2026-09-30T11:13:11.248Z"
+    }
+  ],
+  "activeVersion": null
+}
