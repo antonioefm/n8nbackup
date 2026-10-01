@@ -1,0 +1,329 @@
+{
+  "id": "7EYZIbjiXLKTcM9C",
+  "name": "Lokalise READ + gpt-4.1 - unify sibling key families across tests (no writes) 2026-09-30",
+  "description": "READ ONLY + OpenAI proposals. Groups Personality.co sibling keys that differ only by test code (e.g. find_out_more_*), 18 locales; gpt-4.1 proposes one consistent pattern per family. Linguist edits locked and used as pattern. No writes.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-30T11:43:43.002Z",
+  "updatedAt": "2026-09-30T12:05:06.661Z",
+  "isArchived": false,
+  "versionId": "32f040ee-a5db-4512-bf3a-1abf66f0b212",
+  "versionCounter": 6,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "6ec5b5d3-b7c3-42c3-9213-0cfb72f55331",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "5935c6fa-e434-4297-8765-929e3b62aa79",
+      "name": "Langs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: { langs: ['es','fr','it','pt','ro','pl','lt','lv','de','nl','da','sv','no','et','ms','id','ko','th'] } }];"
+      }
+    },
+    {
+      "id": "18d4ad3f-e948-4242-aecb-fae1faad803c",
+      "name": "Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [1,2,3,4].map(p => ({ json: { url: 'https://api.lokalise.com/api2/projects/31393214664f295f94dd86.76792605/keys?limit=5000&page=' + p + '&disable_references=1' } }));"
+      }
+    },
+    {
+      "id": "161a1e7d-d578-470c-9b5d-4e17c1d573b8",
+      "name": "Fetch lite",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 300000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1500
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "064a8d8c-eba1-4694-bbc4-69e7b16dac25",
+      "name": "Pick",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const TESTS = [\"adhd\", \"anxiety\", \"atst\", \"autism\", \"big5-test\", \"big5\", \"bpd\", \"bt\", \"career\", \"depression\", \"et\", \"fa\", \"iq\", \"ll\", \"ls\", \"ma\", \"narcissist\", \"ndt\", \"nd\", \"occ\", \"ocd\", \"ps\", \"sf\", \"so\", \"love_language\", \"love_styles\", \"attachment_style\", \"iq-test\", \"empath\", \"bipolar\"];\nconst nm = k => typeof k.key_name === 'object' ? (k.key_name.web || k.key_name.other) : k.key_name;\nconst alt = TESTS.map(t => t.replace(/[-]/g, '\\\\-')).sort((a,b) => b.length - a.length).join('|');\nconst RE = new RegExp('(^|_|::)(' + alt + ')(?=$|_|::)');\nconst EXCL = /components::members::profile|terms_and_conditions|privacy_policy|cookie|legal|_questions\\./;\nconst fam = {}; const all = [];\nfor (const it of $input.all()) { if (!Array.isArray(it.json.keys)) throw new Error('no keys'); for (const k of it.json.keys) all.push([k.key_id, nm(k) || '']); }\nconst names = new Set(all.map(x => x[1]));\nfor (const [id, n] of all) { if (EXCL.test(n)) continue; const m = n.match(RE); let sig = null, t = null;\n  if (m) { sig = n.replace(RE, (s, a) => a + '{T}'); t = m[2]; } else { sig = n + '_{T}'; t = '(base)'; }\n  (fam[sig] = fam[sig] || []).push({ id, n, t }); }\nconst keep = {}; for (const [sig, arr] of Object.entries(fam)) { const tests = new Set(arr.filter(x => x.t !== '(base)').map(x => x.t)); if (tests.size >= 3) keep[sig] = arr; }\nconst ids = []; const fmap = {}; for (const [sig, arr] of Object.entries(keep)) for (const x of arr) { ids.push(x.id); fmap[x.id] = [sig, x.t]; }\nconst out = []; for (let i = 0; i < ids.length; i += 100) out.push({ json: { n: ids.length, nf: Object.keys(keep).length, url: 'https://api.lokalise.com/api2/projects/31393214664f295f94dd86.76792605/keys?limit=100&include_translations=1&disable_references=1&filter_translation_lang_ids=640,767,666,1056,10154,673,757,734,733,10152,10153,749,737,760,748,708,770,754,753&filter_key_ids=' + ids.slice(i, i+100).join(',') } });\nout[0].json.fmap = fmap; return out;"
+      }
+    },
+    {
+      "id": "e77a39b2-ee18-4f32-b99e-f24549bd984a",
+      "name": "Fetch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 300000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1500
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "1f6f826f-a9a5-48c3-9944-4f541b650505",
+      "name": "Build batches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const LING = [\"47natcha@gmail.com\", \"arandatrad@gmail.com\", \"austra.muizniece@gmail.com\", \"boh.vozniuk@gmail.com\", \"bruno@bsttranslations.com\", \"daniel@dgmultilingualservices.com\", \"dmluciahorea@gmail.com\", \"ellen.de.venter@outlook.com\", \"farahputri@gmail.com\", \"futuremedia@sdl.com\", \"harald.roald@gmail.com\", \"ilaria.roncaglia@gmail.com\", \"ivanaturcin@ymail.com\", \"jaromirvicari@me.com\", \"julius.valkiunas@gmail.com\", \"karahansisman@gmail.com\", \"katri.varvikko@gmail.com\", \"kenneth@phraseit.dk\", \"marit.teichmann@gmail.com\", \"michal.tosza@translators.org.pl\", \"mjlocalize@gmail.com\", \"mteixeira@sacradomus.com\", \"mteres@terestraducciones.com\", \"nerissaneptuno@gmail.com\", \"qrcodelocalization@gmail.com\", \"quentinnguyen.localize@gmail.com\", \"root-translations@outlook.com\", \"roxanamoldovan25@gmail.com\", \"ruckova.lucia@gmail.com\", \"sabrathan@gmail.com\", \"sara.guinot.trad@gmail.com\", \"silis.martins@gmail.com\", \"silke.luehrmann@gmx.de\", \"straus.translations@gmail.com\", \"therese.svardsten@gmail.com\", \"translation@cornell.hu\", \"vidiasc@gmail.com\"];\nconst LANGS = $('Langs').first().json.langs; const fmap = $('Pick').first().json.fmap;\nconst NAMES = { es:'Spanish (Spain)', fr:'French (France)', it:'Italian', pt:'Portuguese (Brazil)', ro:'Romanian', pl:'Polish', lt:'Lithuanian', lv:'Latvian', de:'German', nl:'Dutch', da:'Danish', sv:'Swedish', no:'Norwegian Bokm\\u00e5l', et:'Estonian', ms:'Malay', id:'Indonesian', ko:'Korean', th:'Thai' };\nconst all = []; for (const it of $input.all()) { if (!Array.isArray(it.json.keys)) throw new Error('no keys'); all.push(...it.json.keys); }\nconst nm = k => typeof k.key_name === 'object' ? (k.key_name.web || k.key_name.other) : k.key_name;\nconst out = [];\nfor (const iso of LANGS) {\n  const fams = {};\n  for (const k of all) { const f = fmap[k.key_id]; if (!f) continue; const en = (k.translations||[]).find(t => t.language_iso === 'en'); const tr = (k.translations||[]).find(t => t.language_iso === iso);\n    if (!tr || typeof tr.translation !== 'string' || !tr.translation) continue;\n    (fams[f[0]] = fams[f[0]] || []).push({ i: tr.translation_id, kid: k.key_id, key: nm(k), test: f[1], en: en ? en.translation : '', t: tr.translation, lock: LING.includes(tr.modified_by_email) }); }\n  let batch = []; let cnt = 0;\n  const flush = () => { if (!batch.length) return;\n    const sys = 'You are a senior native ' + NAMES[iso] + ' copywriter and localizer for Personality.co. You receive GROUPS of sibling UI strings: the same UI element repeated for different tests (key names differ only by the test code, shown as \"test\"). In every group at least one member has \"lock\": true \\u2014 it was written by our professional linguist and is the REFERENCE. TASK: rewrite every non-locked member so it copies the linguist\\'s reference wording, sentence structure, verb choice, register, punctuation and capitalization as closely as possible, changing ONLY the test-specific part (use each member\\'s English source to know what that part is, and keep the test terminology already used in that member or in other locked members). If several members are locked and differ, follow the one that best fits most members. Return locked members unchanged. Gender: fa = women only (feminine), ma = men only (masculine), all other tests and \"(base)\" = all genders (gender-neutral, never dual forms like (e), /a, (-a), \\u0259). Keep placeholders like [%1$s:x], HTML tags and line breaks exactly. Reply with JSON only: {\"items\":[{\"i\":<id>,\"t\":\"<string>\"}]} for every input item.';\n    const groups = {}; for (const b of batch) (groups[b.g] = groups[b.g] || []).push({ i: b.i, test: b.test, key: b.key, en: b.en, t: b.t, lock: b.lock });\n    out.push({ json: { iso, n: batch.length, body: { model: 'gpt-4.1', temperature: 0.1, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: sys }, { role: 'user', content: JSON.stringify({ groups: Object.entries(groups).map(([g, items]) => ({ group: g, items })) }) } ] }, src: batch } }); batch = []; };\n  for (const [g, items] of Object.entries(fams)) { if (items.length < 3 || !items.some(x => x.lock)) continue; if (batch.length + items.length > 25) flush(); for (const x of items) batch.push(Object.assign({ g }, x)); }\n  flush(); }\nreturn out;"
+      }
+    },
+    {
+      "id": "279ebc5b-68c0-46a9-b7f9-ecb76e06a9f5",
+      "name": "OpenAI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1568,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 300000,
+          "batching": {
+            "batch": {
+              "batchSize": 8,
+              "batchInterval": 500
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 8000,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "openAiApi": {
+          "id": "yra2iG8pnmCKhZIc",
+          "name": "Futuremedia - n8n project"
+        }
+      }
+    },
+    {
+      "id": "fbbdcea3-a549-4240-a907-435c3efadba1",
+      "name": "Collect",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const reqs = $('Build batches').all(); const res = $input.all(); const rows = []; const errs = []; const fams = {};\nconst ph = s => (s.match(/\\[%\\d\\$s:[^\\]]+\\]|\\{\\{[^}]+\\}\\}|<[^>]+>/g) || []).sort().join('|'); const nl = s => (s.match(/\\n/g) || []).length;\nres.forEach((it, i) => { const r = reqs[i].json; for (const s of r.src) { const k = r.iso + '|' + s.g; fams[k] = fams[k] || []; if (s.lock) fams[k].push(s.t); }\n  let parsed = null; try { parsed = JSON.parse(it.json.choices[0].message.content); } catch (e) { errs.push({ iso: r.iso, e: String(e).slice(0,200) }); return; }\n  const m = {}; for (const x of (parsed.items||[])) m[String(x.i)] = x.t;\n  for (const s of r.src) { if (s.lock) continue; const nt = m[String(s.i)]; if (typeof nt !== 'string') { errs.push({ iso: r.iso, missing: s.i }); continue; }\n    const flags = []; if (ph(nt) !== ph(s.t)) flags.push('placeholder/html'); if (nl(nt) !== nl(s.t)) flags.push('linebreaks');\n    rows.push({ iso: r.iso, g: s.g, test: s.test, tid: s.i, kid: s.kid, key: s.key, en: s.en, old: s.t, new: nt, flags }); } });\nreturn [{ json: { n: rows.length, errs, fams, rows } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Langs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Langs": {
+      "main": [
+        [
+          {
+            "node": "Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan": {
+      "main": [
+        [
+          {
+            "node": "Fetch lite",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch lite": {
+      "main": [
+        [
+          {
+            "node": "Pick",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick": {
+      "main": [
+        [
+          {
+            "node": "Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch": {
+      "main": [
+        [
+          {
+            "node": "Build batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build batches": {
+      "main": [
+        [
+          {
+            "node": "OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Collect",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "7EYZIbjiXLKTcM9C",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-30T11:43:43.006Z",
+      "updatedAt": "2026-09-30T11:43:43.006Z"
+    }
+  ],
+  "activeVersion": null
+}
