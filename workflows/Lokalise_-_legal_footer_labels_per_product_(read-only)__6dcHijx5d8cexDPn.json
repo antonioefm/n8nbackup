@@ -1,0 +1,245 @@
+{
+  "id": "6dcHijx5d8cexDPn",
+  "name": "Lokalise - legal footer labels per product (read-only)",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-01T15:48:03.031Z",
+  "updatedAt": "2026-10-01T15:48:07.209Z",
+  "isArchived": false,
+  "versionId": "f46438e2-5ddb-412e-a70d-17f18fbb5dda",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "692f6e77-e0e1-4a76-8e43-e3f07cce305b",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "b9fce8a5-c94f-4471-9de4-55a5862fad7d",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "return [\n { repo: 'realchecker-frontend', project_id: '964775386a3ce03ecca883.03770715' },\n { repo: 'mobitrace-frontend', project_id: '14240418673f52ae29a007.74392007' },\n { repo: 'myimage-frontend', project_id: '3070657967b5854be32cb1.65162854' },\n { repo: 'resumewise-frontend', project_id: '146903556751632e0388b9.21648688' }\n].map(j => ({ json: j }));"
+      }
+    },
+    {
+      "id": "c1965fcc-4407-41fe-a0af-ee344c775e49",
+      "name": "EN Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://api.lokalise.com/api2/projects/\" + $json.project_id + \"/keys?limit=5000&page=1&include_translations=1&filter_translation_lang_ids=640\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "neverError": false
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "b0e41a32-8234-4118-999d-45a216992286",
+      "name": "Pick Labels",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const cfg = $('Config').all().map(i => i.json);\nconst RX = /^(terms of use|terms of service|terms and conditions|terms|privacy policy|privacy notice|privacy)$/i;\nconst out = [];\n$input.all().forEach((it, i) => {\n  const b = it.json; if (!Array.isArray(b.keys)) throw new Error('no keys for ' + cfg[i].repo);\n  const ids = [];\n  for (const k of b.keys) {\n    const en = (k.translations || []).find(t => t.language_iso === 'en');\n    const v = en && typeof en.translation === 'string' ? en.translation.replace(/<[^>]+>/g,'').trim() : '';\n    if (RX.test(v)) ids.push(k.key_id);\n  }\n  out.push({ json: Object.assign({}, cfg[i], { key_ids: ids.join(','), n: ids.length }) });\n});\nreturn out.filter(o => o.json.n > 0);"
+      }
+    },
+    {
+      "id": "bf16b4b5-55f2-4b5b-a504-fcc3a09b28b7",
+      "name": "Label Keys All Langs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://api.lokalise.com/api2/projects/\" + $json.project_id + \"/keys?limit=500&include_translations=1&filter_key_ids=\" + $json.key_ids }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "neverError": false
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "7cd871fc-47c1-4efe-b0f9-60230ab35328",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const meta = $('Pick Labels').all().map(i => i.json);\nconst rows = [];\n$input.all().forEach((it, i) => {\n  for (const k of (it.json.keys || [])) {\n    const kn = k.key_name && (k.key_name.web || k.key_name.other || Object.values(k.key_name)[0]);\n    const tr = {}; for (const t of (k.translations || [])) tr[t.language_iso] = t.translation;\n    rows.push({ repo: meta[i].repo, key_id: k.key_id, key: kn, tags: k.tags, tr });\n  }\n});\nreturn [{ json: { rows } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "EN Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "EN Keys": {
+      "main": [
+        [
+          {
+            "node": "Pick Labels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Labels": {
+      "main": [
+        [
+          {
+            "node": "Label Keys All Langs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label Keys All Langs": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "6dcHijx5d8cexDPn",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-01T15:48:03.035Z",
+      "updatedAt": "2026-10-01T15:48:03.035Z"
+    }
+  ],
+  "activeVersion": null
+}
