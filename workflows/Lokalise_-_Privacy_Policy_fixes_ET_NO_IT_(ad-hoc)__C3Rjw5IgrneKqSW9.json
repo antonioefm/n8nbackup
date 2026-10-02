@@ -1,0 +1,199 @@
+{
+  "id": "C3Rjw5IgrneKqSW9",
+  "name": "Lokalise - Privacy Policy fixes ET/NO/IT (ad-hoc)",
+  "description": "Ad-hoc: fixes Estonian 'Privaatus' misspelling, Norwegian 'Retningslinjer for personvern' -> 'Personvernerklæring', Italian 'qrcrete' -> 'qrcreate'.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-01T12:48:24.377Z",
+  "updatedAt": "2026-10-01T12:52:07.931Z",
+  "isArchived": false,
+  "versionId": "e7309f3b-c2ce-4ae9-b0d6-7aad03ab22f4",
+  "versionCounter": 4,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "0845ab0e-b82f-4e2f-b623-9808eb9da0f9",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "dbf3598f-9d66-4956-92f9-d9a897f63e09",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const P = [\n ['31393214664f295f94dd86.76792605','10154,760','487474480,525343562,525493873,670728597,670728598,670728599,898098731,898098732,938087101,938087103'],\n ['18564477693fc9bba4cec8.54789459','10154,734,760','854329354,854328554,854328557,854328567,854328595,854328644,854328701,854328752,854328796,854329356,854329357,854329361,854329603,893469556,854329028'],\n ['964775386a3ce03ecca883.03770715','760','885760390']\n];\nreturn P.map(([pid, langs, ids]) => ({ json: { pid, url: `https://api.lokalise.com/api2/projects/${pid}/keys?include_translations=1&filter_translation_lang_ids=${langs}&limit=500&filter_key_ids=${ids}` } }));\n"
+      }
+    },
+    {
+      "id": "1d6253fd-1fee-4f64-8255-6d03463166ca",
+      "name": "Get current",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 800
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "6d932ed4-67ce-49a4-8687-8e732581d0e0",
+      "name": "Build update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "jsCode": "function fix(lang, s) {\n  if (lang === 'et') return s.replace(/([Pp])rivaatus/g, '$1rivaatsus').replace(/PRIVAATUS/g, 'PRIVAATSUS');\n  if (lang === 'it') return s.split('qrcrete').join('qrcreate');\n  if (lang === 'no') {\n    let n = s;\n    n = n.split('1. RETNINGSLINJER FOR PERSONVERN').join('1. PERSONVERNERKLÆRING');\n    n = n.split('har lest våre <PrivacyPolicyLink>retningslinjer for personvern</PrivacyPolicyLink>').join('har lest vår <PrivacyPolicyLink>personvernerklæring</PrivacyPolicyLink>');\n    n = n.split('bekrefter våre <PrivacyPolicyLink>retningslinjer for personvern</PrivacyPolicyLink>').join('bekrefter vår <PrivacyPolicyLink>personvernerklæring</PrivacyPolicyLink>');\n    n = n.replace(/([Vv])åre? (<a [^>]*><u>)Retningslinjer for personvern(<\\/u><\\/a>)/g, '$1år $2Personvernerklæring$3');\n    if (n.trim() === 'Retningslinjer for personvern') n = 'Personvernerklæring';\n    return n;\n  }\n  return s;\n}\nconst LEFT = { et: /privaatus/i, it: /qrcrete/i, no: /etningslinje\\w* for personvern/i };\nconst byP = {}; const changes = []; const leftover = [];\nfor (const it of $input.all()) {\n  const b = it.json || {}; const pid = b.project_id; if (!pid) continue;\n  for (const k of (b.keys || [])) {\n    const trs = [];\n    for (const t of (k.translations || [])) {\n      const l = t.language_iso; if (!LEFT[l]) continue;\n      const cur = t.translation || ''; const nw = fix(l, cur);\n      if (LEFT[l].test(nw)) leftover.push({ key: k.key_name.web, lang: l, text: nw.slice(0, 250) });\n      if (nw !== cur) { trs.push({ language_iso: l, translation: nw }); changes.push({ pid: pid.slice(0, 4), key: k.key_name.web, lang: l, before: cur, after: nw }); }\n    }\n    if (trs.length) (byP[pid] = byP[pid] || []).push({ key_id: k.key_id, translations: trs });\n  }\n}\nconst out = Object.keys(byP).map(pid => ({ json: { pid, body: { keys: byP[pid] }, n: byP[pid].length, changes, leftover } }));\nif (!out.length) return [{ json: { pid: null, n: 0, changes, leftover } }];\nreturn out;\n"
+      }
+    },
+    {
+      "id": "e9fb9f9b-3efc-4699-9a54-c6ec0a05162e",
+      "name": "Write",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.pid }}/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "disabled": true
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Get current",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get current": {
+      "main": [
+        [
+          {
+            "node": "Build update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build update": {
+      "main": [
+        [
+          {
+            "node": "Write",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "C3Rjw5IgrneKqSW9",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-01T12:48:24.379Z",
+      "updatedAt": "2026-10-01T12:48:24.379Z"
+    }
+  ],
+  "activeVersion": null
+}
