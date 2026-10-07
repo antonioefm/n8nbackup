@@ -1,0 +1,184 @@
+{
+  "id": "3WJqmelWKiW5FfcB",
+  "name": "Lokalise READ - Realchecker FE new keys 061026 + TM corpus",
+  "description": "READ ONLY. Pulls Realchecker FE keys (today's 061026-tagged keys with screenshots) plus RC/Mobitrace TM corpus and shared glossary.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-06T16:26:40.910Z",
+  "updatedAt": "2026-10-06T17:16:39.290Z",
+  "isArchived": false,
+  "versionId": "d6d608ce-4a71-44fb-ac38-f97e15290278",
+  "versionCounter": 6,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "51686195-aef3-4cf7-9a74-d546a1040dc8",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "3d4d64b6-58c0-43ec-8258-0f5810ce87fd",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// READ ONLY. GET urls only.\nconst B = 'https://api.lokalise.com/api2/projects/';\nconst q = 'include_translations=1&disable_references=1&filter_archived=exclude&limit=500&pagination=cursor';\nreturn [\n  { json: { label: 'qrc', url: B + '491848986923fad6dc2f85.42477363/keys?' + q } },\n  { json: { label: 'mqr', url: B + '60625870676151e1da46d0.81913446/keys?' + q } }\n];"
+      }
+    },
+    {
+      "id": "3e9d1fd8-25b8-4cb6-8ddd-a53e1aaf6b61",
+      "name": "Fetch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 60,
+              "requestInterval": 700
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "a84b0d9f-858a-40b8-960c-7006a7dea8b3",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const res = { rows: [], errors: [], seen: 0 };\nconst str = v => (v && typeof v === 'object') ? JSON.stringify(v) : (v == null ? '' : String(v));\nconst RX = /\\bphones?\\b/i;\nfor (const it of $input.all()) {\n  const b = it.json.body || {};\n  if (!Array.isArray(b.keys)) { res.errors.push({ status: it.json.statusCode, body: JSON.stringify(b).slice(0, 300) }); continue; }\n  res.seen += b.keys.length;\n  for (const k of b.keys) {\n    const tr = k.translations || [];\n    const en = tr.find(t => t.language_iso === 'en');\n    const enTxt = en ? str(en.translation) : '';\n    if (!RX.test(enTxt)) continue;\n    const fil = tr.find(t => t.language_iso === 'fil');\n    const hu = tr.find(t => t.language_iso === 'hu');\n    res.rows.push({ p: b.project_id, k: (k.key_name || {}).web || '', en: enTxt, fil: fil ? str(fil.translation) : '', fil_by: fil ? (fil.modified_by_email || '') : '', hu: hu ? str(hu.translation) : '' });\n  }\n}\nreturn [{ json: res }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "3WJqmelWKiW5FfcB",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-06T16:26:40.914Z",
+      "updatedAt": "2026-10-06T16:26:40.914Z"
+    }
+  ],
+  "activeVersion": null
+}
