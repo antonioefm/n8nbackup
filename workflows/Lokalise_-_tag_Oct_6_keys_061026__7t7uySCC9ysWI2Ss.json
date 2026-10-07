@@ -1,0 +1,241 @@
+{
+  "id": "7t7uySCC9ysWI2Ss",
+  "name": "Lokalise - tag Oct 6 keys 061026",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-06T15:06:18.233Z",
+  "updatedAt": "2026-10-06T15:06:50.543Z",
+  "isArchived": false,
+  "versionId": "43675946-af32-4f04-9558-784fe8bd1f68",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "4a722332-9e9c-40fc-9c2a-b015f9279f02",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "61d26547-de44-4bd2-9aa5-50142dab8463",
+      "name": "Fetch All Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/964775386a3ce03ecca883.03770715/keys?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "page",
+                    "value": "={{ $pageCount + 1 }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ ($response.body.keys || []).length < 500 }}",
+              "limitPagesFetched": true,
+              "maxRequests": 200,
+              "requestInterval": 250
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "748959df-bd16-4a51-9b0a-44760a98065e",
+      "name": "Find Oct 6 Keys",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const all = [];\nfor (const it of $input.all()) { for (const k of (it.json.keys || [])) { all.push(k); } }\nconst utcStart = Date.UTC(2026, 9, 6) / 1000;\nconst utcEnd = utcStart + 86400;\nconst plStart = utcStart - 7200;\nconst plEnd = utcEnd - 7200;\nfunction pick(s, e) {\n  const ks = all.filter(function (k) { return k.created_at_timestamp >= s && k.created_at_timestamp < e; });\n  return {\n    total: ks.length,\n    archived: ks.filter(function (k) { return k.is_archived; }).length,\n    already_tagged: ks.filter(function (k) { return (k.tags || []).indexOf('061026') >= 0; }).length,\n    key_ids: ks.map(function (k) { return k.key_id; }),\n    sample: ks.slice(0, 5).map(function (k) { return { id: k.key_id, name: k.key_name, created: k.created_at, tags: k.tags, archived: k.is_archived }; })\n  };\n}\nconst byDay = {};\nfor (const k of all) { const d = (k.created_at || '').slice(0, 10); byDay[d] = (byDay[d] || 0) + 1; }\nconst recent = Object.keys(byDay).sort().slice(-8).map(function (d) { return d + ': ' + byDay[d]; });\nreturn [{ json: { total_keys: all.length, pages: $input.all().length, utc_day: pick(utcStart, utcEnd), warsaw_day: pick(plStart, plEnd), recent_days_utc: recent } }];\n"
+      }
+    },
+    {
+      "id": "02096430-10b8-4a8b-bdf0-8103598baef6",
+      "name": "Build Tag Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const d = $input.first().json.utc_day;\nif (d.total !== 188) { throw new Error('Expected 188 keys, found ' + d.total + ' - aborting'); }\nreturn [{ json: { body: { keys: d.key_ids.map(function (id) { return { key_id: id, tags: ['061026'], merge_tags: true }; }) } } }];\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "3eff0990-9f9e-46db-8654-0b83f662dd75",
+      "name": "Tag Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "contentType": "json",
+        "genericAuthType": "httpHeaderAuth",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "method": "PUT",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 120000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "https://api.lokalise.com/api2/projects/964775386a3ce03ecca883.03770715/keys"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "91c1f146-ed66-4be7-8864-1991a4edda1d",
+      "name": "Summarize Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const r = $input.first().json;\nconst b = r.body || {};\nconst keys = b.keys || [];\nconst tagged = keys.filter(function (k) { return (k.tags || []).indexOf('061026') >= 0; }).length;\nreturn [{ json: { status: r.statusCode, returned: keys.length, tagged: tagged, errors: b.errors || null, error: b.error || null, sample_tags: keys.slice(0,3).map(function (k) { return k.tags; }) } }];\n",
+        "mode": "runOnceForAllItems"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch All Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch All Keys": {
+      "main": [
+        [
+          {
+            "node": "Find Oct 6 Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Oct 6 Keys": {
+      "main": [
+        [
+          {
+            "node": "Build Tag Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Tag Payload": {
+      "main": [
+        [
+          {
+            "node": "Tag Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag Keys": {
+      "main": [
+        [
+          {
+            "node": "Summarize Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "7t7uySCC9ysWI2Ss",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-06T15:06:18.244Z",
+      "updatedAt": "2026-10-06T15:06:18.244Z"
+    }
+  ],
+  "activeVersion": null
+}
