@@ -5,10 +5,10 @@
   "active": false,
   "activeVersionId": null,
   "createdAt": "2026-05-13T19:47:33.236Z",
-  "updatedAt": "2026-09-16T08:22:21.200Z",
+  "updatedAt": "2026-10-07T09:27:24.626Z",
   "isArchived": false,
-  "versionId": "40cc2415-426c-4d34-a21b-1322e81a1036",
-  "versionCounter": 66,
+  "versionId": "d36b369a-3ed6-4cd9-8c14-c0b90efb8d82",
+  "versionCounter": 68,
   "sourceWorkflowId": null,
   "triggerCount": 0,
   "nodes": [
@@ -27,9 +27,304 @@
         -336,
         2896
       ]
+    },
+    {
+      "parameters": {
+        "content": "## Localized high-risk keywords - Oct 2026 (17,199 rows, 29 languages)\n\n**Run ONLY after the new exact matcher is published on both PS eligibility checks** (first message 15i86TFI1RDrkDM2, second message 6lYSxMlA2bQYIaaq). The table is live - rows are matched on the very next ticket. The old a-z matcher turns many of these rows into fragments like \"1\", \"24\" or \"t\" and would flag almost every Personality ticket Tier A.\n\n**How to run:** Execute workflow on `Upload keyword sheet`, upload `support_routing_keywords.xlsx` in the form that opens, tick the confirmation, submit.\n\n**What it does:** reads sheet `All languages`. Term -> keyword (as written), Tier, Category, Language, active true. Routing / Human handling are not imported - they map 1:1 to the tier.\n465 terms that would fire on ordinary ENGLISH tickets go in with `active = false` and the reason in `notes` (common English word such as per / love / process, English phrase not on the English list such as full refund, bare number such as 171) - unless the same keyword is already an English row, then it stays active.\nRefuses to run if non-English rows are already in the table, so it cannot double-import. `Import summary` shows the counts.\n\nTier C translations are not in this sheet - to be added later. `language` was backfilled to `en` on the 782 English rows on 2026-10-07.",
+        "height": 420,
+        "width": 1660,
+        "color": 3
+      },
+      "id": "b2a470a8-fcb3-4e3b-9725-630b7a9b186c",
+      "name": "Sticky Localized Keywords",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -336,
+        3344
+      ]
+    },
+    {
+      "parameters": {
+        "formTitle": "Import localized high-risk keywords",
+        "formDescription": "Upload support_routing_keywords.xlsx. Rows from the sheet \"All languages\" are added to cs_high_risk_keywords. Run only after the new exact matcher is published on both PS eligibility checks.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Keyword sheet (.xlsx)",
+              "fieldType": "file",
+              "fieldName": "keyword_sheet",
+              "multipleFiles": false,
+              "acceptFileTypes": ".xlsx",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Confirmation",
+              "fieldType": "checkbox",
+              "fieldName": "confirmation",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "The new exact matcher is published on both PS eligibility checks"
+                  }
+                ]
+              },
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {
+          "appendAttribution": false,
+          "path": "hr-keywords-import-oct2026"
+        }
+      },
+      "id": "b4747552-d236-47e0-a996-394fd1028465",
+      "name": "Upload keyword sheet",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        -256,
+        3856
+      ],
+      "webhookId": "d3b08068-ec2a-4c35-9dac-31636afec735"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "cachedResultName": "cs_high_risk_keywords",
+          "mode": "list",
+          "value": "H0oFIJNTlQgUVrk5"
+        },
+        "returnAll": true
+      },
+      "id": "48389fab-4166-463f-8d0d-18aff69137ee",
+      "name": "Get existing keywords",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -32,
+        3856
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// === Check table state ===\n// Mode: \"Run Once for All Items\". Input = every row currently in cs_high_risk_keywords.\n//\n// 1) Refuses to run if non-English rows are already in the table, so a second\n//    run can never double-import the localized list.\n// 2) Collects the existing English keywords (NFC + lowercase, the same way the\n//    matcher sees them) so a localized row that is identical to an English\n//    keyword is never quarantined - it behaves exactly like the English row.\n// 3) Passes the uploaded file on as binary \"data\" for Extract From File.\n\nfunction prepare(t) {\n  return String(t == null ? '' : t).normalize('NFC').toLowerCase().trim();\n}\n\nconst rows = $input.all().map(i => i.json || {}).filter(r => r.keyword != null);\n\nconst nonEnglish = rows.filter(r => {\n  const l = String(r.language == null ? '' : r.language).trim().toLowerCase();\n  return l !== '' && l !== 'en';\n});\nif (nonEnglish.length > 0) {\n  throw new Error('cs_high_risk_keywords already holds ' + nonEnglish.length +\n    ' non-English rows. Delete them first if you really want to re-import - this guard prevents a double import.');\n}\n\nconst trig = $('Upload keyword sheet').first();\nconst bin = trig.binary || {};\nconst keys = Object.keys(bin);\nif (!keys.length) {\n  throw new Error('No file was received from the form.');\n}\n\nreturn [{\n  json: {\n    existing_rows: rows.length,\n    existing_keys: Array.from(new Set(rows.map(r => prepare(r.keyword)).filter(Boolean)))\n  },\n  binary: { data: bin[keys[0]] }\n}];"
+      },
+      "id": "22af0494-1059-4273-a1af-a13eb4a6c114",
+      "name": "Check table state",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        192,
+        3856
+      ],
+      "notes": "Stops the run if localized rows are already in the table. Passes the uploaded file on as binary 'data'."
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {
+          "headerRow": true,
+          "sheetName": "All languages"
+        }
+      },
+      "id": "ed2d7c12-8a7d-4a28-ab7d-30da782e246f",
+      "name": "Read All languages sheet",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        416,
+        3856
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// === Build localized rows ===\n// Mode: \"Run Once for All Items\". Input = one item per row of the sheet\n// \"All languages\" (Extract From File).\n//\n// Maps the sheet onto cs_high_risk_keywords:\n//   Term -> keyword (as written, NFC), Tier -> tier, Category -> category,\n//   Language -> language, active true, notes empty.\n// Routing and Human handling are NOT imported: they map 1:1 to the tier\n// (A = Priority / hot-legal-financial, B = Standard / hot-conduct), which is\n// exactly what the matcher's TIER_QUEUE already does.\n//\n// QUARANTINE. 465 terms were flagged offline (wordfreq, English Zipf >= 3.5)\n// because under exact matching they would fire on ordinary ENGLISH tickets:\n//   w = single word that is also a common English word (per, love, process, as)\n//   p = English phrase not on the English list (full refund, where is my refund)\n//   n = bare number (171, 118) - fires on amounts, order and ticket numbers\n// They are imported with active = false and the reason in notes, UNLESS the same\n// keyword already exists as an English row - then it is kept active, because it\n// behaves exactly like that English row.\n\nconst QUARANTINE = {\"cs\":{\"bot\":\"w\",\"dark patterns\":\"p\",\"hacker\":\"w\",\"idiot\":\"w\",\"nova\":\"w\",\"past\":\"w\",\"robot\":\"w\",\"scam\":\"w\",\"wtf\":\"w\"},\"da\":{\"dark patterns\":\"p\",\"dr\":\"w\",\"fuck\":\"w\",\"fucking\":\"w\",\"hacker\":\"w\",\"idiot\":\"w\",\"journalist\":\"w\",\"love\":\"w\",\"reporter\":\"w\",\"robot\":\"w\",\"scam\":\"w\",\"snyder\":\"w\",\"supervisor\":\"w\"},\"de\":{\"dark patterns\":\"p\",\"fake\":\"w\",\"hacker\":\"w\",\"hacking\":\"w\",\"idiot\":\"w\",\"illegal\":\"w\",\"journalist\":\"w\",\"mist\":\"w\",\"regulator\":\"w\",\"reporter\":\"w\",\"scam\":\"w\",\"supervisor\":\"w\",\"trusted shops\":\"p\"},\"el\":{\"1520\":\"n\",\"bot\":\"w\",\"dark patterns\":\"p\",\"scam\":\"w\",\"wtf\":\"w\"},\"es\":{\"criminal\":\"w\",\"detective\":\"w\",\"fiscal\":\"w\",\"google reviews\":\"p\",\"hacker\":\"w\",\"hackers\":\"w\",\"legal\":\"w\",\"robot\":\"w\",\"supervisor\":\"w\",\"tribunal\":\"w\"},\"et\":{\"bot\":\"w\",\"dark patterns\":\"p\",\"fi\":\"w\",\"pagan\":\"w\",\"reporter\":\"w\",\"robot\":\"w\",\"scam\":\"w\",\"wtf\":\"w\"},\"fi\":{\"dark patterns\":\"p\",\"fine\":\"w\",\"fuck\":\"w\",\"media\":\"w\",\"mtv\":\"w\",\"scam\":\"w\",\"wtf\":\"w\"},\"fil\":{\"1 star\":\"p\",\"1-star review\":\"p\",\"account hacked\":\"p\",\"ad standards council\":\"p\",\"already cancelled\":\"p\",\"attorney\":\"w\",\"auto reply\":\"p\",\"auto-renew\":\"p\",\"automated reply\":\"p\",\"automated response\":\"p\",\"automatic renewal\":\"p\",\"bad review\":\"p\",\"bank investigation\":\"p\",\"boss\":\"w\",\"bot\":\"w\",\"call my bank\":\"p\",\"charge back\":\"p\",\"charged after trial\":\"p\",\"charged twice\":\"p\",\"claim\":\"w\",\"class action\":\"p\",\"complaints department\":\"p\",\"compliance department\":\"p\",\"compromised card\":\"p\",\"consumer act\":\"p\",\"consumer protection\":\"p\",\"consumer rights\":\"p\",\"contact my bank\":\"p\",\"criminal\":\"w\",\"cyber crime\":\"p\",\"dark patterns\":\"p\",\"data access request\":\"p\",\"data breach\":\"p\",\"data privacy\":\"p\",\"data privacy act\":\"p\",\"data protection officer\":\"p\",\"delete my data\":\"p\",\"demand letter\":\"p\",\"department of justice\":\"p\",\"department of trade and industry\":\"p\",\"detective\":\"w\",\"dispute\":\"w\",\"double charge\":\"p\",\"double charged\":\"p\",\"duplicate charge\":\"p\",\"duplicate payment\":\"p\",\"european commission\":\"p\",\"european union\":\"p\",\"expose\":\"w\",\"fair trade\":\"p\",\"false advertising\":\"p\",\"final warning\":\"p\",\"fine print\":\"p\",\"formal complaint\":\"p\",\"fraud\":\"w\",\"fraudulent\":\"w\",\"fuck\":\"w\",\"full refund\":\"p\",\"gaga\":\"w\",\"google review\":\"p\",\"hack\":\"w\",\"hacked account\":\"p\",\"hacker\":\"w\",\"hidden charges\":\"p\",\"hidden fees\":\"p\",\"hidden subscription\":\"p\",\"human agent\":\"p\",\"identity theft\":\"p\",\"idiot\":\"w\",\"if this is not resolved\":\"p\",\"ignored me\":\"p\",\"ignoring me\":\"p\",\"illegal\":\"w\",\"illegal charge\":\"p\",\"incompetent\":\"w\",\"insurance commission\":\"p\",\"journalist\":\"w\",\"judge\":\"w\",\"keeps charging me\":\"p\",\"last chance\":\"p\",\"last warning\":\"p\",\"law firm\":\"p\",\"lawsuit\":\"w\",\"lawyer\":\"w\",\"legal\":\"w\",\"legal action\":\"p\",\"legal department\":\"p\",\"legal notice\":\"p\",\"live agent\":\"p\",\"management\":\"w\",\"manager\":\"w\",\"media\":\"w\",\"mediation\":\"w\",\"multiple charges\":\"p\",\"national privacy commission\":\"p\",\"negative review\":\"p\",\"never authorized\":\"p\",\"never signed up\":\"p\",\"no one replied\":\"p\",\"one star\":\"p\",\"or else\":\"p\",\"otherwise i will\":\"p\",\"partial refund\":\"p\",\"pathetic\":\"w\",\"payment reversal\":\"p\",\"personal data\":\"p\",\"police\":\"w\",\"police station\":\"p\",\"press charges\":\"p\",\"privacy\":\"w\",\"privacy commission\":\"p\",\"promised refund\":\"p\",\"prosecutor\":\"w\",\"public attorney\":\"p\",\"ransom\":\"w\",\"real person\":\"p\",\"refund denied\":\"p\",\"refund everything\":\"p\",\"refund rejected\":\"p\",\"regulator\":\"w\",\"reporter\":\"w\",\"reverse the charge\":\"p\",\"right to be forgotten\":\"p\",\"rip-off\":\"p\",\"robot\":\"w\",\"same issue\":\"p\",\"same problem\":\"p\",\"scam\":\"w\",\"sec\":\"w\",\"security breach\":\"p\",\"shit\":\"w\",\"small claims\":\"p\",\"social media\":\"p\",\"sold my data\":\"p\",\"someone used my card\":\"p\",\"still waiting\":\"p\",\"stolen card\":\"p\",\"stop the bot\":\"p\",\"subject access request\":\"p\",\"subscription trap\":\"p\",\"sue\":\"w\",\"supervisor\":\"w\",\"through my bank\":\"p\",\"tv\":\"w\",\"unauthorized access\":\"p\",\"unauthorized charge\":\"p\",\"unauthorized transaction\":\"p\",\"unexpected renewal\":\"p\",\"unfair billing\":\"p\",\"unfair business practice\":\"p\",\"unfair practice\":\"p\",\"useless\":\"w\",\"viral\":\"w\",\"where is my refund\":\"p\",\"without permission\":\"p\",\"wtf\":\"w\",\"you have 24 hours\":\"p\"},\"fr\":{\"clause abusive\":\"p\",\"clowns\":\"w\",\"con\":\"w\",\"cons\":\"w\",\"crime\":\"w\",\"crimes\":\"w\",\"dark pattern\":\"p\",\"dark patterns\":\"p\",\"direction\":\"w\",\"hacker\":\"w\",\"hackers\":\"w\",\"idiot\":\"w\",\"idiots\":\"w\",\"journal\":\"w\",\"justice\":\"w\",\"lois\":\"w\",\"manager\":\"w\",\"opposition\":\"w\",\"pigeon\":\"w\",\"pirate\":\"w\",\"pirates\":\"w\",\"police\":\"w\",\"robot\":\"w\",\"tribunal\":\"w\",\"vol\":\"w\",\"wtf\":\"w\"},\"hr\":{\"bot\":\"w\",\"dark patterns\":\"p\",\"forum.hr\":\"p\",\"idiot\":\"w\",\"regulator\":\"w\",\"reporter\":\"w\",\"robot\":\"w\",\"scam\":\"w\",\"wtf\":\"w\"},\"hu\":{\"bot\":\"w\",\"dark patterns\":\"p\",\"hacker\":\"w\",\"per\":\"w\",\"robot\":\"w\",\"scam\":\"w\",\"wtf\":\"w\"},\"id\":{\"bi\":\"w\",\"bot\":\"w\",\"class action\":\"p\",\"cyber crime\":\"p\",\"dark patterns\":\"p\",\"dispute\":\"w\",\"double charge\":\"p\",\"fraud\":\"w\",\"hack\":\"w\",\"hacker\":\"w\",\"idiot\":\"w\",\"legal\":\"w\",\"media\":\"w\",\"regulator\":\"w\",\"robot\":\"w\",\"scam\":\"w\",\"spill\":\"w\",\"supervisor\":\"w\",\"tai\":\"w\",\"wtf\":\"w\"},\"it\":{\"class action\":\"p\",\"dark pattern\":\"p\",\"data breach\":\"p\",\"detective\":\"w\",\"hacker\":\"w\",\"i media\":\"p\",\"report\":\"w\",\"robot\":\"w\",\"social network\":\"p\"},\"ko\":{\"118\":\"n\",\"1372\":\"n\",\"scam\":\"w\",\"wtf\":\"w\"},\"lt\":{\"dark patterns\":\"p\",\"lb\":\"w\",\"scam\":\"w\",\"wtf\":\"w\"},\"lv\":{\"dark patterns\":\"p\",\"idiots\":\"w\",\"regulators\":\"w\",\"robots\":\"w\",\"scam\":\"w\",\"wtf\":\"w\"},\"ms\":{\"bot\":\"w\",\"class action\":\"p\",\"dark patterns\":\"p\",\"dispute\":\"w\",\"double charge\":\"p\",\"fraud\":\"w\",\"hacker\":\"w\",\"media\":\"w\",\"robot\":\"w\",\"scam\":\"w\",\"supervisor\":\"w\",\"tribunal\":\"w\",\"wtf\":\"w\"},\"nl\":{\"ap\":\"w\",\"claim\":\"w\",\"clowns\":\"w\",\"dark patterns\":\"p\",\"detective\":\"w\",\"fuck\":\"w\",\"fucking\":\"w\",\"hacker\":\"w\",\"hackers\":\"w\",\"hacking\":\"w\",\"incompetent\":\"w\",\"journalist\":\"w\",\"radar\":\"w\",\"robot\":\"w\",\"roof\":\"w\",\"scam\":\"w\",\"shit\":\"w\",\"supervisor\":\"w\",\"wet\":\"w\"},\"no\":{\"dark patterns\":\"p\",\"dust\":\"w\",\"fuck\":\"w\",\"fucking\":\"w\",\"hacker\":\"w\",\"idiot\":\"w\",\"journalist\":\"w\",\"lover\":\"w\",\"ran\":\"w\",\"reporter\":\"w\",\"robot\":\"w\",\"satan\":\"w\",\"scam\":\"w\",\"supervisor\":\"w\"},\"pl\":{\"bot\":\"w\",\"dark patterns\":\"p\",\"fraud\":\"w\",\"media\":\"w\",\"regulator\":\"w\",\"reporter\":\"w\",\"robot\":\"w\",\"scam\":\"w\",\"wtf\":\"w\"},\"pt\":{\"171\":\"n\",\"bot\":\"w\",\"cdc\":\"w\",\"crime\":\"w\",\"crimes\":\"w\",\"cu\":\"w\",\"dark pattern\":\"p\",\"hacker\":\"w\",\"hackers\":\"w\",\"judicial\":\"w\",\"legal\":\"w\",\"scam\":\"w\",\"superior\":\"w\",\"supervisor\":\"w\",\"tribunal\":\"w\"},\"ro\":{\"bot\":\"w\",\"contest\":\"w\",\"crime\":\"w\",\"dark patterns\":\"p\",\"director\":\"w\",\"dna\":\"w\",\"hacker\":\"w\",\"idiot\":\"w\",\"incompetent\":\"w\",\"legal\":\"w\",\"manager\":\"w\",\"mass-media\":\"p\",\"media\":\"w\",\"pro tv\":\"p\",\"reporter\":\"w\",\"robot\":\"w\",\"scam\":\"w\",\"scandal\":\"w\",\"superior\":\"w\",\"tribunal\":\"w\",\"wtf\":\"w\"},\"sk\":{\"bot\":\"w\",\"dark patterns\":\"p\",\"hacker\":\"w\",\"idiot\":\"w\",\"robot\":\"w\",\"scam\":\"w\",\"wtf\":\"w\"},\"sl\":{\"bot\":\"w\",\"dark patterns\":\"p\",\"idiot\":\"w\",\"past\":\"w\",\"pop tv\":\"p\",\"regulator\":\"w\",\"reporter\":\"w\",\"robot\":\"w\",\"scam\":\"w\",\"wtf\":\"w\"},\"sv\":{\"as\":\"w\",\"bluff\":\"w\",\"bot\":\"w\",\"cp\":\"w\",\"dark patterns\":\"p\",\"fan\":\"w\",\"fi\":\"w\",\"fuck\":\"w\",\"fucking\":\"w\",\"hacker\":\"w\",\"idiot\":\"w\",\"jo\":\"w\",\"journalist\":\"w\",\"ko\":\"w\",\"lag\":\"w\",\"media\":\"w\",\"plus\":\"w\",\"process\":\"w\",\"reporter\":\"w\",\"ro\":\"w\",\"robot\":\"w\",\"satan\":\"w\",\"scam\":\"w\",\"supervisor\":\"w\"},\"th\":{\"1166\":\"n\",\"1213\":\"n\",\"bot\":\"w\",\"dark patterns\":\"p\",\"scam\":\"w\",\"wtf\":\"w\"},\"tr\":{\"bot\":\"w\",\"dark patterns\":\"p\",\"hacker\":\"w\",\"mal\":\"w\",\"robot\":\"w\",\"scam\":\"w\",\"wtf\":\"w\"},\"uk\":{\"dark patterns\":\"p\",\"scam\":\"w\",\"wtf\":\"w\"},\"vi\":{\"bot\":\"w\",\"cc\":\"w\",\"dark patterns\":\"p\",\"dm\":\"w\",\"hack\":\"w\",\"hacker\":\"w\",\"robot\":\"w\",\"scam\":\"w\",\"viral\":\"w\",\"wtf\":\"w\"}};\n\nconst REASON = {\n  w: 'Imported inactive (Oct 2026): also a common English word, would fire on English tickets',\n  p: 'Imported inactive (Oct 2026): English phrase not on the English list, would fire on English tickets',\n  n: 'Imported inactive (Oct 2026): bare number, would fire on amounts, order and ticket numbers'\n};\n\nfunction prepare(t) {\n  return String(t == null ? '' : t).normalize('NFC').toLowerCase().trim();\n}\n\nconst existingEn = new Set($('Check table state').first().json.existing_keys || []);\n\nconst out = [];\nconst seen = new Set();\n\nfor (const item of $input.all()) {\n  const r = item.json || {};\n  const lang = String(r.Language == null ? '' : r.Language).trim().toLowerCase();\n  const term = String(r.Term == null ? '' : r.Term).normalize('NFC').trim();\n  const tier = String(r.Tier == null ? '' : r.Tier).trim().toUpperCase();\n  const category = String(r.Category == null ? '' : r.Category).trim();\n\n  if (!lang || !term) continue;\n  if (lang === 'en') continue;\n  if (['A', 'B', 'C'].indexOf(tier) === -1) continue;\n\n  const key = prepare(term);\n  if (seen.has(lang + '|' + key)) continue;\n  seen.add(lang + '|' + key);\n\n  const q = (QUARANTINE[lang] || {})[key];\n  const quarantine = !!q && !existingEn.has(key);\n\n  out.push({\n    json: {\n      keyword: term,\n      tier: tier,\n      category: category,\n      active: !quarantine,\n      notes: quarantine ? REASON[q] : null,\n      language: lang,\n      _quarantine_reason: quarantine ? q : null,\n      _kept_as_english_duplicate: !!q && !quarantine\n    }\n  });\n}\n\nif (out.length < 17000) {\n  throw new Error('Only ' + out.length + ' rows built - expected about 17,199. Check that the sheet \"All languages\" was read.');\n}\n\nreturn out;"
+      },
+      "id": "4e8c2139-184d-4a29-b9cf-31b0d5f97cad",
+      "name": "Build localized rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        3856
+      ]
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "cachedResultName": "cs_high_risk_keywords",
+          "mode": "list",
+          "value": "H0oFIJNTlQgUVrk5"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "active": "={{ $json.active }}",
+            "category": "={{ $json.category }}",
+            "keyword": "={{ $json.keyword }}",
+            "language": "={{ $json.language }}",
+            "notes": "={{ $json.notes }}",
+            "tier": "={{ $json.tier }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "keyword",
+              "displayName": "keyword",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "tier",
+              "displayName": "tier",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "active",
+              "displayName": "active",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "language",
+              "displayName": "language",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "optimizeBulk": true
+        }
+      },
+      "id": "5c3b6a4c-bd24-4187-9b48-465999c423b8",
+      "name": "Insert localized keywords",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        3776
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// === Import summary ===\n// Mode: \"Run Once for All Items\". Counts what Build localized rows produced.\nconst rows = $input.all().map(i => i.json);\nconst byLang = {};\nlet active = 0, inactive = 0, keptEnDup = 0;\nconst reasons = { w: 0, p: 0, n: 0 };\nfor (const r of rows) {\n  byLang[r.language] = byLang[r.language] || { total: 0, active: 0, inactive: 0 };\n  byLang[r.language].total++;\n  if (r.active) { active++; byLang[r.language].active++; }\n  else { inactive++; byLang[r.language].inactive++; reasons[r._quarantine_reason]++; }\n  if (r._kept_as_english_duplicate) keptEnDup++;\n}\nreturn [{\n  json: {\n    rows_built: rows.length,\n    active: active,\n    inactive: inactive,\n    inactive_common_english_word: reasons.w,\n    inactive_english_phrase: reasons.p,\n    inactive_bare_number: reasons.n,\n    kept_active_same_as_english_row: keptEnDup,\n    languages: Object.keys(byLang).length,\n    by_language: byLang\n  }\n}];"
+      },
+      "id": "cdfd8587-e01c-42e9-bd1c-9d3a27888516",
+      "name": "Import summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        3952
+      ]
     }
   ],
-  "connections": {},
+  "connections": {
+    "Upload keyword sheet": {
+      "main": [
+        [
+          {
+            "node": "Get existing keywords",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get existing keywords": {
+      "main": [
+        [
+          {
+            "node": "Check table state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check table state": {
+      "main": [
+        [
+          {
+            "node": "Read All languages sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read All languages sheet": {
+      "main": [
+        [
+          {
+            "node": "Build localized rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build localized rows": {
+      "main": [
+        [
+          {
+            "node": "Insert localized keywords",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Import summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
   "nodeGroups": [],
   "settings": {
     "executionOrder": "v1",
