@@ -1,0 +1,295 @@
+{
+  "id": "D2gJeMneKIs5pq7H",
+  "name": "Lokalise READ - \"Legal\" term lookup across projects 2026-10-07",
+  "description": "READ ONLY (read-only token). Finds every non-archived key whose English is \"Legal\" (or a short label containing it) across all Lokalise projects and returns their translations. Scratch, inactive.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-07T16:35:21.071Z",
+  "updatedAt": "2026-10-07T16:35:25.073Z",
+  "isArchived": false,
+  "versionId": "ada2e743-4a0c-4893-9cbf-b726cd4a4af8",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "3f99978c-29a4-47e8-b0b0-c84d91ef8d09",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "77b43de8-c65e-46e6-9046-73051f3d5b55",
+      "name": "List projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=100&include_statistics=0&include_settings=0",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "00ac266d-c41c-4b77-8dad-deedd82d3e65",
+      "name": "Expand",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// READ ONLY. One item per project: EN-only key list.\nconst ps = $input.first().json.projects || [];\nreturn ps.map(p => ({ json: { pid: p.project_id, pname: p.name, url: 'https://api.lokalise.com/api2/projects/' + p.project_id + '/keys?include_translations=1&disable_references=1&filter_archived=exclude&filter_translation_lang_ids=640&limit=500&pagination=cursor' } }));\n"
+      }
+    },
+    {
+      "id": "05cf0dd3-6f4e-4f43-b87a-e2b90c0a6dfd",
+      "name": "Fetch EN keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 400,
+              "requestInterval": 700
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "18a90fb4-f359-4407-a1d5-01c9f2868f8e",
+      "name": "Pick Legal",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// READ ONLY. Keep keys whose EN is 'Legal' or a short label containing it.\nconst names = {}; for (const p of ($('List projects').first().json.projects || [])) names[p.project_id] = p.name;\nconst out = []; const errs = []; let seen = 0;\nfor (const it of $input.all()) { const b = it.json.body || {};\n  if (!Array.isArray(b.keys)) { errs.push(JSON.stringify(b).slice(0, 200)); continue; }\n  for (const k of b.keys) { seen++; const en = ((k.translations || []).find(t => t.language_iso === 'en') || {}).translation;\n    if (typeof en !== 'string') continue; const s = en.trim();\n    const exact = /^legal:?$/i.test(s); const shortL = !exact && /\\blegal\\b/i.test(s) && s.split(/\\s+/).length <= 3;\n    if (!exact && !shortL) continue;\n    const kn = typeof k.key_name === 'string' ? k.key_name : (k.key_name.web || k.key_name.other || '');\n    out.push({ json: { pid: b.project_id, pname: names[b.project_id] || b.project_id, kid: k.key_id, key: kn, en: s, exact, url: 'https://api.lokalise.com/api2/projects/' + b.project_id + '/keys/' + k.key_id + '?disable_references=1' } }); } }\nif (!out.length) return [{ json: { none: true, seen, errs } }];\nout[0].json.seen = seen; out[0].json.errs = errs;\nreturn out;\n"
+      }
+    },
+    {
+      "id": "19f8f47e-dd5b-4715-bc14-5836c0a1e8f3",
+      "name": "Fetch key",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "279fb749-1d89-4a6c-b8fb-75ca3d2b2270",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// READ ONLY. Compact output.\nconst picks = $('Pick Legal').all().map(i => i.json);\nconst res = $input.all();\nconst rows = res.map((it, i) => { const p = picks[i] || {}; const k = (it.json.body || {}).key || {}; const t = {};\n  for (const x of (k.translations || [])) { if (['en','ps','pst','cus','pt_old'].includes(x.language_iso)) continue; if (x.translation) t[x.language_iso] = [x.translation, x.modified_by_email || '', x.is_reviewed ? 1 : 0]; }\n  return { proj: p.pname, key: p.key, en: p.en, exact: p.exact, t }; });\nreturn [{ json: { seen: picks[0] && picks[0].seen, errs: picks[0] && picks[0].errs, n: rows.length, rows } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "List projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List projects": {
+      "main": [
+        [
+          {
+            "node": "Expand",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand": {
+      "main": [
+        [
+          {
+            "node": "Fetch EN keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch EN keys": {
+      "main": [
+        [
+          {
+            "node": "Pick Legal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Legal": {
+      "main": [
+        [
+          {
+            "node": "Fetch key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch key": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "D2gJeMneKIs5pq7H",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-07T16:35:21.081Z",
+      "updatedAt": "2026-10-07T16:35:21.081Z"
+    }
+  ],
+  "activeVersion": null
+}
