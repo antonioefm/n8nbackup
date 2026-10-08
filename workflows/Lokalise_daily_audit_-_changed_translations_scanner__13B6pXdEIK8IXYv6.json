@@ -1,0 +1,286 @@
+{
+  "id": "13B6pXdEIK8IXYv6",
+  "name": "Lokalise daily audit - changed translations scanner",
+  "description": "Sub-workflow of the daily new-translations audit: one project+language per call, read-only token, returns the key ids whose translation was added/changed since since_ts.",
+  "active": true,
+  "activeVersionId": "8addcdf8-58bc-44f6-bc3a-43be91ed6cc6",
+  "createdAt": "2026-10-07T09:32:25.389Z",
+  "updatedAt": "2026-10-07T09:32:29.076Z",
+  "isArchived": false,
+  "versionId": "8addcdf8-58bc-44f6-bc3a-43be91ed6cc6",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "74529743-7f53-4b2d-9abf-f8ed77078b63",
+      "name": "When called by parent",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "9f7d4fa7-9dc3-44ae-b438-eb6efd7ff5c0",
+      "name": "Fetch translations",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/translations?filter_lang_id={{ $json.lang_id }}&disable_references=1&limit=5000&pagination=cursor",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 100,
+              "requestInterval": 700
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "1ae0cde7-f1b5-4931-91c1-655d1bc9a281",
+      "name": "Keep changed in window",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Read-only. Returns only translations whose modified_at_timestamp is inside the window (since_ts .. now) and that are not empty.\nconst job = $('When called by parent').first().json;\nconst since = Number(job.since_ts || 0);\nconst errors = [];\nconst changed = [];\nlet seen = 0;\nfunction filled(v) {\n  if (v === null || v === undefined) { return false; }\n  let o = v;\n  if (typeof v === 'string') {\n    if (!v.trim()) { return false; }\n    if (v.charAt(0) !== '{') { return true; }\n    try { o = JSON.parse(v); } catch (e) { return true; }\n  }\n  if (typeof o === 'object') { return Object.values(o).some(function (x) { return String(x || '').trim(); }); }\n  return String(o).trim() !== '';\n}\nfor (const p of $input.all()) {\n  const j = p.json || {};\n  if (j.error) { errors.push('Lokalise error: ' + JSON.stringify(j.error).slice(0, 200)); continue; }\n  const b = j.body !== undefined ? j.body : j;\n  if (!b || !Array.isArray(b.translations)) { errors.push('page without translations array: ' + JSON.stringify(b).slice(0, 200)); continue; }\n  for (const t of b.translations) {\n    seen++;\n    if (Number(t.modified_at_timestamp || 0) < since) { continue; }\n    if (!filled(t.translation)) { continue; }\n    changed.push({ key_id: t.key_id, by: t.modified_by_email || '', at: Number(t.modified_at_timestamp) });\n  }\n}\nif (!seen && !errors.length) { errors.push('no translations returned'); }\nreturn [{ json: { project_id: job.project_id, project_name: job.project_name, iso: job.iso, lang_id: job.lang_id, en_id: job.en_id, lang_name: job.lang_name, translations_seen: seen, changed: changed, errors: errors } }];"
+      }
+    }
+  ],
+  "connections": {
+    "When called by parent": {
+      "main": [
+        [
+          {
+            "node": "Fetch translations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch translations": {
+      "main": [
+        [
+          {
+            "node": "Keep changed in window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Madrid",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "13B6pXdEIK8IXYv6",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-07T09:32:25.392Z",
+      "updatedAt": "2026-10-07T09:32:25.392Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "8addcdf8-58bc-44f6-bc3a-43be91ed6cc6",
+    "workflowId": "13B6pXdEIK8IXYv6",
+    "nodes": [
+      {
+        "id": "74529743-7f53-4b2d-9abf-f8ed77078b63",
+        "name": "When called by parent",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "9f7d4fa7-9dc3-44ae-b438-eb6efd7ff5c0",
+        "name": "Fetch translations",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          224,
+          0
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/translations?filter_lang_id={{ $json.lang_id }}&disable_references=1&limit=5000&pagination=cursor",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "options": {
+            "timeout": 120000,
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            },
+            "pagination": {
+              "pagination": {
+                "paginationMode": "updateAParameterInEachRequest",
+                "parameters": {
+                  "parameters": [
+                    {
+                      "type": "qs",
+                      "name": "cursor",
+                      "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                    }
+                  ]
+                },
+                "paginationCompleteWhen": "other",
+                "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+                "limitPagesFetched": true,
+                "maxRequests": 100,
+                "requestInterval": 700
+              }
+            }
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "VW7WtJP8PzJMR813",
+            "name": "Lokalise read-only"
+          }
+        },
+        "retryOnFail": true,
+        "maxTries": 5,
+        "waitBetweenTries": 5000,
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "1ae0cde7-f1b5-4931-91c1-655d1bc9a281",
+        "name": "Keep changed in window",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          448,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "// Read-only. Returns only translations whose modified_at_timestamp is inside the window (since_ts .. now) and that are not empty.\nconst job = $('When called by parent').first().json;\nconst since = Number(job.since_ts || 0);\nconst errors = [];\nconst changed = [];\nlet seen = 0;\nfunction filled(v) {\n  if (v === null || v === undefined) { return false; }\n  let o = v;\n  if (typeof v === 'string') {\n    if (!v.trim()) { return false; }\n    if (v.charAt(0) !== '{') { return true; }\n    try { o = JSON.parse(v); } catch (e) { return true; }\n  }\n  if (typeof o === 'object') { return Object.values(o).some(function (x) { return String(x || '').trim(); }); }\n  return String(o).trim() !== '';\n}\nfor (const p of $input.all()) {\n  const j = p.json || {};\n  if (j.error) { errors.push('Lokalise error: ' + JSON.stringify(j.error).slice(0, 200)); continue; }\n  const b = j.body !== undefined ? j.body : j;\n  if (!b || !Array.isArray(b.translations)) { errors.push('page without translations array: ' + JSON.stringify(b).slice(0, 200)); continue; }\n  for (const t of b.translations) {\n    seen++;\n    if (Number(t.modified_at_timestamp || 0) < since) { continue; }\n    if (!filled(t.translation)) { continue; }\n    changed.push({ key_id: t.key_id, by: t.modified_by_email || '', at: Number(t.modified_at_timestamp) });\n  }\n}\nif (!seen && !errors.length) { errors.push('no translations returned'); }\nreturn [{ json: { project_id: job.project_id, project_name: job.project_name, iso: job.iso, lang_id: job.lang_id, en_id: job.en_id, lang_name: job.lang_name, translations_seen: seen, changed: changed, errors: errors } }];"
+        }
+      }
+    ],
+    "connections": {
+      "When called by parent": {
+        "main": [
+          [
+            {
+              "node": "Fetch translations",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch translations": {
+        "main": [
+          [
+            {
+              "node": "Keep changed in window",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Maria Sica (via MCP)",
+    "name": "Initial scanner",
+    "description": "Created with 3 nodes: When called by parent, Fetch translations, Keep changed in window",
+    "autosaved": false,
+    "createdAt": "2026-10-07T09:32:25.393Z",
+    "updatedAt": "2026-10-07T09:32:25.393Z",
+    "workflowPublishHistory": [
+      {
+        "id": 2427,
+        "workflowId": "13B6pXdEIK8IXYv6",
+        "versionId": "8addcdf8-58bc-44f6-bc3a-43be91ed6cc6",
+        "event": "activated",
+        "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
+        "createdAt": "2026-10-07T09:32:30.403Z"
+      }
+    ]
+  }
+}
