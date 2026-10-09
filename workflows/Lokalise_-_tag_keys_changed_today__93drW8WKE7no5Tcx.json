@@ -1,0 +1,222 @@
+{
+  "id": "93drW8WKE7no5Tcx",
+  "name": "Lokalise - tag keys changed today",
+  "description": "Finds Lokalise keys created or updated today (Europe/Warsaw) across all projects, for tagging with a date tag. Read-only dry run.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-08T14:59:02.787Z",
+  "updatedAt": "2026-10-08T15:01:23.891Z",
+  "isArchived": false,
+  "versionId": "b7dccd46-a323-4c72-aca4-17b145eb5ea1",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "d1a2d778-ef5b-407c-9278-0211d906dc9b",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "95626e20-9751-45e8-a058-0d84dac1877b",
+      "name": "Fetch Lokalise Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=500&page=1&include_statistics=0&include_settings=0",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "1d48bbb8-da12-4ac4-9bc7-f95e104a3f8a",
+      "name": "Split Projects",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const out = [];\nfor (const it of items) {\n  for (const p of (it.json.projects || [])) {\n    out.push({ json: { project_id: p.project_id, project_name: p.name } });\n  }\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "14778153-9871-4077-b287-8e2d60063bba",
+      "name": "Fetch Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "500"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "page",
+                    "value": "={{ $pageCount + 1 }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body.keys || $response.body.keys.length < 500 }}",
+              "limitPagesFetched": true,
+              "maxRequests": 100,
+              "requestInterval": 1200
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "229c01b8-1d52-4c6d-9be6-b02e33bc8a77",
+      "name": "Collect Today Keys",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const CUTOFF = 1791410400; // 2026-10-08 00:00 Europe/Warsaw\nconst TAG = '081026';\nconst projs = $('Split Projects').all();\nconst names = {};\nfor (const p of projs) { names[p.json.project_id] = p.json.project_name; }\nconst res = $input.all();\nconst byProj = {};\nconst errors = [];\nfunction nm(k) { const n = k.key_name; if (!n) return ''; if (typeof n === 'string') return n; return n.web || n.ios || n.android || n.other || Object.values(n)[0] || ''; }\nfor (let i = 0; i < res.length; i++) {\n  const body = res[i].json || {};\n  if (!body.keys) { errors.push(JSON.stringify(body).slice(0, 300)); continue; }\n  const pid = body.project_id;\n  if (!byProj[pid]) byProj[pid] = { project_id: pid, project_name: names[pid] || pid, scanned: 0, pages: 0, created: 0, key_modified: 0, tr_modified: 0, already_tagged: 0, archived_skipped: 0, key_ids: [], sample: [] };\n  const b = byProj[pid];\n  b.pages++;\n  for (const k of body.keys) {\n    b.scanned++;\n    const c = (k.created_at_timestamp || 0) >= CUTOFF;\n    const m = (k.modified_at_timestamp || 0) >= CUTOFF;\n    const t = (k.translations_modified_at_timestamp || 0) >= CUTOFF;\n    if (!(c || m || t)) continue;\n    if (k.is_archived) { b.archived_skipped++; continue; }\n    if (c) b.created++; else if (t) b.tr_modified++; else b.key_modified++;\n    if ((k.tags || []).indexOf(TAG) >= 0) { b.already_tagged++; continue; }\n    b.key_ids.push(k.key_id);\n    if (b.sample.length < 5) b.sample.push(nm(k));\n  }\n}\nconst missing = [];\nfor (const p of projs) { if (!byProj[p.json.project_id]) missing.push(p.json.project_name); }\nconst rows = Object.values(byProj).filter(function (b) { return b.created + b.key_modified + b.tr_modified > 0; });\nlet total = 0; let scanned = 0;\nfor (const b of Object.values(byProj)) { scanned += b.scanned; }\nfor (const r of rows) { total += r.key_ids.length; }\nreturn [{ json: { projects_total: projs.length, projects_scanned: Object.keys(byProj).length, keys_scanned: scanned, to_tag_total: total, missing_projects: missing, errors: errors.slice(0, 10), page_counts: Object.values(byProj).map(function (b) { return b.project_name + ':' + b.pages + '/' + b.scanned; }), rows: rows.map(function (r) { return { project_id: r.project_id, project_name: r.project_name, created: r.created, key_modified: r.key_modified, tr_modified: r.tr_modified, already_tagged: r.already_tagged, archived_skipped: r.archived_skipped, to_tag: r.key_ids.length, sample: r.sample, key_ids: r.key_ids }; }) } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lokalise Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lokalise Projects": {
+      "main": [
+        [
+          {
+            "node": "Split Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Projects": {
+      "main": [
+        [
+          {
+            "node": "Fetch Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Keys": {
+      "main": [
+        [
+          {
+            "node": "Collect Today Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "93drW8WKE7no5Tcx",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-08T14:59:02.789Z",
+      "updatedAt": "2026-10-08T14:59:02.789Z"
+    }
+  ],
+  "activeVersion": null
+}
