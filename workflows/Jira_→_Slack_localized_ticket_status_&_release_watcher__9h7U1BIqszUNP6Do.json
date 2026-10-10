@@ -1,0 +1,1380 @@
+{
+  "id": "9h7U1BIqszUNP6Do",
+  "name": "Jira → Slack: localized ticket status & release watcher",
+  "description": "Every 15 min, finds product tickets with a \"Has localization ticket\" link and posts to #i18n-team when their status, fix version or version release changes.",
+  "active": true,
+  "activeVersionId": "9180e0f1-159e-4dea-a77f-b1c0ae0b6e19",
+  "createdAt": "2026-10-09T11:59:44.660Z",
+  "updatedAt": "2026-10-09T12:49:29.500Z",
+  "isArchived": false,
+  "versionId": "9180e0f1-159e-4dea-a77f-b1c0ae0b6e19",
+  "versionCounter": 5,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "f2413de9-5707-4a97-bf49-4f8375d72d75",
+      "name": "Every 15 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "d8829628-a277-43e4-aa4c-23e65db53e8a",
+      "name": "Fetch localized product tickets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        260,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://futuremedia.atlassian.net/rest/api/3/search/jql",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "jql",
+              "value": "issueLinkType = \"Has localization ticket\" AND project != INTERNAT AND (updated >= -1d OR (fixVersion in releasedVersions() AND updated >= -14d)) ORDER BY updated DESC"
+            },
+            {
+              "name": "fields",
+              "value": "summary,status,fixVersions,issuelinks,project"
+            },
+            {
+              "name": "maxResults",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "QJte7dJbX10mIzJI",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "id": "36c428ec-b6f4-461a-adb4-b710ef27f468",
+      "name": "Detect status and release changes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const state = $getWorkflowStaticData('global');\nif (!state.issues) state.issues = {};\nconst firstRun = !state.seeded;\nconst now = Date.now();\nconst esc = function (s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };\nconst base = 'https://futuremedia.atlassian.net/browse/';\nconst issues = ($input.first().json.issues) || [];\nconst out = [];\nfor (const it of issues) {\n  const f = it.fields || {};\n  const llrs = (f.issuelinks || []).filter(function (l) { return l.type && l.type.id === '10079' && l.outwardIssue; }).map(function (l) { return l.outwardIssue; });\n  if (!llrs.length) continue;\n  const status = f.status ? f.status.name : '';\n  const versions = (f.fixVersions || []).map(function (v) { return { name: v.name, releaseDate: v.releaseDate || '', released: !!v.released }; });\n  const sigOf = function (v) { return v.name + '|' + v.releaseDate + '|' + v.released; };\n  const verSig = versions.map(sigOf).sort().join(';');\n  const prev = state.issues[it.key];\n  state.issues[it.key] = { status: status, verSig: verSig, seen: now, threadTs: prev && prev.threadTs ? prev.threadTs : '' };\n  if (firstRun || !prev) continue;\n  const changes = [];\n  if (prev.status !== status) {\n    const prodNote = status === 'QA PROD' ? ' :rocket: _deployed to prod_' : '';\n    changes.push('Status: ' + esc(prev.status) + ' → *' + esc(status) + '*' + prodNote);\n  }\n  if (prev.verSig !== verSig) {\n    const prevSigs = prev.verSig ? prev.verSig.split(';') : [];\n    for (const v of versions) {\n      const p = prevSigs.find(function (s) { return s.indexOf(v.name + '|') === 0; });\n      if (!p) changes.push('Fix version added: *' + esc(v.name) + '*' + (v.releaseDate ? ' (planned release ' + v.releaseDate + ')' : ''));\n      else if (v.released && p.slice(-5) !== '|true') changes.push(':rocket: Version *' + esc(v.name) + '* *released*' + (v.releaseDate ? ' on *' + v.releaseDate + '*' : ''));\n      else if (p !== sigOf(v)) changes.push('Fix version *' + esc(v.name) + '* updated (release date ' + (v.releaseDate || 'not set') + ')');\n    }\n  }\n  if (!changes.length) continue;\n  const verLine = versions.length ? versions.map(function (v) { return esc(v.name) + ' (' + (v.releaseDate || 'no date') + (v.released ? ', released' : ', not released') + ')'; }).join(', ') : 'none';\n  const llrLine = llrs.map(function (l) { const st = l.fields && l.fields.status ? l.fields.status.name : ''; return '<' + base + l.key + '|' + l.key + '>' + (st ? ' (' + esc(st) + ')' : ''); }).join(', ');\n  const text = ':bell: *<' + base + it.key + '|' + it.key + '>* – ' + esc(f.summary) + '\\n' + changes.join('\\n') + '\\nFix version: ' + verLine + '\\nLocalization ticket: ' + llrLine;\n  out.push({ json: { key: it.key, status: status, llrKeys: llrs.map(function (l) { return l.key; }), threadTs: state.issues[it.key].threadTs, changesText: changes.join('\\n'), text: text } });\n}\nfor (const k of Object.keys(state.issues)) { if (now - (state.issues[k].seen || 0) > 90 * 86400000) delete state.issues[k]; }\nstate.seeded = true;\nreturn out;\n"
+      }
+    },
+    {
+      "id": "c80c4bb3-da24-4d94-a043-d6f5c7346edc",
+      "name": "Post to #i18n-releases",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        1560,
+        400
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "authentication": "accessToken",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "cachedResultName": "i18n-releases",
+          "mode": "id",
+          "value": "C0C83LNMVT3"
+        },
+        "messageType": "text",
+        "text": "={{ $json.text }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false,
+          "unfurl_links": false,
+          "unfurl_media": false
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "webhookId": "1d87455c-a3d8-4c99-bea5-a225bb1b1e49"
+    },
+    {
+      "id": "47aaffd2-00fa-436b-9cad-49b8816e4c74",
+      "name": "Sticky Note 686e9d6a",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        100,
+        300
+      ],
+      "parameters": {
+        "content": "## Localized ticket release watcher\nEvery 15 min: product tickets that have an INTERNAT localization ticket (link \"Has localization ticket\"). Posts to #i18n-team when status, fix version or version release changes. First production run only records the current state (no messages). State lives in workflow static data.",
+        "color": 4
+      }
+    },
+    {
+      "id": "4304cc73-1206-4cf5-a957-3b567a72c721",
+      "name": "Find LQA ticket",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        780,
+        300
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "method": "GET",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {},
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "jql",
+              "value": "={{ 'key in (' + $json.llrKeys.join(',') + ') OR ' + $json.llrKeys.map(k => 'issue in linkedIssues(\"' + k + '\", \"is tested by\")').join(' OR ') }}"
+            },
+            {
+              "name": "fields",
+              "value": "summary,status,duedate,issuetype,customfield_11581"
+            },
+            {
+              "name": "maxResults",
+              "value": "30"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "url": "https://futuremedia.atlassian.net/rest/api/3/search/jql"
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "QJte7dJbX10mIzJI",
+          "name": "Jira SW Cloud account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "7899da96-1303-469c-b60e-2f2ba7d3275d",
+      "name": "Add LQA line",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1040,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "lqa-text",
+              "name": "text",
+              "type": "string",
+              "value": "={{ $('Detect status and release changes').item.json.text + '\\nLQA status: ' + ((($json.issues || []).filter(i => $('Detect status and release changes').item.json.llrKeys.includes(i.key))).map(i => ($('Detect status and release changes').item.json.llrKeys.length > 1 ? i.key + ': ' : '') + '*' + (i.fields.customfield_11581 ? i.fields.customfield_11581.value : 'not set') + '*').join(', ') || 'unknown') + '\\nLQA ticket: ' + ((($json.issues || []).filter(i => i.fields && i.fields.issuetype && i.fields.issuetype.name === 'Test Plan')).length ? $json.issues.filter(i => i.fields.issuetype.name === 'Test Plan').map(i => '<https://futuremedia.atlassian.net/browse/' + i.key + '|' + i.key + '> (' + i.fields.status.name + (i.fields.duedate ? ', due ' + i.fields.duedate : '') + ')').join(', ') : 'none yet') }}"
+            },
+            {
+              "id": "reply-text",
+              "name": "replyText",
+              "type": "string",
+              "value": "={{ $('Detect status and release changes').item.json.changesText + '\\nLQA status: ' + ((($json.issues || []).filter(i => $('Detect status and release changes').item.json.llrKeys.includes(i.key))).map(i => '*' + (i.fields.customfield_11581 ? i.fields.customfield_11581.value : 'not set') + '*').join(', ') || 'unknown') + ' · LQA ticket: ' + ((($json.issues || []).filter(i => i.fields && i.fields.issuetype && i.fields.issuetype.name === 'Test Plan')).length ? $json.issues.filter(i => i.fields.issuetype.name === 'Test Plan').map(i => '<https://futuremedia.atlassian.net/browse/' + i.key + '|' + i.key + '> (' + i.fields.status.name + ')').join(', ') : 'none yet') }}"
+            },
+            {
+              "id": "key",
+              "name": "key",
+              "type": "string",
+              "value": "={{ $('Detect status and release changes').item.json.key }}"
+            },
+            {
+              "id": "thread-ts",
+              "name": "threadTs",
+              "type": "string",
+              "value": "={{ $('Detect status and release changes').item.json.threadTs }}"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "mode": "manual",
+        "options": {}
+      }
+    },
+    {
+      "id": "b9d19182-e5a7-41fa-b44f-129cabed786c",
+      "name": "Already has thread?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1300,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.threadTs }}",
+              "operator": {
+                "operation": "notEmpty",
+                "singleValue": true,
+                "type": "string"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "6fd0e12b-ab2a-4158-93dd-4d8d7ff15e7c",
+      "name": "Reply in ticket thread",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        1560,
+        200
+      ],
+      "parameters": {
+        "authentication": "accessToken",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C0C83LNMVT3"
+        },
+        "messageType": "text",
+        "operation": "post",
+        "otherOptions": {
+          "includeLinkToWorkflow": false,
+          "thread_ts": {
+            "replyValues": {
+              "reply_broadcast": false,
+              "thread_ts": "={{ $json.threadTs }}"
+            }
+          },
+          "unfurl_links": false,
+          "unfurl_media": false
+        },
+        "resource": "message",
+        "select": "channel",
+        "text": "={{ $json.replyText }}"
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "webhookId": "0476eb08-8ca4-4bf6-a6f0-664911128edf"
+    },
+    {
+      "id": "bfc8e60b-0a8d-494d-9759-84e5cb890ab7",
+      "name": "Remember thread",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        400
+      ],
+      "parameters": {
+        "jsCode": "const state = $getWorkflowStaticData('global');\nconst key = $('Add LQA line').item.json.key;\nconst ts = $json.message_timestamp || ($json.message && $json.message.ts);\nif (key && ts && state.issues && state.issues[key]) state.issues[key].threadTs = ts;\nreturn { json: { key: key, threadTs: ts } };",
+        "language": "javaScript",
+        "mode": "runOnceForEachItem"
+      }
+    }
+  ],
+  "connections": {
+    "Every 15 minutes": {
+      "main": [
+        [
+          {
+            "node": "Fetch localized product tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch localized product tickets": {
+      "main": [
+        [
+          {
+            "node": "Detect status and release changes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect status and release changes": {
+      "main": [
+        [
+          {
+            "node": "Find LQA ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find LQA ticket": {
+      "main": [
+        [
+          {
+            "node": "Add LQA line",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add LQA line": {
+      "main": [
+        [
+          {
+            "node": "Already has thread?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already has thread?": {
+      "main": [
+        [
+          {
+            "node": "Reply in ticket thread",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Post to #i18n-releases",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to #i18n-releases": {
+      "main": [
+        [
+          {
+            "node": "Remember thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [
+    {
+      "id": "e76752c1-c4ee-412e-aa9c-e2e194664803",
+      "name": "Detect changes",
+      "nodeIds": [
+        "d8829628-a277-43e4-aa4c-23e65db53e8a",
+        "36c428ec-b6f4-461a-adb4-b710ef27f468"
+      ],
+      "description": "Finds product tickets with a localization link and detects status, fix-version and release changes since last run"
+    },
+    {
+      "id": "67ae595c-e6bb-496b-8a00-7fb73fe6cafb",
+      "name": "Add LQA info",
+      "nodeIds": [
+        "4304cc73-1206-4cf5-a957-3b567a72c721",
+        "7899da96-1303-469c-b60e-2f2ba7d3275d"
+      ],
+      "description": "Looks up the localization ticket's LQA status and its Test Plan, and builds the message text"
+    },
+    {
+      "id": "5bccbccf-e31b-444f-a5dc-1654ad0b70ab",
+      "name": "Post to Slack",
+      "nodeIds": [
+        "b9d19182-e5a7-41fa-b44f-129cabed786c",
+        "6fd0e12b-ab2a-4158-93dd-4d8d7ff15e7c",
+        "c80c4bb3-da24-4d94-a043-d6f5c7346edc",
+        "bfc8e60b-0a8d-494d-9759-84e5cb890ab7"
+      ],
+      "description": "First change for a ticket posts in #i18n-releases; later changes reply in that ticket's thread"
+    }
+  ],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:Every 15 minutes": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    },
+    "global": {
+      "issues": {
+        "MYQRCODE-11006": {
+          "status": "Done",
+          "verSig": "2.2.20|2026-10-09|true",
+          "seen": 1791597603877,
+          "threadTs": "1791550821.952389"
+        },
+        "RESUME-2256": {
+          "status": "Done",
+          "verSig": "",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "VIN-344": {
+          "status": "PENDING PROD",
+          "verSig": "",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "PERSO-4348": {
+          "status": "PENDING QA",
+          "verSig": "1.88.0 - TotalDueToday_compliance_Payments0.5.1|2026-10-12|false",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "REALCHECK-549": {
+          "status": "IN IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "REALCHECK-534": {
+          "status": "PENDING PROD",
+          "verSig": "",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "REALCHECK-533": {
+          "status": "PENDING PROD",
+          "verSig": "",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "REALCHECK-383": {
+          "status": "QA",
+          "verSig": "",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "PERSO-4255": {
+          "status": "PENDING QA",
+          "verSig": "1.88.0 - TotalDueToday_compliance_Payments0.5.1|2026-10-12|false",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "RESUME-2238": {
+          "status": "Done",
+          "verSig": "1.15.3|2026-09-29|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "PDFHELP-2472": {
+          "status": "BLOCKED",
+          "verSig": "",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "MOBITR-1112": {
+          "status": "Done",
+          "verSig": "",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "REALCHECK-496": {
+          "status": "Done",
+          "verSig": "",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "VIN-315": {
+          "status": "Done",
+          "verSig": "",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "REALCHECK-395": {
+          "status": "BLOCKED",
+          "verSig": "FE 1.5.0|2026-10-08|false",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "MYIMAGE-1078": {
+          "status": "Done",
+          "verSig": "",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "MYIMAGE-927": {
+          "status": "Done",
+          "verSig": "1.0.60|2026-10-09|false",
+          "seen": 1791580505659,
+          "threadTs": ""
+        },
+        "MYIMAGE-998": {
+          "status": "Done",
+          "verSig": "1.0.60|2026-10-09|false",
+          "seen": 1791579605509,
+          "threadTs": ""
+        },
+        "MYIMAGE-327": {
+          "status": "Done",
+          "verSig": "",
+          "seen": 1791579605509,
+          "threadTs": ""
+        },
+        "MOBITR-999": {
+          "status": "Done",
+          "verSig": "",
+          "seen": 1791579605509,
+          "threadTs": ""
+        },
+        "MYIMAGE-390": {
+          "status": "Done",
+          "verSig": "",
+          "seen": 1791576005550,
+          "threadTs": ""
+        },
+        "MYIMAGE-988": {
+          "status": "Done",
+          "verSig": "1.0.59|2026-09-29|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1366": {
+          "status": "Done",
+          "verSig": "1.8.1|2026-10-08|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1376": {
+          "status": "Done",
+          "verSig": "",
+          "seen": 1791557105556,
+          "threadTs": ""
+        },
+        "UNICOPY-1368": {
+          "status": "Done",
+          "verSig": "1.8.1|2026-10-08|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1367": {
+          "status": "Done",
+          "verSig": "1.8.1|2026-10-08|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1164": {
+          "status": "To Do",
+          "verSig": "",
+          "seen": 1791557105556,
+          "threadTs": ""
+        },
+        "UNICOPY-1163": {
+          "status": "To Do",
+          "verSig": "",
+          "seen": 1791557105556,
+          "threadTs": ""
+        },
+        "UNICOPY-1375": {
+          "status": "Done",
+          "verSig": "1.8.1|2026-10-08|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1374": {
+          "status": "Done",
+          "verSig": "1.8.1|2026-10-08|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1363": {
+          "status": "Done",
+          "verSig": "",
+          "seen": 1791557105556,
+          "threadTs": ""
+        },
+        "UNICOPY-1372": {
+          "status": "Done",
+          "verSig": "1.8.1|2026-10-08|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1302": {
+          "status": "Done",
+          "verSig": "1.8.1|2026-10-08|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "RESUME-2253": {
+          "status": "Done",
+          "verSig": "1.15.6|2026-10-09|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "RESUME-1920": {
+          "status": "PENDING PROD",
+          "verSig": "1.15.0|2026-09-01|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "RESUME-1935": {
+          "status": "PENDING PROD",
+          "verSig": "1.15.0|2026-09-01|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "RESUME-1924": {
+          "status": "PENDING PROD",
+          "verSig": "1.15.0|2026-09-01|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "RESUME-2229": {
+          "status": "PENDING PROD",
+          "verSig": "1.15.3|2026-09-29|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "MOBITR-1111": {
+          "status": "Done",
+          "verSig": "",
+          "seen": 1791550821440,
+          "threadTs": ""
+        },
+        "PERSO-3405": {
+          "status": "Done",
+          "verSig": "1.51.0 - Sociopath_Psychopath_tests_AutismFree|2026-05-25|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "MYQRCODE-10972": {
+          "status": "Done",
+          "verSig": "2.3.0 - PMS for qrcreate only|2026-10-05|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "PERSO-3409": {
+          "status": "Done",
+          "verSig": "1.51.0 - Sociopath_Psychopath_tests_AutismFree|2026-05-25|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "AICHAT-1397": {
+          "status": "Done",
+          "verSig": "06.10.2026|2026-10-06|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "PERSO-4223": {
+          "status": "Done",
+          "verSig": "1.87.0 - Remove_name_from_checkout|2026-10-06|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "MYQRCODE-10710": {
+          "status": "Done",
+          "verSig": "2.3.0 - PMS for qrcreate only|2026-10-05|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "MYQRCODE-11009": {
+          "status": "Done",
+          "verSig": "2.3.0 - PMS for qrcreate only|2026-10-05|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "PERSO-4236": {
+          "status": "Done",
+          "verSig": "1.84.0 - Payrails_integration_meta_funnels_updates|2026-10-01|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "AICHAT-1281": {
+          "status": "Done",
+          "verSig": "29.09.2026|2026-09-29|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "AICHAT-1255": {
+          "status": "Done",
+          "verSig": "02.10.2026|2026-10-02|true;29.09.2026|2026-09-29|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "PERSO-3438": {
+          "status": "Done",
+          "verSig": "1.52.0 - Empath_Bipolar_Occupation_tests|2026-06-02|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "RESUME-2209": {
+          "status": "Done",
+          "verSig": "1.15.5|2026-10-05|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "PDFHELP-2121": {
+          "status": "Done",
+          "verSig": "PDF Help 1.9.9|2026-06-23|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "PDFHELP-2447": {
+          "status": "Done",
+          "verSig": "PDF Help 1.13.3|2026-09-08|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "PERSO-3442": {
+          "status": "Done",
+          "verSig": "1.52.0 - Empath_Bipolar_Occupation_tests|2026-06-02|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "MYQRCODE-10976": {
+          "status": "Done",
+          "verSig": "2.2.17|2026-09-30|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "AICHAT-1289": {
+          "status": "Done",
+          "verSig": "29.09.2026|2026-09-29|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "AICHAT-1164": {
+          "status": "Done",
+          "verSig": "29.09.2026|2026-09-29|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "MYQRCODE-10965": {
+          "status": "Done",
+          "verSig": "2.2.17-beta1|2026-09-24|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1262": {
+          "status": "Done",
+          "verSig": "UniCopy 1.8.0|2026-09-25|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1288": {
+          "status": "Done",
+          "verSig": "UniCopy 1.8.0|2026-09-25|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1159": {
+          "status": "Done",
+          "verSig": "UniCopy 1.8.0|2026-09-25|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1172": {
+          "status": "Done",
+          "verSig": "UniCopy 1.8.0|2026-09-25|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1266": {
+          "status": "Done",
+          "verSig": "UniCopy 1.8.0|2026-09-25|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1171": {
+          "status": "Done",
+          "verSig": "UniCopy 1.8.0|2026-09-25|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1148": {
+          "status": "Done",
+          "verSig": "UniCopy 1.8.0|2026-09-25|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1260": {
+          "status": "Done",
+          "verSig": "UniCopy 1.8.0|2026-09-25|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1263": {
+          "status": "Done",
+          "verSig": "UniCopy 1.8.0|2026-09-25|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1160": {
+          "status": "Done",
+          "verSig": "UniCopy 1.8.0|2026-09-25|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1161": {
+          "status": "Done",
+          "verSig": "UniCopy 1.8.0|2026-09-25|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1168": {
+          "status": "Done",
+          "verSig": "UniCopy 1.8.0|2026-09-25|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1169": {
+          "status": "Done",
+          "verSig": "UniCopy 1.8.0|2026-09-25|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1170": {
+          "status": "Done",
+          "verSig": "UniCopy 1.8.0|2026-09-25|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "UNICOPY-1167": {
+          "status": "Done",
+          "verSig": "UniCopy 1.8.0|2026-09-25|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "RESUME-1934": {
+          "status": "Done",
+          "verSig": "1.15.0|2026-09-01|true",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "AICHAT-1509": {
+          "status": "To Do",
+          "verSig": "19.10.2026|2026-10-19|false",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "MYQRCODE-11048": {
+          "status": "PENDING IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1791597603877,
+          "threadTs": ""
+        },
+        "AICHAT-1514": {
+          "status": "Backlog",
+          "verSig": "",
+          "seen": 1791597603877,
+          "threadTs": ""
+        }
+      },
+      "seeded": true
+    }
+  },
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "9h7U1BIqszUNP6Do",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-09T11:59:44.664Z",
+      "updatedAt": "2026-10-09T11:59:44.664Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "9180e0f1-159e-4dea-a77f-b1c0ae0b6e19",
+    "workflowId": "9h7U1BIqszUNP6Do",
+    "nodes": [
+      {
+        "id": "f2413de9-5707-4a97-bf49-4f8375d72d75",
+        "name": "Every 15 minutes",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.4,
+        "position": [
+          0,
+          300
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "minutes",
+                "minutesInterval": 15
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "d8829628-a277-43e4-aa4c-23e65db53e8a",
+        "name": "Fetch localized product tickets",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          260,
+          300
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://futuremedia.atlassian.net/rest/api/3/search/jql",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "jiraSoftwareCloudApi",
+          "sendQuery": true,
+          "specifyQuery": "keypair",
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "jql",
+                "value": "issueLinkType = \"Has localization ticket\" AND project != INTERNAT AND (updated >= -1d OR (fixVersion in releasedVersions() AND updated >= -14d)) ORDER BY updated DESC"
+              },
+              {
+                "name": "fields",
+                "value": "summary,status,fixVersions,issuelinks,project"
+              },
+              {
+                "name": "maxResults",
+                "value": "100"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "credentials": {
+          "jiraSoftwareCloudApi": {
+            "id": "QJte7dJbX10mIzJI",
+            "name": "Jira SW Cloud account"
+          }
+        }
+      },
+      {
+        "id": "36c428ec-b6f4-461a-adb4-b710ef27f468",
+        "name": "Detect status and release changes",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          520,
+          300
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "const state = $getWorkflowStaticData('global');\nif (!state.issues) state.issues = {};\nconst firstRun = !state.seeded;\nconst now = Date.now();\nconst esc = function (s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };\nconst base = 'https://futuremedia.atlassian.net/browse/';\nconst issues = ($input.first().json.issues) || [];\nconst out = [];\nfor (const it of issues) {\n  const f = it.fields || {};\n  const llrs = (f.issuelinks || []).filter(function (l) { return l.type && l.type.id === '10079' && l.outwardIssue; }).map(function (l) { return l.outwardIssue; });\n  if (!llrs.length) continue;\n  const status = f.status ? f.status.name : '';\n  const versions = (f.fixVersions || []).map(function (v) { return { name: v.name, releaseDate: v.releaseDate || '', released: !!v.released }; });\n  const sigOf = function (v) { return v.name + '|' + v.releaseDate + '|' + v.released; };\n  const verSig = versions.map(sigOf).sort().join(';');\n  const prev = state.issues[it.key];\n  state.issues[it.key] = { status: status, verSig: verSig, seen: now, threadTs: prev && prev.threadTs ? prev.threadTs : '' };\n  if (firstRun || !prev) continue;\n  const changes = [];\n  if (prev.status !== status) {\n    const prodNote = status === 'QA PROD' ? ' :rocket: _deployed to prod_' : '';\n    changes.push('Status: ' + esc(prev.status) + ' → *' + esc(status) + '*' + prodNote);\n  }\n  if (prev.verSig !== verSig) {\n    const prevSigs = prev.verSig ? prev.verSig.split(';') : [];\n    for (const v of versions) {\n      const p = prevSigs.find(function (s) { return s.indexOf(v.name + '|') === 0; });\n      if (!p) changes.push('Fix version added: *' + esc(v.name) + '*' + (v.releaseDate ? ' (planned release ' + v.releaseDate + ')' : ''));\n      else if (v.released && p.slice(-5) !== '|true') changes.push(':rocket: Version *' + esc(v.name) + '* *released*' + (v.releaseDate ? ' on *' + v.releaseDate + '*' : ''));\n      else if (p !== sigOf(v)) changes.push('Fix version *' + esc(v.name) + '* updated (release date ' + (v.releaseDate || 'not set') + ')');\n    }\n  }\n  if (!changes.length) continue;\n  const verLine = versions.length ? versions.map(function (v) { return esc(v.name) + ' (' + (v.releaseDate || 'no date') + (v.released ? ', released' : ', not released') + ')'; }).join(', ') : 'none';\n  const llrLine = llrs.map(function (l) { const st = l.fields && l.fields.status ? l.fields.status.name : ''; return '<' + base + l.key + '|' + l.key + '>' + (st ? ' (' + esc(st) + ')' : ''); }).join(', ');\n  const text = ':bell: *<' + base + it.key + '|' + it.key + '>* – ' + esc(f.summary) + '\\n' + changes.join('\\n') + '\\nFix version: ' + verLine + '\\nLocalization ticket: ' + llrLine;\n  out.push({ json: { key: it.key, status: status, llrKeys: llrs.map(function (l) { return l.key; }), threadTs: state.issues[it.key].threadTs, changesText: changes.join('\\n'), text: text } });\n}\nfor (const k of Object.keys(state.issues)) { if (now - (state.issues[k].seen || 0) > 90 * 86400000) delete state.issues[k]; }\nstate.seeded = true;\nreturn out;\n"
+        }
+      },
+      {
+        "id": "c80c4bb3-da24-4d94-a043-d6f5c7346edc",
+        "name": "Post to #i18n-releases",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.7,
+        "position": [
+          1560,
+          400
+        ],
+        "parameters": {
+          "resource": "message",
+          "operation": "post",
+          "authentication": "accessToken",
+          "select": "channel",
+          "channelId": {
+            "__rl": true,
+            "cachedResultName": "i18n-releases",
+            "mode": "id",
+            "value": "C0C83LNMVT3"
+          },
+          "messageType": "text",
+          "text": "={{ $json.text }}",
+          "otherOptions": {
+            "includeLinkToWorkflow": false,
+            "unfurl_links": false,
+            "unfurl_media": false
+          }
+        },
+        "credentials": {
+          "slackApi": {
+            "id": "CXa5wwj5tndNAnHG",
+            "name": "i18n assignment bot"
+          }
+        },
+        "webhookId": "1d87455c-a3d8-4c99-bea5-a225bb1b1e49"
+      },
+      {
+        "id": "47aaffd2-00fa-436b-9cad-49b8816e4c74",
+        "name": "Sticky Note 686e9d6a",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          100,
+          300
+        ],
+        "parameters": {
+          "content": "## Localized ticket release watcher\nEvery 15 min: product tickets that have an INTERNAT localization ticket (link \"Has localization ticket\"). Posts to #i18n-team when status, fix version or version release changes. First production run only records the current state (no messages). State lives in workflow static data.",
+          "color": 4
+        }
+      },
+      {
+        "id": "4304cc73-1206-4cf5-a957-3b567a72c721",
+        "name": "Find LQA ticket",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          780,
+          300
+        ],
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "method": "GET",
+          "nodeCredentialType": "jiraSoftwareCloudApi",
+          "options": {},
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "jql",
+                "value": "={{ 'key in (' + $json.llrKeys.join(',') + ') OR ' + $json.llrKeys.map(k => 'issue in linkedIssues(\"' + k + '\", \"is tested by\")').join(' OR ') }}"
+              },
+              {
+                "name": "fields",
+                "value": "summary,status,duedate,issuetype,customfield_11581"
+              },
+              {
+                "name": "maxResults",
+                "value": "30"
+              }
+            ]
+          },
+          "sendQuery": true,
+          "specifyQuery": "keypair",
+          "url": "https://futuremedia.atlassian.net/rest/api/3/search/jql"
+        },
+        "credentials": {
+          "jiraSoftwareCloudApi": {
+            "id": "QJte7dJbX10mIzJI",
+            "name": "Jira SW Cloud account"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "7899da96-1303-469c-b60e-2f2ba7d3275d",
+        "name": "Add LQA line",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          1040,
+          300
+        ],
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "lqa-text",
+                "name": "text",
+                "type": "string",
+                "value": "={{ $('Detect status and release changes').item.json.text + '\\nLQA status: ' + ((($json.issues || []).filter(i => $('Detect status and release changes').item.json.llrKeys.includes(i.key))).map(i => ($('Detect status and release changes').item.json.llrKeys.length > 1 ? i.key + ': ' : '') + '*' + (i.fields.customfield_11581 ? i.fields.customfield_11581.value : 'not set') + '*').join(', ') || 'unknown') + '\\nLQA ticket: ' + ((($json.issues || []).filter(i => i.fields && i.fields.issuetype && i.fields.issuetype.name === 'Test Plan')).length ? $json.issues.filter(i => i.fields.issuetype.name === 'Test Plan').map(i => '<https://futuremedia.atlassian.net/browse/' + i.key + '|' + i.key + '> (' + i.fields.status.name + (i.fields.duedate ? ', due ' + i.fields.duedate : '') + ')').join(', ') : 'none yet') }}"
+              },
+              {
+                "id": "reply-text",
+                "name": "replyText",
+                "type": "string",
+                "value": "={{ $('Detect status and release changes').item.json.changesText + '\\nLQA status: ' + ((($json.issues || []).filter(i => $('Detect status and release changes').item.json.llrKeys.includes(i.key))).map(i => '*' + (i.fields.customfield_11581 ? i.fields.customfield_11581.value : 'not set') + '*').join(', ') || 'unknown') + ' · LQA ticket: ' + ((($json.issues || []).filter(i => i.fields && i.fields.issuetype && i.fields.issuetype.name === 'Test Plan')).length ? $json.issues.filter(i => i.fields.issuetype.name === 'Test Plan').map(i => '<https://futuremedia.atlassian.net/browse/' + i.key + '|' + i.key + '> (' + i.fields.status.name + ')').join(', ') : 'none yet') }}"
+              },
+              {
+                "id": "key",
+                "name": "key",
+                "type": "string",
+                "value": "={{ $('Detect status and release changes').item.json.key }}"
+              },
+              {
+                "id": "thread-ts",
+                "name": "threadTs",
+                "type": "string",
+                "value": "={{ $('Detect status and release changes').item.json.threadTs }}"
+              }
+            ]
+          },
+          "includeOtherFields": false,
+          "mode": "manual",
+          "options": {}
+        }
+      },
+      {
+        "id": "b9d19182-e5a7-41fa-b44f-129cabed786c",
+        "name": "Already has thread?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1300,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "leftValue": "={{ $json.threadTs }}",
+                "operator": {
+                  "operation": "notEmpty",
+                  "singleValue": true,
+                  "type": "string"
+                },
+                "rightValue": ""
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            }
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "6fd0e12b-ab2a-4158-93dd-4d8d7ff15e7c",
+        "name": "Reply in ticket thread",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.7,
+        "position": [
+          1560,
+          200
+        ],
+        "parameters": {
+          "authentication": "accessToken",
+          "channelId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "C0C83LNMVT3"
+          },
+          "messageType": "text",
+          "operation": "post",
+          "otherOptions": {
+            "includeLinkToWorkflow": false,
+            "thread_ts": {
+              "replyValues": {
+                "reply_broadcast": false,
+                "thread_ts": "={{ $json.threadTs }}"
+              }
+            },
+            "unfurl_links": false,
+            "unfurl_media": false
+          },
+          "resource": "message",
+          "select": "channel",
+          "text": "={{ $json.replyText }}"
+        },
+        "credentials": {
+          "slackApi": {
+            "id": "CXa5wwj5tndNAnHG",
+            "name": "i18n assignment bot"
+          }
+        },
+        "webhookId": "0476eb08-8ca4-4bf6-a6f0-664911128edf"
+      },
+      {
+        "id": "bfc8e60b-0a8d-494d-9759-84e5cb890ab7",
+        "name": "Remember thread",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1820,
+          400
+        ],
+        "parameters": {
+          "jsCode": "const state = $getWorkflowStaticData('global');\nconst key = $('Add LQA line').item.json.key;\nconst ts = $json.message_timestamp || ($json.message && $json.message.ts);\nif (key && ts && state.issues && state.issues[key]) state.issues[key].threadTs = ts;\nreturn { json: { key: key, threadTs: ts } };",
+          "language": "javaScript",
+          "mode": "runOnceForEachItem"
+        }
+      }
+    ],
+    "connections": {
+      "Every 15 minutes": {
+        "main": [
+          [
+            {
+              "node": "Fetch localized product tickets",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch localized product tickets": {
+        "main": [
+          [
+            {
+              "node": "Detect status and release changes",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Detect status and release changes": {
+        "main": [
+          [
+            {
+              "node": "Find LQA ticket",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Find LQA ticket": {
+        "main": [
+          [
+            {
+              "node": "Add LQA line",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Add LQA line": {
+        "main": [
+          [
+            {
+              "node": "Already has thread?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Already has thread?": {
+        "main": [
+          [
+            {
+              "node": "Reply in ticket thread",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Post to #i18n-releases",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Post to #i18n-releases": {
+        "main": [
+          [
+            {
+              "node": "Remember thread",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [
+      {
+        "id": "e76752c1-c4ee-412e-aa9c-e2e194664803",
+        "name": "Detect changes",
+        "nodeIds": [
+          "d8829628-a277-43e4-aa4c-23e65db53e8a",
+          "36c428ec-b6f4-461a-adb4-b710ef27f468"
+        ],
+        "description": "Finds product tickets with a localization link and detects status, fix-version and release changes since last run"
+      },
+      {
+        "id": "67ae595c-e6bb-496b-8a00-7fb73fe6cafb",
+        "name": "Add LQA info",
+        "nodeIds": [
+          "4304cc73-1206-4cf5-a957-3b567a72c721",
+          "7899da96-1303-469c-b60e-2f2ba7d3275d"
+        ],
+        "description": "Looks up the localization ticket's LQA status and its Test Plan, and builds the message text"
+      },
+      {
+        "id": "5bccbccf-e31b-444f-a5dc-1654ad0b70ab",
+        "name": "Post to Slack",
+        "nodeIds": [
+          "b9d19182-e5a7-41fa-b44f-129cabed786c",
+          "6fd0e12b-ab2a-4158-93dd-4d8d7ff15e7c",
+          "c80c4bb3-da24-4d94-a043-d6f5c7346edc",
+          "bfc8e60b-0a8d-494d-9759-84e5cb890ab7"
+        ],
+        "description": "First change for a ticket posts in #i18n-releases; later changes reply in that ticket's thread"
+      }
+    ],
+    "authors": "Maria Sica (via MCP)",
+    "name": "Group nodes",
+    "description": "Updated workflow",
+    "autosaved": false,
+    "createdAt": "2026-10-09T12:49:29.502Z",
+    "updatedAt": "2026-10-09T12:49:29.502Z",
+    "workflowPublishHistory": [
+      {
+        "id": 2532,
+        "workflowId": "9h7U1BIqszUNP6Do",
+        "versionId": "9180e0f1-159e-4dea-a77f-b1c0ae0b6e19",
+        "event": "activated",
+        "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
+        "createdAt": "2026-10-09T12:49:31.738Z"
+      }
+    ]
+  }
+}
