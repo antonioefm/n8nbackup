@@ -5,10 +5,10 @@
   "active": false,
   "activeVersionId": null,
   "createdAt": "2026-05-13T19:47:33.236Z",
-  "updatedAt": "2026-10-07T09:27:24.626Z",
+  "updatedAt": "2026-10-09T12:17:20.147Z",
   "isArchived": false,
-  "versionId": "d36b369a-3ed6-4cd9-8c14-c0b90efb8d82",
-  "versionCounter": 68,
+  "versionId": "3848f422-c5d3-49b6-b605-4b992a21df61",
+  "versionCounter": 69,
   "sourceWorkflowId": null,
   "triggerCount": 0,
   "nodes": [
@@ -261,6 +261,222 @@
         880,
         3952
       ]
+    },
+    {
+      "id": "ad129911-8f56-4108-ba9d-bc7e25705d3a",
+      "name": "Sticky CSV Import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -336,
+        4160
+      ],
+      "parameters": {
+        "color": 4,
+        "content": "## Import prepared keyword rows (CSV) - reusable\n\nFor files already prepared outside n8n, like `tier_c_import.csv` (Oct 2026, 6,143 Tier C rows, 214 of them switched off by default with the reason in `notes`).\n\n**Columns:** `keyword, tier, category, active, notes, language` (UTF-8, header row). `tier` A/B/C, `active` true/false.\n\n**How to run:** Execute workflow on `Upload prepared CSV`, upload the file, submit. `CSV import summary` shows the counts.\n\n**Safe to re-run:** rows that already exist (same language + keyword + tier, compared the way the matcher sees them) are skipped, and duplicates inside the file too. If nothing is left to import it stops with an error saying why.\n\nInserts only - it never changes or deletes existing rows.",
+        "height": 360,
+        "width": 1660
+      }
+    },
+    {
+      "id": "08c040bc-d465-4507-bee0-9c895e1a04dd",
+      "name": "Upload prepared CSV",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        -256,
+        4560
+      ],
+      "parameters": {
+        "formDescription": "Upload a prepared CSV with the columns keyword, tier, category, active, notes, language (for example tier_c_import.csv). Rows that already exist are skipped.",
+        "formFields": {
+          "values": [
+            {
+              "acceptFileTypes": ".csv",
+              "fieldLabel": "Prepared CSV",
+              "fieldName": "csv_file",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "requiredField": true
+            }
+          ]
+        },
+        "formTitle": "Import prepared high-risk keyword rows (CSV)",
+        "options": {
+          "appendAttribution": false,
+          "path": "hr-keywords-csv-import"
+        },
+        "responseMode": "onReceived"
+      },
+      "webhookId": "f1b0ea5f-ce8c-4cb9-a239-6e824cfe4049"
+    },
+    {
+      "id": "40a144f2-807b-4851-a0bf-8aa357415af7",
+      "name": "Get existing keywords (CSV)",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -32,
+        4560
+      ],
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "cachedResultName": "cs_high_risk_keywords",
+          "mode": "list",
+          "value": "H0oFIJNTlQgUVrk5"
+        },
+        "operation": "get",
+        "returnAll": true
+      }
+    },
+    {
+      "id": "c9f0d8d8-2522-4e43-b3c7-1d2e5a66f225",
+      "name": "Collect existing rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        192,
+        4560
+      ],
+      "parameters": {
+        "jsCode": "// === Collect existing rows ===\n// Mode: \"Run Once for All Items\". Input = every row currently in cs_high_risk_keywords.\n// Builds the set language|keyword|tier (keyword compared the way the matcher sees it:\n// lowercase, punctuation and spacing as one space) so the CSV import can skip rows\n// that already exist. Re-running the import therefore never creates duplicates.\n// Passes the uploaded CSV on as binary \"data\".\n\nfunction prepare(text) {\n  return String(text == null ? '' : text).normalize('NFC').toLowerCase()\n    .replace(/i\\u0307/g, 'i').replace(/[^\\p{L}\\p{M}\\p{N}]+/gu, ' ').trim();\n}\n\nconst existing = [];\nfor (const i of $input.all()) {\n  const r = i.json || {};\n  if (r.keyword == null) continue;\n  const lang = String(r.language == null ? '' : r.language).trim().toLowerCase();\n  const tier = String(r.tier == null ? '' : r.tier).trim().toUpperCase();\n  existing.push(lang + '|' + prepare(r.keyword) + '|' + tier);\n}\n\nconst trig = $('Upload prepared CSV').first();\nconst bin = trig.binary || {};\nconst keys = Object.keys(bin);\nif (!keys.length) throw new Error('No file was received from the form.');\n\nreturn [{ json: { existing_rows: existing.length, existing }, binary: { data: bin[keys[0]] } }];"
+      }
+    },
+    {
+      "id": "00fd254f-2da7-4248-b42f-20f74f66ef6b",
+      "name": "Read CSV",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        416,
+        4560
+      ],
+      "parameters": {
+        "binaryPropertyName": "data",
+        "operation": "csv",
+        "options": {
+          "enableBOM": true,
+          "encoding": "utf-8",
+          "headerRow": true
+        }
+      }
+    },
+    {
+      "id": "a8ecb893-d2d2-4fc4-88f7-d7e5baa4bcde",
+      "name": "Build rows from CSV",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        4560
+      ],
+      "parameters": {
+        "jsCode": "// === Build rows from CSV ===\n// Mode: \"Run Once for All Items\". Input = one item per CSV row.\n// Expected columns: keyword, tier, category, active, notes, language\n// (the format of tier_c_import.csv). Any other columns are ignored.\n// - tier must be A, B or C; language and keyword must be present\n// - active: true/false (also 1/0, yes/no); empty = true\n// - rows that already exist (same language, keyword and tier) are skipped,\n//   as are duplicates inside the file\n// Throws if nothing is left to import, so an accidental re-run is visible.\n\nfunction prepare(text) {\n  return String(text == null ? '' : text).normalize('NFC').toLowerCase()\n    .replace(/i\\u0307/g, 'i').replace(/[^\\p{L}\\p{M}\\p{N}]+/gu, ' ').trim();\n}\n\nconst existing = new Set($('Collect existing rows').first().json.existing || []);\nconst seen = new Set();\nconst out = [];\nlet invalid = 0, already = 0, dupInFile = 0;\n\nfunction parseActive(v) {\n  const s = String(v == null ? '' : v).trim().toLowerCase();\n  if (s === '' || s === 'true' || s === '1' || s === 'yes') return true;\n  if (s === 'false' || s === '0' || s === 'no') return false;\n  return null;\n}\n\nfor (const item of $input.all()) {\n  const r = item.json || {};\n  const keyword = String(r.keyword == null ? '' : r.keyword).normalize('NFC').trim();\n  const tier = String(r.tier == null ? '' : r.tier).trim().toUpperCase();\n  const language = String(r.language == null ? '' : r.language).trim().toLowerCase();\n  const category = String(r.category == null ? '' : r.category).trim();\n  const notesRaw = String(r.notes == null ? '' : r.notes).trim();\n  const active = parseActive(r.active);\n\n  if (!keyword || !language || ['A', 'B', 'C'].indexOf(tier) === -1 || active === null || !prepare(keyword)) {\n    invalid++;\n    continue;\n  }\n  const key = language + '|' + prepare(keyword) + '|' + tier;\n  if (existing.has(key)) { already++; continue; }\n  if (seen.has(key)) { dupInFile++; continue; }\n  seen.add(key);\n\n  out.push({ json: { keyword, tier, category, active, notes: notesRaw || null, language,\n    _stats: { invalid, already, dupInFile } } });\n}\n\nif (!out.length) {\n  throw new Error('Nothing to import: ' + already + ' rows already exist, ' + dupInFile +\n    ' duplicates in the file, ' + invalid + ' invalid rows.');\n}\n// final counters on every row (the summary reads the last one)\nfor (const o of out) o.json._stats = { invalid, already, dupInFile };\nreturn out;"
+      }
+    },
+    {
+      "id": "b4029818-99fa-4538-9766-400417a8fe2f",
+      "name": "Insert CSV rows",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        4480
+      ],
+      "parameters": {
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [],
+          "schema": [
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "keyword",
+              "id": "keyword",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "tier",
+              "id": "tier",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "category",
+              "id": "category",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "active",
+              "id": "active",
+              "required": false,
+              "type": "boolean"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "notes",
+              "id": "notes",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "language",
+              "id": "language",
+              "required": false,
+              "type": "string"
+            }
+          ],
+          "value": {
+            "active": "={{ $json.active }}",
+            "category": "={{ $json.category }}",
+            "keyword": "={{ $json.keyword }}",
+            "language": "={{ $json.language }}",
+            "notes": "={{ $json.notes }}",
+            "tier": "={{ $json.tier }}"
+          }
+        },
+        "dataTableId": {
+          "__rl": true,
+          "cachedResultName": "cs_high_risk_keywords",
+          "mode": "list",
+          "value": "H0oFIJNTlQgUVrk5"
+        },
+        "operation": "insert",
+        "options": {
+          "optimizeBulk": true
+        }
+      }
+    },
+    {
+      "id": "8a9b5f91-1ed1-4cdc-80b8-26dafea7302d",
+      "name": "CSV import summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        4656
+      ],
+      "parameters": {
+        "jsCode": "// === CSV import summary ===\n// Mode: \"Run Once for All Items\". Counts what Build rows from CSV produced.\nconst rows = $input.all().map(i => i.json);\nconst st = rows.length ? rows[rows.length - 1]._stats : {};\nconst byLang = {}, byTier = {};\nlet active = 0, inactive = 0;\nfor (const r of rows) {\n  byLang[r.language] = byLang[r.language] || { total: 0, active: 0, inactive: 0 };\n  byLang[r.language].total++;\n  byTier[r.tier] = (byTier[r.tier] || 0) + 1;\n  if (r.active) { active++; byLang[r.language].active++; } else { inactive++; byLang[r.language].inactive++; }\n}\nreturn [{ json: {\n  rows_in_file: $('Read CSV').all().length,\n  rows_inserted: rows.length,\n  active, inactive,\n  skipped_already_in_table: st.already || 0,\n  skipped_duplicate_in_file: st.dupInFile || 0,\n  skipped_invalid: st.invalid || 0,\n  by_tier: byTier,\n  languages: Object.keys(byLang).length,\n  by_language: byLang\n} }];"
+      }
     }
   ],
   "connections": {
@@ -318,6 +534,66 @@
           },
           {
             "node": "Import summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload prepared CSV": {
+      "main": [
+        [
+          {
+            "node": "Get existing keywords (CSV)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get existing keywords (CSV)": {
+      "main": [
+        [
+          {
+            "node": "Collect existing rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect existing rows": {
+      "main": [
+        [
+          {
+            "node": "Read CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read CSV": {
+      "main": [
+        [
+          {
+            "node": "Build rows from CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build rows from CSV": {
+      "main": [
+        [
+          {
+            "node": "Insert CSV rows",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "CSV import summary",
             "type": "main",
             "index": 0
           }
