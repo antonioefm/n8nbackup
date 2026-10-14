@@ -1,0 +1,339 @@
+{
+  "id": "4xLDPzIRatyQS54q",
+  "name": "Lokalise READ - Personality linguist edits learn (SO/OCD/PS) 2026-10-13",
+  "description": "READ ONLY (read-only token). Personality.co + Members area: linguist edits since 2026-10-03 (via per-language scanner) + keys tagged for SO/OCD/PS tests.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-13T11:54:26.292Z",
+  "updatedAt": "2026-10-13T11:54:26.292Z",
+  "isArchived": false,
+  "versionId": "4f50505b-eedf-46c0-917c-63d1012e53fc",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "7a48635f-76c8-46e8-8216-68685e8edec8",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "4d09e84a-5d84-46a4-96af-e194f34ced7f",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// READ ONLY.\nconst PIDS = ['31393214664f295f94dd86.76792605', '9933660066825e9a8005c8.58526829'];\nreturn PIDS.map(function (p) { return { json: { url: 'https://api.lokalise.com/api2/projects/' + p + '/languages?limit=500' } }; });\n"
+      }
+    },
+    {
+      "id": "c4d07699-2df1-4a9c-9209-95f026ca49a2",
+      "name": "Fetch languages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 700
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 5,
+              "requestInterval": 500
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "268b7a30-6bec-4fb7-a70a-b623d90b878c",
+      "name": "Build scan jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const SINCE_TS = Math.floor(Date.parse('2026-10-03T00:00:00+02:00') / 1000);\nconst out = [];\nfor (const it of $input.all()) { const b = it.json.body || {}; if (!Array.isArray(b.languages)) continue;\n  for (const l of b.languages) { if (['en', 'pst', 'cus'].includes(l.lang_iso)) continue;\n    out.push({ json: { project_id: b.project_id, project_name: b.project_id, iso: l.lang_iso, lang_id: l.lang_id, lang_name: l.lang_name, since_ts: SINCE_TS } }); } }\nreturn out;\n"
+      }
+    },
+    {
+      "id": "9e37ee6e-3ab5-46a3-ae22-d8536d86e647",
+      "name": "Scan changed",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "13B6pXdEIK8IXYv6",
+          "mode": "id"
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "07e1c8d8-ddd6-4685-aab6-132aac0a9a70",
+      "name": "Build key jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Learn set = keys with a translation changed since SINCE (any editor; filtered later). Target set = SO/OCD/PS tags.\nconst ids = {}; const scan = [];\nfor (const it of $input.all()) { const j = it.json || {}; scan.push({ p: j.project_id, iso: j.iso, seen: j.translations_seen, n: (j.changed || []).length, err: (j.errors || []).slice(0, 2) });\n  for (const c of (j.changed || [])) { if (/efuturemedia/i.test(c.by || '') || !c.by) continue; (ids[j.project_id] = ids[j.project_id] || new Set()).add(c.key_id); } }\nconst A = 'https://api.lokalise.com/api2/projects/';\nconst Q = '/keys?include_translations=1&include_comments=1&disable_references=1&filter_archived=exclude&limit=500&pagination=cursor';\nconst out = [];\nfor (const p of Object.keys(ids)) { const arr = [...ids[p]]; for (let i = 0; i < arr.length; i += 150) out.push({ json: { kind: 'learn', url: A + p + Q + '&filter_key_ids=' + arr.slice(i, i + 150).join(',') } }); }\nout.push({ json: { kind: 'target', url: A + '31393214664f295f94dd86.76792605' + Q + '&filter_tags=' + encodeURIComponent('test::so,test::ocd,test::ps,emails::welcome::so,emails::welcome::ocd,emails::welcome::ps') } });\nout.push({ json: { kind: 'target', url: A + '9933660066825e9a8005c8.58526829' + Q + '&filter_tags=' + encodeURIComponent('test_questions::so,test_questions::ocd,test_questions::ps') } });\nout[0].json.scan = scan;\nreturn out;\n"
+      }
+    },
+    {
+      "id": "af2ba63d-37d4-4cfe-a8e2-bed01623fa2b",
+      "name": "Fetch keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 700
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20,
+              "requestInterval": 500
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "88a6cd34-26ea-4529-a709-4e511f1954fb",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// READ ONLY.\nconst SINCE = '2026-10-03';\nconst TARGET = /^(test_questions::|test::|emails::welcome::)(so|ocd|ps)$/;\nconst out = { scan: $('Build key jobs').first().json.scan || [], errors: [], editors: {}, target: [], learn: [] };\nconst seen = {};\nfunction kn(k) { const n = k.key_name || {}; return typeof n === 'string' ? n : (n.web || n.other || n.ios || n.android || ''); }\nfunction s(v) { return typeof v === 'string' ? v : JSON.stringify(v); }\nfor (const it of $input.all()) { const b = it.json.body || {};\n  if (!Array.isArray(b.keys)) { out.errors.push({ status: it.json.statusCode, body: JSON.stringify(b).slice(0, 300) }); continue; }\n  for (const k of b.keys) { if (k.is_archived || seen[k.key_id]) continue; seen[k.key_id] = 1;\n    const tags = Array.isArray(k.tags) ? k.tags.map(String) : [];\n    const isTarget = tags.some(t => TARGET.test(t));\n    const tr = k.translations || []; const en = tr.find(t => t.language_iso === 'en'); const ens = en ? s(en.translation) : '';\n    let recent = false; const t = {};\n    for (const x of tr) { const iso = x.language_iso; if (iso === 'en' || iso === 'pst' || iso === 'cus') continue;\n      const tx = s(x.translation); if (!tx || tx === '{}') continue;\n      const em = x.modified_by_email || ''; const ma = x.modified_at_timestamp ? new Date(x.modified_at_timestamp * 1000).toISOString().slice(0, 16) : '';\n      if (ma >= SINCE && em && !/efuturemedia/i.test(em)) { recent = true; out.editors[em] = (out.editors[em] || 0) + 1; }\n      t[iso] = [tx, em, ma, x.translation_id]; }\n    const row = { p: b.project_id, i: k.key_id, k: kn(k), en: ens, d: String(k.description || '').slice(0, 400), cl: Number(k.char_limit || 0), tg: tags, pl: k.is_plural ? 1 : 0,\n      c: (k.comments || []).map(x => String(x.comment || '')).filter(Boolean).join(' | ').slice(0, 300), t };\n    if (isTarget) out.target.push(row); if (recent) out.learn.push(isTarget ? { ref: k.key_id } : row); } }\nreturn [{ json: out }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch languages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch languages": {
+      "main": [
+        [
+          {
+            "node": "Build scan jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build scan jobs": {
+      "main": [
+        [
+          {
+            "node": "Scan changed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scan changed": {
+      "main": [
+        [
+          {
+            "node": "Build key jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build key jobs": {
+      "main": [
+        [
+          {
+            "node": "Fetch keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch keys": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "4xLDPzIRatyQS54q",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-13T11:54:26.297Z",
+      "updatedAt": "2026-10-13T11:54:26.297Z"
+    }
+  ],
+  "activeVersion": null
+}
