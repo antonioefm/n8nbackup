@@ -5,10 +5,10 @@
   "active": true,
   "activeVersionId": "f741a76d-4c90-4efa-95c6-e0e59b128213",
   "createdAt": "2026-06-18T16:37:27.350Z",
-  "updatedAt": "2026-10-08T11:46:37.585Z",
+  "updatedAt": "2026-10-14T14:45:22.353Z",
   "isArchived": false,
-  "versionId": "f741a76d-4c90-4efa-95c6-e0e59b128213",
-  "versionCounter": 244,
+  "versionId": "45894c48-0dd0-4e12-804d-46360705063c",
+  "versionCounter": 245,
   "sourceWorkflowId": null,
   "triggerCount": 1,
   "nodes": [
@@ -3081,6 +3081,161 @@
       ],
       "parameters": {},
       "notes": "Terminal. The note, tags, open status and allow_automation _no_ were already written by Case 2: Flag in Zendesk."
+    },
+    {
+      "id": "0e0a3a94-bce8-40ad-80d8-313541e71e0a",
+      "name": "Case 6: Evaluate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4672,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// === Record-based case 6 - replies ===\n// The customer asked for a refund in a reply (Is refund request = r) and the\n// payments service has a chargeback or dispute on record for them. Same rule as\n// the first-message check in PS prod - Record based checks: existence is\n// enough, refund requests only (decisions 2026-10-14).\n//\n// Switches: record_case6_enabled runs the check, record_case6_enforce decides\n// whether the ticket is taken out of automation or only tagged.\n//\n// This node never throws: on any problem it reports \"not matched\" and hands the\n// bot/search payload through untouched, so Has refunded transactions1 and\n// everything after it behave exactly as before.\n\nconst payload = $('DEV bot/search1').first().json || {};\nlet c6 = { matched: false, should_block: false };\n\ntry {\n  const cfg = $('Get Project Config').first().json || {};\n  function truthy(v) {\n    return v === true || v === 1 || v === 'true' || v === '1' || v === 'yes';\n  }\n  const enabled = truthy(cfg.record_case6_enabled);\n  const enforce = truthy(cfg.record_case6_enforce);\n\n  const body = payload.body || {};\n  const chargebacks = Array.isArray(body.chargebackTransactions) ? body.chargebackTransactions : [];\n  const matched = enabled && chargebacks.length > 0;\n\n  const ticketId = $('Aggregate').first().json.data[0].original_ticket_content.ticket_id;\n\n  function day(iso) {\n    return iso ? String(iso).slice(0, 10) : '?';\n  }\n  function describe(c) {\n    c = c || {};\n    const amount = (c.amount != null ? c.amount : '?') + (c.currency ? ' ' + c.currency : '');\n    const provider = c.provider && c.provider.type ? c.provider.type : 'unknown provider';\n    return '- recorded ' + day(c.chargebackDate) + ', ' + amount + ' disputed, ' + provider +\n      ', ' + (c.type || 'unknown type') + ' charge of ' + day(c.transactionDate);\n  }\n\n  const lines = [\n    'Note: This ticket matched record-based case 6 - the customer has a chargeback or dispute on record and is asking for a refund in a reply.',\n    '',\n    'Automation has been stopped and no reply was sent to the customer. Please handle this ticket manually.',\n    '',\n    'Chargebacks / disputes on record (' + chargebacks.length + '):'\n  ].concat(chargebacks.map(describe));\n\n  const zendeskBody = {\n    ticket: {\n      comment: { public: false, body: lines.join('\\n') }\n    }\n  };\n  const openStatusId = Number(cfg.ticket_custom_status_open_id);\n  if (Number.isFinite(openStatusId) && openStatusId > 0) {\n    zendeskBody.ticket.custom_status_id = openStatusId;\n  }\n  const allowFieldId = Number(cfg.ticket_field_allow_automation);\n  if (Number.isFinite(allowFieldId) && allowFieldId > 0) {\n    zendeskBody.ticket.custom_fields = [{ id: allowFieldId, value: '_no_' }];\n  }\n\n  c6 = {\n    matched: matched,\n    should_block: matched && enforce,\n    enabled: enabled,\n    enforce: enforce,\n    ticket_id: ticketId,\n    chargeback_count: chargebacks.length,\n    tags: ['record_case_6', 'record_based_flag'],\n    zendesk_body: zendeskBody\n  };\n} catch (e) {\n  c6 = { matched: false, should_block: false, error: String(e && e.message || e) };\n}\n\nconst out = {};\nfor (const k in payload) {\n  if (Object.prototype.hasOwnProperty.call(payload, k)) out[k] = payload[k];\n}\nout.case6 = c6;\n\nreturn [{ json: out, pairedItem: { item: 0 } }];\n"
+      },
+      "notes": "Record-based case 6 on replies: refund request + chargeback/dispute on record. Passes the bot/search payload through untouched.",
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "id": "dee43583-78c0-4e1e-884f-fc43fc08396d",
+      "name": "Case 6: Matched?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -4448,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c6-matched",
+              "leftValue": "={{ $json.case6.matched }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "434488f7-75e2-4bfb-b99f-0913bdda21d2",
+      "name": "Case 6: Add tags",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -4224,
+        -176
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "jsonBody": "={{ JSON.stringify({ tags: $json.case6.tags }) }}",
+        "method": "PUT",
+        "nodeCredentialType": "zendeskApi",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $json.case6.ticket_id + \"/tags\" }}"
+      },
+      "notes": "PUT on /tags adds tags (POST would replace them all).",
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true
+    },
+    {
+      "id": "0348a233-a44b-4646-ba74-73c83fd57e00",
+      "name": "Case 6: Enforce?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -4000,
+        -176
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c6-enforce",
+              "leftValue": "={{ $('Case 6: Evaluate').first().json.case6.should_block }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "06510ad6-d558-4c61-b5d3-f395bd995099",
+      "name": "Case 6: Take out of automation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -3776,
+        -320
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "jsonBody": "={{ JSON.stringify($('Case 6: Evaluate').first().json.case6.zendesk_body) }}",
+        "method": "PUT",
+        "nodeCredentialType": "zendeskApi",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $('Case 6: Evaluate').first().json.case6.ticket_id }}"
+      },
+      "notes": "Internal note + open + Allow automation _no_. End of the run.",
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true
+    },
+    {
+      "id": "0335edb0-447d-47fc-85d8-a2c83fc11305",
+      "name": "Case 6: Continue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3776,
+        -64
+      ],
+      "parameters": {
+        "jsCode": "// Tagged but not enforcing - hand the bot/search payload onward unchanged.\nreturn [{ json: $('Case 6: Evaluate').first().json, pairedItem: { item: 0 } }];"
+      }
     }
   ],
   "connections": {
@@ -3606,17 +3761,6 @@
         ]
       ]
     },
-    "DEV bot/search1": {
-      "main": [
-        [
-          {
-            "node": "Has refunded transactions1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Has refunded transactions1": {
       "main": [
         [
@@ -3887,6 +4031,86 @@
         [
           {
             "node": "Edit Fields9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DEV bot/search1": {
+      "main": [
+        [
+          {
+            "node": "Case 6: Evaluate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Case 6: Evaluate": {
+      "main": [
+        [
+          {
+            "node": "Case 6: Matched?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Case 6: Matched?": {
+      "main": [
+        [
+          {
+            "node": "Case 6: Add tags",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Has refunded transactions1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Case 6: Add tags": {
+      "main": [
+        [
+          {
+            "node": "Case 6: Enforce?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Case 6: Enforce?": {
+      "main": [
+        [
+          {
+            "node": "Case 6: Take out of automation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Case 6: Continue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Case 6: Continue": {
+      "main": [
+        [
+          {
+            "node": "Has refunded transactions1",
             "type": "main",
             "index": 0
           }
