@@ -1,0 +1,201 @@
+{
+  "id": "EocSsQ0lQwHY87Jc",
+  "name": "Lokalise WRITE – glossary fill empty cells 2026-10-14 (one-off)",
+  "description": "One-off: fills only EMPTY cells of the shared Lokalise glossary from approved strings / do-not-translate copies. Never changes a non-empty cell. LIMIT in Build controls test vs full run.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-14T11:36:05.467Z",
+  "updatedAt": "2026-10-14T11:36:45.889Z",
+  "isArchived": false,
+  "versionId": "5e9a241e-7aa5-4b88-969a-b10f63353acf",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "de5f71d4-28a4-409c-a612-f8c6765a2a30",
+      "name": "Run",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "1c249632-df8d-43d2-b221-6f130b5c73f8",
+      "name": "Glossary p1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "f54f5537-7d83-448b-b56f-b21fa13fe732",
+      "name": "Glossary p2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500&cursor=' + (($json.meta || {}).nextCursor || '') }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "c500bc61-57b6-4c22-a83e-594b10ed7bad",
+      "name": "Build",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// One-off 14 Oct 2026: fill EMPTY cells of the shared glossary only. A non-empty cell is never changed.\nconst LIMIT = 0; // 1 = test on the first term only; 0 = all terms\nconst NOTE = 'extracted automatically from text, to be confirmed by linguist';\n// [termId, text, translatable(1) / do-not-translate copy(0), [langIds]]\nconst PLAN = [[7173625,\"Vincente\",1,[734]],[7173625,\"Presteerder\",1,[737]],[7173625,\"Triunfador\",1,[1056]],[7173625,\"Pasiekėjas\",1,[10152]],[7173650,\"App Store\",0,[666,708,768,799,10159]],[7173651,\"Apple Pay\",0,[708]],[7173689,\"comando\",1,[708]],[7173764,\"Facebook\",0,[708]],[7173789,\"Google Pay\",0,[708]],[7173847,\"Mobitrace\",0,[666,708,761,765,768,773,793,799,818,1056,10152,10153,10154,10159]],[7173857,\"Myqrcode.com\",0,[666,673,708,733,734,737,744,748,749,753,757,767,768,770,774,799,1056,10159]],[7173858,\"MyQRCode.com™\",0,[708]],[7173859,\"nartsissism\",1,[10154]],[7173931,\"ScanPRO\",0,[666,708,761,765,768,773,793,799,818,1056,10152,10153,10154,10159]],[7176137,\"ลืมรหัสผ่านใช่ไหม\",1,[753]],[7176137,\"¿Olvidaste la contraseña?\",1,[1056]],[7176140,\"E-Mail-Adresse ist erforderlich\",1,[666]],[7176143,\"ขอบคุณสำหรับข้อเสนอแนะ!\",1,[753]],[7381792,\"Réinitialisez votre mot de passe\",1,[673]],[7381792,\"Wachtwoord opnieuw instellen\",1,[737]],[7381793,\"Redefinir senha\",1,[708]],[7381793,\"Wachtwoord opnieuw instellen\",1,[737]]];\nconst a = $('Glossary p1').first().json; const b = $('Glossary p2').first().json || {};\nconst live = [...(a.data || []), ...(((a.meta || {}).nextCursor) ? (b.data || []) : [])];\nif (live.length < 600) throw new Error('Glossary fetch incomplete: ' + live.length + ' terms');\nconst byId = new Map(live.map(t => [t.id, t]));\nconst want = new Map();\nfor (const [id, text, flag, langs] of PLAN) { if (!want.has(id)) want.set(id, []); for (const l of langs) want.get(id).push([l, text, flag]); }\nlet ids = [...want.keys()]; if (LIMIT) ids = ids.slice(0, LIMIT);\nconst terms = []; const report = { terms: 0, filled: 0, skipped_not_empty: [], missing_term: [] };\nfor (const id of ids) {\n  const t = byId.get(id); if (!t) { report.missing_term.push(id); continue; }\n  const tr = (t.translations || []).map(x => ({ langId: x.langId, translation: x.translation || '', description: x.description || '' }));\n  let changed = false;\n  for (const [langId, text, flag] of want.get(id)) {\n    const cell = tr.find(x => x.langId === langId);\n    if (cell && String(cell.translation).trim()) { report.skipped_not_empty.push([t.term, langId, cell.translation]); continue; }\n    if (cell) { cell.translation = text; if (flag && !cell.description) cell.description = NOTE; }\n    else tr.push({ langId, translation: text, description: flag ? NOTE : '' });\n    changed = true; report.filled++;\n  }\n  if (changed) { terms.push({ id, translations: tr }); report.terms++; }\n}\nif (!terms.length) throw new Error('Nothing to write: ' + JSON.stringify(report));\nreturn [{ json: { body: { terms }, report } }];\n"
+      }
+    },
+    {
+      "id": "2b4afe56-0e8d-40f1-84f4-700872d45275",
+      "name": "Write glossary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Run": {
+      "main": [
+        [
+          {
+            "node": "Glossary p1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Glossary p1": {
+      "main": [
+        [
+          {
+            "node": "Glossary p2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Glossary p2": {
+      "main": [
+        [
+          {
+            "node": "Build",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build": {
+      "main": [
+        [
+          {
+            "node": "Write glossary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "EocSsQ0lQwHY87Jc",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-14T11:36:05.469Z",
+      "updatedAt": "2026-10-14T11:36:05.469Z"
+    }
+  ],
+  "activeVersion": null
+}
