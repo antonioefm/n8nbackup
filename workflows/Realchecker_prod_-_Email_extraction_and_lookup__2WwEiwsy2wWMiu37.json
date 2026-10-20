@@ -5,10 +5,10 @@
   "active": true,
   "activeVersionId": "7f78c654-aa4b-4099-bb4d-f2abf0ea0a0d",
   "createdAt": "2026-09-13T19:16:29.419Z",
-  "updatedAt": "2026-09-16T08:53:49.138Z",
+  "updatedAt": "2026-10-19T20:57:57.575Z",
   "isArchived": false,
-  "versionId": "7f78c654-aa4b-4099-bb4d-f2abf0ea0a0d",
-  "versionCounter": 4,
+  "versionId": "5c5cbb1b-9f5f-472f-b66d-63b11c2e0d5b",
+  "versionCounter": 6,
   "sourceWorkflowId": null,
   "triggerCount": 0,
   "nodes": [
@@ -21,22 +21,10 @@
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
       "position": [
-        688,
-        416
+        -660,
+        400
       ],
       "notes": "Expects: project_key, ticket_id, title, description, translated_title, translated_description, requester_email. Optional: comment_id - which comment attachments are read from. Omit for first contact; follow-up callers pass the latest customer comment id."
-    },
-    {
-      "parameters": {},
-      "id": "e9f5891b-029e-4765-b287-fbd00e8435c2",
-      "name": "TEST trigger",
-      "type": "n8n-nodes-base.manualTrigger",
-      "typeVersion": 1,
-      "position": [
-        16,
-        224
-      ],
-      "notes": "TEST HARNESS ONLY. Lets this sub-workflow be run standalone against a real ticket."
     },
     {
       "parameters": {
@@ -47,36 +35,37 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        912,
-        320
+        -220,
+        400
       ]
     },
     {
       "parameters": {
-        "operation": "get",
         "dataTableId": {
           "__rl": true,
+          "cachedResultName": "cs_project_config",
           "mode": "list",
-          "value": "IRxwFN8iBhHLFQxQ",
-          "cachedResultName": "cs_project_config"
+          "value": "IRxwFN8iBhHLFQxQ"
         },
-        "matchType": "allConditions",
         "filters": {
           "conditions": [
             {
+              "condition": "eq",
               "keyName": "project_key",
               "keyValue": "={{ $(\"Context\").first().json.project_key }}"
             }
           ]
-        }
+        },
+        "matchType": "allConditions",
+        "operation": "get"
       },
       "id": "369d523b-9d8e-4231-a209-6dd1e6ec29cf",
       "name": "Get Project Config",
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        1136,
-        320
+        0,
+        400
       ]
     },
     {
@@ -112,8 +101,8 @@
       "type": "@n8n/n8n-nodes-langchain.openAi",
       "typeVersion": 2.1,
       "position": [
-        1360,
-        320
+        220,
+        400
       ],
       "retryOnFail": true,
       "credentials": {
@@ -127,7 +116,7 @@
       "parameters": {
         "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $(\"Context\").first().json.ticket_id + \"/comments.json\" }}",
         "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "zendeskApi",
+        "nodeCredentialType": "zendeskOAuth2Api",
         "options": {}
       },
       "id": "e4a5bc90-ed4d-4776-956e-b0ef01a32baf",
@@ -135,64 +124,64 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1712,
-        320
+        440,
+        400
       ],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 2000,
       "credentials": {
-        "zendeskApi": {
-          "id": "OCiadiDsrFfoaNwC",
-          "name": "Realchecker Zendesk account"
+        "zendeskOAuth2Api": {
+          "id": "Oiek4pqYY75QVNcy",
+          "name": "Realchecker Zendesk OAuth"
         }
       }
     },
     {
       "parameters": {
-        "jsCode": "const ctx = $('Context').first().json;\nconst cfg = $('Get Project Config').first().json;\n\nlet parsed = null;\ntry {\n  parsed = $('Email extraction (body)').first().json.output[0].content[0].text;\n} catch (e) {\n  parsed = null;\n}\nif (typeof parsed === 'string') {\n  try { parsed = JSON.parse(parsed); } catch (e) { parsed = null; }\n}\nconst bodyEmails = (parsed && Array.isArray(parsed.customer_emails)) ? parsed.customer_emails : [];\n\nconst comments = $input.first().json.comments || [];\n\n// Which comment carries the attachments we care about.\n// First contact: the ticket has one comment, the customer's original message.\n// Follow-up: the screenshot is on the latest customer comment, so the caller\n// passes its id.\nlet target = null;\nlet commentSelection = 'first_comment';\n\nconst wantedId = ctx.comment_id;\nif (wantedId !== null && wantedId !== undefined && Number(wantedId) > 0) {\n  target = comments.filter(c => Number(c.id) === Number(wantedId))[0] || null;\n  if (target) {\n    commentSelection = 'comment_id:' + wantedId;\n  } else {\n    commentSelection = 'comment_id_not_found:' + wantedId + ' (fell back to first)';\n  }\n}\n\nif (!target) {\n  target = comments.length ? comments[0] : null;\n}\n\nconst IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];\nconst EXT_TO_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };\nconst MAX_BYTES = 8 * 1024 * 1024;\nconst MAX_IMAGES = 3;\n\nconst attachments = [];\nconst skipped = [];\nconst seenUrls = {};\n\n// 1) Real attachments, listed by Zendesk on the comment.\nif (target && Array.isArray(target.attachments)) {\n  for (const a of target.attachments) {\n    const ct = String(a.content_type == null ? '' : a.content_type).toLowerCase();\n\n    if (IMAGE_TYPES.indexOf(ct) === -1) {\n      skipped.push({ file_name: a.file_name, why: 'unsupported_type', content_type: ct });\n      continue;\n    }\n    if (Number(a.size) > MAX_BYTES) {\n      skipped.push({ file_name: a.file_name, why: 'too_large', size: a.size });\n      continue;\n    }\n\n    attachments.push({\n      attachment_id: a.id,\n      file_name: a.file_name,\n      content_type: ct,\n      content_url: a.content_url,\n      size: a.size,\n      inline: false\n    });\n    seenUrls[a.content_url] = true;\n\n    if (attachments.length >= MAX_IMAGES) {\n      skipped.push({ why: 'image_cap_reached', cap: MAX_IMAGES });\n      break;\n    }\n  }\n}\n\n// 2) INLINE images. Zendesk does NOT list images pasted into the email body in\n// comment.attachments - it leaves them as attachment token URLs inside body and\n// html_body, e.g.\n//   https://<domain>.zendesk.com/attachments/token/<token>/?name=IMG_2801.png\n// Ticket 685429 attached charge evidence exactly this way and it was never read,\n// because attachments came back as an empty array.\n// Size is unknown for these, so the MAX_BYTES cap cannot be applied; the OCR call\n// is fail-open, so an oversized image degrades to an empty result rather than an error.\nif (target && attachments.length < MAX_IMAGES) {\n  const inlineRe = /https?:\\/\\/[^\\s\"'<>]*\\/attachments\\/token\\/[A-Za-z0-9]+\\/?\\?name=([^\\s\"'<>&]+)/g;\n  const searchText = String(target.html_body == null ? '' : target.html_body)\n    + ' ' + String(target.body == null ? '' : target.body);\n\n  let m;\n  while ((m = inlineRe.exec(searchText)) !== null) {\n    if (attachments.length >= MAX_IMAGES) {\n      skipped.push({ why: 'image_cap_reached', cap: MAX_IMAGES });\n      break;\n    }\n\n    const url = m[0];\n    if (seenUrls[url]) continue;\n\n    let name = m[1];\n    try { name = decodeURIComponent(name); } catch (e) { /* keep raw */ }\n\n    const ext = String(name.split('.').pop() || '').toLowerCase();\n    const mime = EXT_TO_MIME[ext];\n\n    if (!mime) {\n      skipped.push({ file_name: name, why: 'inline_unsupported_type', extension: ext });\n      continue;\n    }\n\n    seenUrls[url] = true;\n    attachments.push({\n      attachment_id: null,\n      file_name: name,\n      content_type: mime,\n      content_url: url,\n      size: null,\n      inline: true\n    });\n  }\n}\n\nconst ocrModel = String(cfg.ocr_model_id == null ? '' : cfg.ocr_model_id).trim();\n\nreturn [{\n  json: {\n    ticket_id: ctx.ticket_id,\n    comment_selection: commentSelection,\n    body_emails: bodyEmails,\n    attachments: attachments,\n    image_count: attachments.length,\n    inline_image_count: attachments.filter(a => a.inline).length,\n    skipped_attachments: skipped,\n    ocr_model_id: ocrModel,\n    ocr_enabled: ocrModel !== '' && attachments.length > 0\n  }\n}];"
+        "jsCode": "const ctx = $('Context').first().json;\nconst cfg = $('Get Project Config').first().json;\n\nlet parsed = null;\ntry {\n  parsed = $('Email extraction (body)').first().json.output[0].content[0].text;\n} catch (e) {\n  parsed = null;\n}\nif (typeof parsed === 'string') {\n  try { parsed = JSON.parse(parsed); } catch (e) { parsed = null; }\n}\nconst bodyEmails = (parsed && Array.isArray(parsed.customer_emails)) ? parsed.customer_emails : [];\n\nconst comments = $input.first().json.comments || [];\n\n// Which comment carries the attachments we care about.\n// First contact: the ticket has one comment, the customer's original message.\n// Follow-up: the screenshot is on the latest customer comment, so the caller\n// passes its id.\nlet target = null;\nlet commentSelection = 'first_comment';\n\nconst wantedId = ctx.comment_id;\nif (wantedId !== null && wantedId !== undefined && Number(wantedId) > 0) {\n  target = comments.filter(c => Number(c.id) === Number(wantedId))[0] || null;\n  if (target) {\n    commentSelection = 'comment_id:' + wantedId;\n  } else {\n    commentSelection = 'comment_id_not_found:' + wantedId + ' (fell back to first)';\n  }\n}\n\nif (!target) {\n  target = comments.length ? comments[0] : null;\n}\n\nconst IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];\nconst EXT_TO_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };\nconst MAX_BYTES = 8 * 1024 * 1024;\nconst MAX_IMAGES = 3;\n\nconst attachments = [];\nconst skipped = [];\nconst seenUrls = {};\n\n// 1) Real attachments, listed by Zendesk on the comment.\nif (target && Array.isArray(target.attachments)) {\n  for (const a of target.attachments) {\n    const ct = String(a.content_type == null ? '' : a.content_type).toLowerCase();\n\n    if (IMAGE_TYPES.indexOf(ct) === -1) {\n      skipped.push({ file_name: a.file_name, why: 'unsupported_type', content_type: ct });\n      continue;\n    }\n    if (Number(a.size) > MAX_BYTES) {\n      skipped.push({ file_name: a.file_name, why: 'too_large', size: a.size });\n      continue;\n    }\n\n    attachments.push({\n      attachment_id: a.id,\n      file_name: a.file_name,\n      content_type: ct,\n      content_url: a.content_url,\n      size: a.size,\n      inline: false\n    });\n    seenUrls[a.content_url] = true;\n\n    if (attachments.length >= MAX_IMAGES) {\n      skipped.push({ why: 'image_cap_reached', cap: MAX_IMAGES });\n      break;\n    }\n  }\n}\n\n// 2) INLINE images. Zendesk does NOT list images pasted into the email body in\n// comment.attachments - it leaves them as attachment token URLs inside body and\n// html_body, e.g.\n//   https://<domain>.zendesk.com/attachments/token/<token>/?name=IMG_2801.png\n// Personality ticket 685429 attached charge evidence exactly this way and it was\n// never read, because attachments came back as an empty array.\n// Size is unknown for these, so the MAX_BYTES cap cannot be applied; the OCR call\n// is fail-open, so an oversized image degrades to an empty result rather than an error.\nif (target && attachments.length < MAX_IMAGES) {\n  const inlineRe = /https?:\\/\\/[^\\s\"'<>]*\\/attachments\\/token\\/[A-Za-z0-9]+\\/?\\?name=([^\\s\"'<>&]+)/g;\n  const searchText = String(target.html_body == null ? '' : target.html_body)\n    + ' ' + String(target.body == null ? '' : target.body);\n\n  let m;\n  while ((m = inlineRe.exec(searchText)) !== null) {\n    if (attachments.length >= MAX_IMAGES) {\n      skipped.push({ why: 'image_cap_reached', cap: MAX_IMAGES });\n      break;\n    }\n\n    const url = m[0];\n    if (seenUrls[url]) continue;\n\n    let name = m[1];\n    try { name = decodeURIComponent(name); } catch (e) { /* keep raw */ }\n\n    const ext = String(name.split('.').pop() || '').toLowerCase();\n    const mime = EXT_TO_MIME[ext];\n\n    if (!mime) {\n      skipped.push({ file_name: name, why: 'inline_unsupported_type', extension: ext });\n      continue;\n    }\n\n    seenUrls[url] = true;\n    attachments.push({\n      attachment_id: null,\n      file_name: name,\n      content_type: mime,\n      content_url: url,\n      size: null,\n      inline: true\n    });\n  }\n}\n\nconst ocrModel = String(cfg.ocr_model_id == null ? '' : cfg.ocr_model_id).trim();\n\nreturn [{\n  json: {\n    ticket_id: ctx.ticket_id,\n    comment_selection: commentSelection,\n    body_emails: bodyEmails,\n    attachments: attachments,\n    image_count: attachments.length,\n    inline_image_count: attachments.filter(a => a.inline).length,\n    skipped_attachments: skipped,\n    ocr_model_id: ocrModel,\n    ocr_enabled: ocrModel !== '' && attachments.length > 0\n  }\n}];"
       },
       "id": "25dcecf1-25f0-40cf-ae1d-e612053161c9",
       "name": "List image attachments",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1936,
-        320
+        660,
+        400
       ]
     },
     {
       "parameters": {
         "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "el-imgs",
+              "leftValue": "={{ $json.ocr_enabled }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
           "options": {
             "caseSensitive": true,
             "leftValue": "",
             "typeValidation": "strict",
             "version": 2
-          },
-          "conditions": [
-            {
-              "id": "el-imgs",
-              "leftValue": "={{ $json.ocr_enabled }}",
-              "rightValue": "",
-              "operator": {
-                "type": "boolean",
-                "operation": "true",
-                "singleValue": true
-              }
-            }
-          ],
-          "combinator": "and"
+          }
         },
-        "options": {}
+        "options2": {}
       },
       "id": "ac88c1c6-31e5-4260-b974-9b35fde2c246",
       "name": "Any images to read?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        2160,
-        320
+        880,
+        400
       ],
       "notes": "Requires images AND ocr_model_id. Without a model it degrades to body-only extraction."
     },
@@ -206,12 +195,13 @@
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
       "position": [
-        2384,
-        496
+        1100,
+        280
       ]
     },
     {
       "parameters": {
+        "batchSize": 1,
         "options": {}
       },
       "id": "66ba8379-c048-45ef-8ae9-95b221c43611",
@@ -219,8 +209,8 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        2608,
-        496
+        1320,
+        280
       ]
     },
     {
@@ -232,38 +222,39 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2832,
-        224
+        1320,
+        120
       ]
     },
     {
       "parameters": {
-        "url": "={{ $json.content_url || ($json.attachments && $json.attachments.content_url) }}",
         "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "zendeskApi",
+        "nodeCredentialType": "zendeskOAuth2Api",
         "options": {
           "response": {
             "response": {
+              "outputPropertyName": "data",
               "responseFormat": "file"
             }
           }
-        }
+        },
+        "url": "={{ $json.content_url || ($json.attachments && $json.attachments.content_url) }}"
       },
       "id": "657233a7-db95-437e-abae-21680f8a50c7",
       "name": "Download attachment",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        2832,
-        416
+        1540,
+        400
       ],
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 2000,
       "credentials": {
-        "zendeskApi": {
-          "id": "OCiadiDsrFfoaNwC",
-          "name": "Realchecker Zendesk account"
+        "zendeskOAuth2Api": {
+          "id": "Oiek4pqYY75QVNcy",
+          "name": "Realchecker Zendesk OAuth"
         }
       },
       "onError": "continueRegularOutput"
@@ -277,30 +268,31 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3056,
-        416
+        1760,
+        400
       ]
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "https://api.openai.com/v1/chat/completions",
         "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "openAiApi",
-        "sendBody": true,
-        "specifyBody": "json",
+        "contentType": "json",
         "jsonBody": "={{ JSON.stringify($json.openai_body) }}",
+        "method": "POST",
+        "nodeCredentialType": "openAiApi",
         "options": {
           "timeout": 40000
-        }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "https://api.openai.com/v1/chat/completions"
       },
       "id": "d74e3d3a-6cfa-41df-8c6b-b95ef5000de1",
       "name": "Read image",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        3280,
-        416
+        1980,
+        400
       ],
       "retryOnFail": true,
       "maxTries": 2,
@@ -322,41 +314,41 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3504,
-        560
+        2200,
+        400
       ]
     },
     {
       "parameters": {
         "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "el-any",
+              "leftValue": "={{ $json.email_count }}",
+              "operator": {
+                "operation": "gt",
+                "type": "number"
+              },
+              "rightValue": 0
+            }
+          ],
           "options": {
             "caseSensitive": true,
             "leftValue": "",
             "typeValidation": "strict",
             "version": 3
-          },
-          "conditions": [
-            {
-              "id": "el-any",
-              "leftValue": "={{ $json.email_count }}",
-              "rightValue": 0,
-              "operator": {
-                "type": "number",
-                "operation": "gt"
-              }
-            }
-          ],
-          "combinator": "and"
+          }
         },
-        "options": {}
+        "options2": {}
       },
       "id": "2c6bc0e1-c49a-4216-be11-f3a3c065395b",
       "name": "Any emails provided?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        3056,
-        224
+        1540,
+        120
       ]
     },
     {
@@ -369,12 +361,13 @@
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
       "position": [
-        3280,
-        32
+        1760,
+        0
       ]
     },
     {
       "parameters": {
+        "batchSize": 1,
         "options": {}
       },
       "id": "bb4fa70a-2723-4869-8c21-a4f5a3d5af94",
@@ -382,8 +375,8 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        3504,
-        32
+        1980,
+        0
       ],
       "notes": "A 200 exits without looping back, so the first hit wins and the rest are never queried."
     },
@@ -396,8 +389,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3280,
-        224
+        1760,
+        240
       ]
     },
     {
@@ -407,26 +400,27 @@
             {
               "id": "el-ef-type",
               "name": "requestType",
-              "value": "search",
-              "type": "string"
+              "type": "string",
+              "value": "search"
             },
             {
               "id": "el-ef-email",
               "name": "email",
-              "value": "={{ $json.emails }}",
-              "type": "string"
+              "type": "string",
+              "value": "={{ $json.emails }}"
             }
           ]
         },
-        "options": {}
+        "includeOtherFields": false,
+        "mode": "manual"
       },
       "id": "2cd27df0-b378-4366-8b18-b83013a10aaf",
       "name": "Edit Fields (search)",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        3728,
-        128
+        2200,
+        120
       ],
       "notes": "HMAC is rebuilt per iteration - nonce-based replay protection means a signature cannot be reused."
     },
@@ -454,8 +448,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        3952,
-        128
+        2420,
+        120
       ]
     },
     {
@@ -500,8 +494,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        4176,
-        128
+        2640,
+        120
       ],
       "onError": "continueRegularOutput"
     },
@@ -590,22 +584,22 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        4400,
-        192
+        2860,
+        120
       ],
       "notes": "404 and Fallback both loop back for the next address, so a payments outage looks like a miss rather than raising."
     },
     {
       "parameters": {
-        "jsCode": "// Spread the bot/search response at top level so the CALLER can read\n// $json.body.subscriptionId exactly as it would from its own lookup,\n// then attach the outcome and the address that won.\n\nconst item = $input.first();\nconst payload = (item && item.json) ? item.json : {};\n\nlet matchedEmail = null;\ntry {\n  const searches = $('Edit Fields (search)').all();\n  matchedEmail = searches.length ? searches[searches.length - 1].json.email : null;\n} catch (e) {\n  matchedEmail = null;\n}\n\nlet matchedSource = null;\ntry {\n  const sources = $('Merge and clean emails').first().json.email_sources || [];\n  const hit = sources.filter(s => s.email === matchedEmail);\n  matchedSource = hit.length ? hit[0].source : null;\n} catch (e) {\n  matchedSource = null;\n}\n\nconst out = {};\nfor (const k in payload) {\n  if (Object.prototype.hasOwnProperty.call(payload, k)) {\n    out[k] = payload[k];\n  }\n}\n\nout.outcome = 'matched';\nout.matched_email = matchedEmail;\nout.matched_email_source = matchedSource;\n\nreturn [{ json: out }];"
+        "jsCode": "// Spread the bot/search response at top level so the CALLER can read\n// $json.body.subscriptionId exactly as it would from its own lookup,\n// then attach the outcome and the address that won.\n//\n// The payload is read from bot/search directly, not $input: the account-note\n// chain now sits in front of this node, so $input may be the Zendesk response.\n// The loop exits on the first 200, so the last bot/search run is the match.\n\nconst item = $('bot/search').last();\nconst payload = (item && item.json) ? item.json : {};\n\nlet matchedEmail = null;\ntry {\n  const searches = $('Edit Fields (search)').all();\n  matchedEmail = searches.length ? searches[searches.length - 1].json.email : null;\n} catch (e) {\n  matchedEmail = null;\n}\n\nlet matchedSource = null;\ntry {\n  const sources = $('Merge and clean emails').first().json.email_sources || [];\n  const hit = sources.filter(s => s.email === matchedEmail);\n  matchedSource = hit.length ? hit[0].source : null;\n} catch (e) {\n  matchedSource = null;\n}\n\nconst out = {};\nfor (const k in payload) {\n  if (Object.prototype.hasOwnProperty.call(payload, k)) {\n    out[k] = payload[k];\n  }\n}\n\nout.outcome = 'matched';\nout.matched_email = matchedEmail;\nout.matched_email_source = matchedSource;\n\nreturn [{ json: out }];"
       },
       "id": "2bfc7832-1f76-4cbe-80d6-8d26c8fc152d",
       "name": "Return: matched",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4624,
-        208
+        3740,
+        120
       ]
     },
     {
@@ -617,91 +611,9 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3728,
-        -64
+        2200,
+        -140
       ]
-    },
-    {
-      "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "el-t-pk",
-              "name": "project_key",
-              "value": "realchecker_prod",
-              "type": "string"
-            },
-            {
-              "id": "el-t-tid",
-              "name": "ticket_id",
-              "value": "PUT_TICKET_ID_HERE",
-              "type": "string"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "id": "6afef15a-8c51-4eba-98f7-10b207a461a2",
-      "name": "TEST inputs",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [
-        240,
-        224
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "get",
-        "dataTableId": {
-          "__rl": true,
-          "mode": "list",
-          "value": "IRxwFN8iBhHLFQxQ",
-          "cachedResultName": "cs_project_config"
-        },
-        "matchType": "allConditions",
-        "filters": {
-          "conditions": [
-            {
-              "keyName": "project_key",
-              "keyValue": "={{ $(\"TEST inputs\").first().json.project_key }}"
-            }
-          ]
-        }
-      },
-      "id": "491e7864-e8b5-4c8e-af9f-1f4bbcc77b51",
-      "name": "TEST get config",
-      "type": "n8n-nodes-base.dataTable",
-      "typeVersion": 1.1,
-      "position": [
-        464,
-        224
-      ]
-    },
-    {
-      "parameters": {
-        "url": "={{ \"https://\" + $(\"TEST get config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $(\"TEST inputs\").first().json.ticket_id }}",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "zendeskApi",
-        "options": {}
-      },
-      "id": "05257806-e769-41ce-95b1-d4e8cc8cde87",
-      "name": "TEST get ticket",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
-      "position": [
-        688,
-        224
-      ],
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000,
-      "credentials": {
-        "zendeskApi": {
-          "id": "OCiadiDsrFfoaNwC",
-          "name": "Realchecker Zendesk account"
-        }
-      }
     },
     {
       "parameters": {
@@ -715,9 +627,104 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -560,
-        -608
+        -680,
+        -60
       ]
+    },
+    {
+      "id": "2895faaf-8f4f-4a9f-907e-bbf9b00cb904",
+      "name": "Sticky Note 3e08b72a",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1300,
+        560
+      ],
+      "parameters": {
+        "color": 7,
+        "content": "## Ordering and filters\n\nBody addresses are queued ahead of OCR ones - a typed address beats a transcribed one, and the loop stops at the first hit.\n\n`Merge and clean emails` drops role addresses (`support@`, `no-reply@`, ...), anything on our own Zendesk domain, malformed entries, duplicates, and the requester own address (already checked by the caller). Everything rejected is listed in `dropped` with a reason.\n\n**Known limit:** OCR mis-transcription. The same screenshot has produced both `antonioefuturemedia@` and `antoniofuturemedia@` on different runs. A mis-read address just 404s and the loop moves on, but it costs one HMAC + bot/search round trip.",
+        "height": 280,
+        "width": 440
+      }
+    },
+    {
+      "id": "45ffd231-fafc-4402-b268-d2e4db895493",
+      "name": "Build account note",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        120
+      ],
+      "parameters": {
+        "jsCode": "// Internal note for agents: the account was located through an address other\n// than the requester's. Runs only on the matched branch (bot/search 200).\n\nconst ctx = $('Context').first().json;\n\nlet matchedEmail = null;\ntry {\n  const searches = $('Edit Fields (search)').all();\n  matchedEmail = searches.length ? searches[searches.length - 1].json.email : null;\n} catch (e) {\n  matchedEmail = null;\n}\n\nlet matchedSource = null;\ntry {\n  const sources = $('Merge and clean emails').first().json.email_sources || [];\n  const hit = sources.filter(s => s.email === matchedEmail);\n  matchedSource = hit.length ? hit[0].source : null;\n} catch (e) {\n  matchedSource = null;\n}\n\nlet foundIn = 'the ticket';\nif (matchedSource === 'body') foundIn = \"the customer's message\";\nif (matchedSource === 'ocr') foundIn = \"an image attached to the customer's message\";\n\nconst lines = [\n  \"Note: CS automation located the customer's account using an email address other than the requester's.\",\n  '',\n  'Account email: ' + String(matchedEmail),\n  'Found in: ' + foundIn\n];\nif (ctx.requester_email) {\n  lines.push('Requester email (no account found): ' + ctx.requester_email);\n}\n\nlet skipReason = null;\nif (ctx.source !== 'caller') skipReason = 'test_harness';\nelse if (!matchedEmail) skipReason = 'no_matched_email';\nelse if (!ctx.ticket_id) skipReason = 'no_ticket_id';\n\nreturn [{\n  json: {\n    post_note: skipReason === null,\n    skip_reason: skipReason,\n    ticket_id: ctx.ticket_id,\n    matched_email: matchedEmail,\n    matched_email_source: matchedSource,\n    zendesk_body: { ticket: { comment: { public: false, body: lines.join('\\n') } } }\n  },\n  pairedItem: { item: 0 }\n}];"
+      },
+      "notes": "Builds the internal note for agents: which account email matched and where it was found. post_note is false on the TEST harness, so a test run never writes to a live ticket."
+    },
+    {
+      "id": "9bb2ddc0-9e09-4313-874d-27e8d062eb34",
+      "name": "Post note?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3300,
+        120
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "an-post",
+              "leftValue": "={{ $json.post_note }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ccb2d8ae-542b-45ff-8c45-59fd4b163bbb",
+      "name": "Post account note",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        3520,
+        120
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "jsonBody": "={{ JSON.stringify($json.zendesk_body) }}",
+        "method": "PUT",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $json.ticket_id }}"
+      },
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "Oiek4pqYY75QVNcy",
+          "name": "Realchecker Zendesk OAuth"
+        }
+      },
+      "notes": "Internal note only - no status, tag or field changes. Fail-open: a Zendesk error continues to Return: matched.",
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
     }
   ],
   "connections": {
@@ -973,65 +980,61 @@
       "main": [
         [
           {
+            "node": "Build account note",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop over emails",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop over emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build account note": {
+      "main": [
+        [
+          {
+            "node": "Post note?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post account note": {
+      "main": [
+        [
+          {
             "node": "Return: matched",
             "type": "main",
             "index": 0
           }
+        ]
+      ]
+    },
+    "Post note?": {
+      "main": [
+        [
+          {
+            "node": "Post account note",
+            "type": "main",
+            "index": 0
+          }
         ],
         [
           {
-            "node": "Loop over emails",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Loop over emails",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "TEST trigger": {
-      "main": [
-        [
-          {
-            "node": "TEST inputs",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "TEST inputs": {
-      "main": [
-        [
-          {
-            "node": "TEST get config",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "TEST get config": {
-      "main": [
-        [
-          {
-            "node": "TEST get ticket",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "TEST get ticket": {
-      "main": [
-        [
-          {
-            "node": "Context",
+            "node": "Return: matched",
             "type": "main",
             "index": 0
           }
