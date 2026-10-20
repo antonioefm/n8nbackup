@@ -5,10 +5,10 @@
   "active": true,
   "activeVersionId": "f38c9b1c-c867-4523-b223-01bda726c3ed",
   "createdAt": "2026-07-29T09:02:54.387Z",
-  "updatedAt": "2026-07-30T08:44:11.300Z",
+  "updatedAt": "2026-10-19T20:57:58.998Z",
   "isArchived": false,
-  "versionId": "f38c9b1c-c867-4523-b223-01bda726c3ed",
-  "versionCounter": 9,
+  "versionId": "88bf3d16-1816-4eb7-bd9f-d3f88a842696",
+  "versionCounter": 11,
   "sourceWorkflowId": null,
   "triggerCount": 0,
   "nodes": [
@@ -202,11 +202,7 @@
     },
     {
       "parameters": {
-        "method": "PUT",
-        "url": "={{ \"https://\" + $(\"When Executed by Another Workflow\").item.json.zendeskDomain + \".zendesk.com/api/v2/tickets/\" + $(\"When Executed by Another Workflow\").item.json.ticketID }}",
         "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "zendeskApi",
-        "sendBody": true,
         "bodyParameters": {
           "parameters": [
             {
@@ -220,10 +216,22 @@
             {
               "name": "ticket.custom_status_id",
               "value": "={{ $(\"When Executed by Another Workflow\").item.json.ticketCustomStatusID }}"
+            },
+            {
+              "name": "ticket.custom_fields.id",
+              "value": "={{ $('Get Project Config').first().json.ticket_field_allow_automation }}"
+            },
+            {
+              "name": "ticket.custom_fields.value",
+              "value": "_no_"
             }
           ]
         },
-        "options": {}
+        "method": "PUT",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {},
+        "sendBody": true,
+        "url": "={{ \"https://\" + $(\"When Executed by Another Workflow\").item.json.zendeskDomain + \".zendesk.com/api/v2/tickets/\" + $(\"When Executed by Another Workflow\").item.json.ticketID }}"
       },
       "id": "d776734c-f64a-47a7-b213-9e44bc5e7074",
       "name": "Reply internally and set status to open",
@@ -235,26 +243,26 @@
       ],
       "retryOnFail": true,
       "credentials": {
-        "zendeskApi": {
-          "id": "OCiadiDsrFfoaNwC",
-          "name": "Realchecker Zendesk account"
+        "zendeskOAuth2Api": {
+          "id": "Oiek4pqYY75QVNcy",
+          "name": "Realchecker Zendesk OAuth"
         }
       }
     },
     {
       "parameters": {
         "authentication": "oAuth2",
-        "select": "channel",
         "channelId": {
           "__rl": true,
-          "value": "C0AUABW5ZPZ",
+          "cachedResultName": "cs-n8n-automation-errors",
           "mode": "list",
-          "cachedResultName": "cs-n8n-automation-errors-dev"
+          "value": "C0ABPEER1MF"
         },
-        "text": "=Refund request unsuccessful - {{ $now.toFormat(\"yyyy-MM-dd HH:mm:ss\") }}\nError message: {{ $('DEV bot/transactions/refund').item.json.error.message }}\n\nTicket information\n- transactionID: {{ $('DEV bot/transactions/refund').item.json.id }}\n- Ticket ID: {{ $('When Executed by Another Workflow').item.json.ticketID }}\n- URL: https://{{ $('When Executed by Another Workflow').item.json.zendeskDomain }}.zendesk.com/agent/tickets/{{ $('When Executed by Another Workflow').item.json.ticketID }}\n",
         "otherOptions": {
           "includeLinkToWorkflow": true
-        }
+        },
+        "select": "channel",
+        "text": "=Refund request unsuccessful - {{ $now.toFormat(\"yyyy-MM-dd HH:mm:ss\") }}\nError message: {{ $('DEV bot/transactions/refund').item.json.error.message }}\n\nTicket information\n- transactionID: {{ $('DEV bot/transactions/refund').item.json.id }}\n- Ticket ID: {{ $('When Executed by Another Workflow').item.json.ticketID }}\n- URL: https://{{ $('When Executed by Another Workflow').item.json.zendeskDomain }}.zendesk.com/agent/tickets/{{ $('When Executed by Another Workflow').item.json.ticketID }}\n"
       },
       "id": "053718e1-1b83-46ec-9a7a-e2052426ae8e",
       "name": "Send a message1",
@@ -315,6 +323,20 @@
         160,
         96
       ]
+    },
+    {
+      "id": "cfcc3a59-b7bb-46b4-bd1c-818e3baa024a",
+      "name": "Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1056,
+        96
+      ],
+      "parameters": {
+        "jsCode": "// Summary for the caller (PS prod - Refund requests flow), decision 2026-10-15.\n// ok is false when a refund failed. The failure path has already posted an\n// internal note, set the ticket open, set Allow automation to no and alerted\n// Slack; the caller must not send its approval.\nfunction ran(name) {\n  try { return $(name).isExecuted; } catch (e) { return false; }\n}\nconst refundFailed = ran('Reply internally and set status to open');\nreturn [{ json: { ok: !refundFailed, refund_ok: !refundFailed } }];\n"
+      },
+      "notes": "Last node: tells the caller whether the refund succeeded ({ ok })."
     }
   ],
   "connections": {
@@ -418,6 +440,28 @@
         [
           {
             "node": "DEV bot/transactions/refund",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message1": {
+      "main": [
+        [
+          {
+            "node": "Result",
             "type": "main",
             "index": 0
           }
