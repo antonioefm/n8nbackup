@@ -1,0 +1,269 @@
+{
+  "id": "3ffI8QBCxzmput1L",
+  "name": "Key lookup in PDFhelp PRs (READ ONLY)",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-20T08:34:59.631Z",
+  "updatedAt": "2026-10-20T08:34:59.631Z",
+  "isArchived": false,
+  "versionId": "df7fab04-c884-410c-80d8-6c239e17c955",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "eac4b2a3-9f64-43fc-8d9b-ef4e3ab6335e",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "6b54e2a3-d515-456f-b7a3-1a65e0a78baa",
+      "name": "Lokalise Project",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/479073796a6095e8c10e35.09051894",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "6aaea984-1b7b-40f6-9f35-90c77f475835",
+      "name": "Repos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return ['pdfhelp-frontend','pdfhelp-monorepo','pdfhelp-backend'].map(function (r) { return { json: { repo: 'QR-CODE-App/' + r } }; });"
+      }
+    },
+    {
+      "id": "797ba08c-f20a-465c-ae03-ab5157ea113d",
+      "name": "List PRs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/pulls?state=all&sort=updated&direction=desc&per_page=40",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "a16468a9-b99e-4fb5-ab7d-33a6421781b5",
+      "name": "Pick PRs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const out = [];\nconst reqs = $('Repos').all();\nconst res = $input.all();\nfor (let i = 0; i < res.length; i++) {\n  const r = res[i].json;\n  const repo = (reqs[i] && reqs[i].json.repo) || '?';\n  const prs = Array.isArray(r.body) ? r.body : [];\n  for (const p of prs) {\n    if ((p.updated_at || '') < '2026-10-12') { continue; }\n    out.push({ json: { repo: repo, number: p.number, title: p.title, head: p.head && p.head.ref, base: p.base && p.base.ref, state: p.state, merged_at: p.merged_at, url: p.html_url, updated_at: p.updated_at, created_at: p.created_at, user: p.user && p.user.login, body: (p.body || '').slice(0, 600) } });\n  }\n  if (prs.length === 0) { out.push({ json: { repo: repo, number: 0, status: r.statusCode, skip: true } }); }\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "c6572a21-8d92-4581-8a06-d576e04b3ba0",
+      "name": "PR Files",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/pulls/{{ $json.number }}/files?per_page=100",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "77a0a659-8733-4388-abd0-b3c4ba50a536",
+      "name": "Grep",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const TERMS = ['nat3092','statdec','su001','su580','nat-3092','statutory-declaration','disclaimerAto','disclaimerAustralianGovernment','disclaimerServicesAustralia','quickLinks','instruction','rotate'];\nconst prs = $('Pick PRs').all();\nconst res = $input.all();\nconst prOut = [];\nconst matches = [];\nfor (let i = 0; i < res.length; i++) {\n  const pr = prs[i] ? prs[i].json : {};\n  if (pr.skip) { prOut.push(pr); continue; }\n  const files = Array.isArray(res[i].json.body) ? res[i].json.body : [];\n  let hits = 0;\n  for (const f of files) {\n    const lines = (f.patch || '').split('\\n');\n    for (let j = 0; j < lines.length; j++) {\n      const ln = lines[j];\n      if (ln.charAt(0) !== '+') { continue; }\n      const low = ln.toLowerCase();\n      let t = null;\n      for (const x of TERMS) { if (low.indexOf(x.toLowerCase()) >= 0) { t = x; break; } }\n      if (!t) { continue; }\n      hits++;\n      if (matches.length < 600) { matches.push({ pr: pr.number, repo: pr.repo, file: f.filename, term: t, line: ln.slice(0, 220) }); }\n    }\n  }\n  prOut.push({ repo: pr.repo, number: pr.number, title: pr.title, head: pr.head, state: pr.state, merged_at: pr.merged_at, url: pr.url, updated_at: pr.updated_at, user: pr.user, files: files.length, file_names: files.map(function (f) { return f.filename; }).slice(0, 80), hits: hits, body: pr.body });\n}\nconst lp = $('Lokalise Project').first().json;\nreturn [{ json: { lokalise_project: { name: lp.name, id: lp.project_id, base: lp.base_language_iso }, prs: prOut, matches: matches } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Lokalise Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lokalise Project": {
+      "main": [
+        [
+          {
+            "node": "Repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Repos": {
+      "main": [
+        [
+          {
+            "node": "List PRs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List PRs": {
+      "main": [
+        [
+          {
+            "node": "Pick PRs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick PRs": {
+      "main": [
+        [
+          {
+            "node": "PR Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PR Files": {
+      "main": [
+        [
+          {
+            "node": "Grep",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "3ffI8QBCxzmput1L",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-20T08:34:59.634Z",
+      "updatedAt": "2026-10-20T08:34:59.634Z"
+    }
+  ],
+  "activeVersion": null
+}
