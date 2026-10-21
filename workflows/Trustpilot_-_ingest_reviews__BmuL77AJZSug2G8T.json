@@ -1,0 +1,894 @@
+{
+  "id": "BmuL77AJZSug2G8T",
+  "name": "Trustpilot - ingest reviews",
+  "description": "Receives Trustpilot reviews posted page by page by the daily Cowork collector task, validates them, and upserts them into the trustpilot_reviews and trustpilot_snapshots data tables.",
+  "active": true,
+  "activeVersionId": "265d0ee4-a21d-4355-93eb-a7d085fd6356",
+  "createdAt": "2026-10-20T13:48:01.496Z",
+  "updatedAt": "2026-10-20T13:50:08.223Z",
+  "isArchived": false,
+  "versionId": "265d0ee4-a21d-4355-93eb-a7d085fd6356",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 2,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "trustpilot-ingest",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "1f4da5e3-8615-4c4a-b413-f125a2cd4a99",
+      "name": "Ingest (POST)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -608,
+        304
+      ],
+      "webhookId": "8bb3d628-d9c8-47ee-82f2-0da1343864e7"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validates one page of reviews posted by the Cowork collector and turns it\n// into rows for the two data tables. Everything is checked here because the\n// payload crosses an AI agent: the key proves it came from our task, and the\n// checksum proves the agent did not alter it in transit.\nconst KEY = 'tpi_571516dd6fba9327672a3a4dfd02bd89';\nconst BRANDS = {\n  'personality.co': 'personality_prod', 'lovestyle.co': 'lovestyle_prod', 'mindspree.io': 'mindspree_prod',\n  'myimage.io': 'myimage_prod', 'resumewise.com': 'resumewise_prod', 'pdfhelp.com': 'pdfhelp_prod',\n  'unicopy.ai': 'unicopy_prod', 'realchecker.com': 'realchecker_prod', 'chatbotonline.ai': 'chatbotonline_prod',\n  'myqrcode.com': 'myqrcode_prod', 'brainiqtest.com': 'brainiqtest_prod', 'qrcreate.com': 'qrcreate_prod',\n  'vinready.com': 'vinready_prod'\n};\nconst fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16).padStart(8, '0'); };\n\nconst now = new Date();\nconst body = ($input.first().json || {}).body || {};\nconst summary = { ok: false, received: 0, accepted: 0, rejected: 0, reasons: [] };\nconst out = [];\n\nlet p = null;\ntry { p = typeof body.data === 'string' ? JSON.parse(body.data) : null; }\ncatch (e) { summary.reasons.push('payload is not valid JSON'); }\nif (!p && !summary.reasons.length) summary.reasons.push('no payload in field \"data\"');\n\nif (p && p.key !== KEY) { summary.reasons.push('invalid key'); p = null; }\n\nif (p) {\n  // Rebuilt in a fixed key order so the hash matches the collector's exactly.\n  const core = { domain: p.domain, page: p.page, trust_score: p.trust_score, total_reviews: p.total_reviews, reviews: p.reviews };\n  if (fnv(JSON.stringify(core)) !== p.checksum) { summary.reasons.push('checksum mismatch - resend this page unchanged'); p = null; }\n}\n\nif (p) {\n  const domain = String(p.domain || '').toLowerCase().replace(/^www\\./, '');\n  const pk = BRANDS[domain];\n  if (!pk) summary.reasons.push('unknown domain ' + domain);\n  else {\n    summary.ok = true;\n    summary.domain = domain;\n    summary.page = p.page;\n    const seen = new Set();\n    for (const r of (Array.isArray(p.reviews) ? p.reviews : []).slice(0, 100)) {\n      summary.received++;\n      const id = Array.isArray(r) ? r[0] : null;\n      const rating = Array.isArray(r) ? r[1] : null;\n      const t = Array.isArray(r) ? Date.parse(r[2]) : NaN;\n      const lang = Array.isArray(r) ? r[3] : null;\n      const valid = typeof id === 'string' && /^[A-Za-z0-9]{8,64}$/.test(id) &&\n        Number.isInteger(rating) && rating >= 1 && rating <= 5 &&\n        !isNaN(t) && t <= now.getTime() + 86400000;\n      if (!valid || seen.has(id)) { summary.rejected++; continue; }\n      seen.add(id);\n      summary.accepted++;\n      out.push({ json: { kind: 'review', review_id: id, project_key: pk, domain, rating,\n        published_at: new Date(t).toISOString(), language: lang ? String(lang).slice(0, 10) : null,\n        last_seen_at: now.toISOString() } });\n    }\n    // One snapshot per brand per day, written from page 1 only, so a later\n    // page can never overwrite the TrustScore with a partial or empty read.\n    if (Number(p.page) === 1) {\n      const day = now.toISOString().slice(0, 10);\n      out.push({ json: { kind: 'snapshot', snapshot_key: pk + '|' + day, project_key: pk, domain, snapshot_date: day,\n        trust_score: typeof p.trust_score === 'number' ? p.trust_score : null,\n        total_reviews: Number.isInteger(p.total_reviews) ? p.total_reviews : null,\n        captured_at: now.toISOString() } });\n    }\n  }\n}\nreturn [{ json: { kind: 'summary', summary } }].concat(out);\n"
+      },
+      "id": "65caa07e-99f1-4d28-88cd-a51b09a2f9f2",
+      "name": "Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -384,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.summary) }}",
+        "options": {}
+      },
+      "id": "1a9b8339-4c97-48d3-bfdb-bc3b2ea2fc3e",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -160,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().filter(i => i.json.kind === 'review');"
+      },
+      "id": "0c57afad-11d3-4c5e-9df2-7e7f322e2dd8",
+      "name": "Reviews only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        64,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "c0cO2E6SiD1QY7Qb"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "review_id",
+              "keyValue": "={{ $json.review_id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "review_id": "={{ $json.review_id }}",
+            "project_key": "={{ $json.project_key }}",
+            "domain": "={{ $json.domain }}",
+            "rating": "={{ $json.rating }}",
+            "published_at": "={{ $json.published_at }}",
+            "language": "={{ $json.language }}",
+            "last_seen_at": "={{ $json.last_seen_at }}"
+          },
+          "matchingColumns": [
+            "review_id"
+          ],
+          "schema": [
+            {
+              "id": "review_id",
+              "displayName": "review_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "project_key",
+              "displayName": "project_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "domain",
+              "displayName": "domain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "rating",
+              "displayName": "rating",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "published_at",
+              "displayName": "published_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "language",
+              "displayName": "language",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "last_seen_at",
+              "displayName": "last_seen_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": true,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "7abf45cb-2324-4b34-bd9b-303b725e0a9f",
+      "name": "Upsert review",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        288,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().filter(i => i.json.kind === 'snapshot');"
+      },
+      "id": "f55612e0-6d7e-4571-ab32-17a1b8691b62",
+      "name": "Snapshots only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        64,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "01HAb6YbyvQZ20WA"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "snapshot_key",
+              "keyValue": "={{ $json.snapshot_key }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "snapshot_key": "={{ $json.snapshot_key }}",
+            "project_key": "={{ $json.project_key }}",
+            "domain": "={{ $json.domain }}",
+            "snapshot_date": "={{ $json.snapshot_date }}",
+            "trust_score": "={{ $json.trust_score }}",
+            "total_reviews": "={{ $json.total_reviews }}",
+            "captured_at": "={{ $json.captured_at }}"
+          },
+          "matchingColumns": [
+            "snapshot_key"
+          ],
+          "schema": [
+            {
+              "id": "snapshot_key",
+              "displayName": "snapshot_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "project_key",
+              "displayName": "project_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "domain",
+              "displayName": "domain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "snapshot_date",
+              "displayName": "snapshot_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "trust_score",
+              "displayName": "trust_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "total_reviews",
+              "displayName": "total_reviews",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "captured_at",
+              "displayName": "captured_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": true,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "b2baa2e3-f5ee-4c4d-b3eb-5c9e87f459e0",
+      "name": "Upsert snapshot",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        288,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "path": "trustpilot-ready",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "484d9dc8-bc2c-4d0a-9e7c-e5b35af2da8d",
+      "name": "Ready (GET)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -608,
+        624
+      ],
+      "webhookId": "065ffb25-310a-438d-bfa0-06738aab8598"
+    },
+    {
+      "parameters": {
+        "content": "## Trustpilot ingest\n\nReceives one page of reviews at a time from the daily Cowork collector task (Claude in Chrome), validates key and checksum, and upserts into trustpilot_reviews (by review_id) and trustpilot_snapshots (one row per brand per day, from page 1 only).\n\nReady (GET) exists only to give the collector a page on this domain to send from, if Trustpilot blocks sending directly.",
+        "height": 224,
+        "width": 160,
+        "color": 5
+      },
+      "id": "a96f0594-7d18-40f4-b687-c8b47e2d82c6",
+      "name": "Sticky Note 6199a0bb",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -656,
+        16
+      ]
+    }
+  ],
+  "connections": {
+    "Ingest (POST)": {
+      "main": [
+        [
+          {
+            "node": "Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond": {
+      "main": [
+        [
+          {
+            "node": "Reviews only",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Snapshots only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reviews only": {
+      "main": [
+        [
+          {
+            "node": "Upsert review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Snapshots only": {
+      "main": [
+        [
+          {
+            "node": "Upsert snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "ueE9FpTQ3OBvvHQ7",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "pinData": {},
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "BmuL77AJZSug2G8T",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "updatedAt": "2025-09-16T08:57:49.000Z"
+      },
+      "createdAt": "2026-10-20T13:48:01.499Z",
+      "updatedAt": "2026-10-20T13:48:01.499Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "265d0ee4-a21d-4355-93eb-a7d085fd6356",
+    "workflowId": "BmuL77AJZSug2G8T",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "trustpilot-ingest",
+          "responseMode": "responseNode",
+          "options": {
+            "allowedOrigins": "*"
+          }
+        },
+        "id": "1f4da5e3-8615-4c4a-b413-f125a2cd4a99",
+        "name": "Ingest (POST)",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          -608,
+          304
+        ],
+        "webhookId": "8bb3d628-d9c8-47ee-82f2-0da1343864e7"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Validates one page of reviews posted by the Cowork collector and turns it\n// into rows for the two data tables. Everything is checked here because the\n// payload crosses an AI agent: the key proves it came from our task, and the\n// checksum proves the agent did not alter it in transit.\nconst KEY = 'tpi_571516dd6fba9327672a3a4dfd02bd89';\nconst BRANDS = {\n  'personality.co': 'personality_prod', 'lovestyle.co': 'lovestyle_prod', 'mindspree.io': 'mindspree_prod',\n  'myimage.io': 'myimage_prod', 'resumewise.com': 'resumewise_prod', 'pdfhelp.com': 'pdfhelp_prod',\n  'unicopy.ai': 'unicopy_prod', 'realchecker.com': 'realchecker_prod', 'chatbotonline.ai': 'chatbotonline_prod',\n  'myqrcode.com': 'myqrcode_prod', 'brainiqtest.com': 'brainiqtest_prod', 'qrcreate.com': 'qrcreate_prod',\n  'vinready.com': 'vinready_prod'\n};\nconst fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16).padStart(8, '0'); };\n\nconst now = new Date();\nconst body = ($input.first().json || {}).body || {};\nconst summary = { ok: false, received: 0, accepted: 0, rejected: 0, reasons: [] };\nconst out = [];\n\nlet p = null;\ntry { p = typeof body.data === 'string' ? JSON.parse(body.data) : null; }\ncatch (e) { summary.reasons.push('payload is not valid JSON'); }\nif (!p && !summary.reasons.length) summary.reasons.push('no payload in field \"data\"');\n\nif (p && p.key !== KEY) { summary.reasons.push('invalid key'); p = null; }\n\nif (p) {\n  // Rebuilt in a fixed key order so the hash matches the collector's exactly.\n  const core = { domain: p.domain, page: p.page, trust_score: p.trust_score, total_reviews: p.total_reviews, reviews: p.reviews };\n  if (fnv(JSON.stringify(core)) !== p.checksum) { summary.reasons.push('checksum mismatch - resend this page unchanged'); p = null; }\n}\n\nif (p) {\n  const domain = String(p.domain || '').toLowerCase().replace(/^www\\./, '');\n  const pk = BRANDS[domain];\n  if (!pk) summary.reasons.push('unknown domain ' + domain);\n  else {\n    summary.ok = true;\n    summary.domain = domain;\n    summary.page = p.page;\n    const seen = new Set();\n    for (const r of (Array.isArray(p.reviews) ? p.reviews : []).slice(0, 100)) {\n      summary.received++;\n      const id = Array.isArray(r) ? r[0] : null;\n      const rating = Array.isArray(r) ? r[1] : null;\n      const t = Array.isArray(r) ? Date.parse(r[2]) : NaN;\n      const lang = Array.isArray(r) ? r[3] : null;\n      const valid = typeof id === 'string' && /^[A-Za-z0-9]{8,64}$/.test(id) &&\n        Number.isInteger(rating) && rating >= 1 && rating <= 5 &&\n        !isNaN(t) && t <= now.getTime() + 86400000;\n      if (!valid || seen.has(id)) { summary.rejected++; continue; }\n      seen.add(id);\n      summary.accepted++;\n      out.push({ json: { kind: 'review', review_id: id, project_key: pk, domain, rating,\n        published_at: new Date(t).toISOString(), language: lang ? String(lang).slice(0, 10) : null,\n        last_seen_at: now.toISOString() } });\n    }\n    // One snapshot per brand per day, written from page 1 only, so a later\n    // page can never overwrite the TrustScore with a partial or empty read.\n    if (Number(p.page) === 1) {\n      const day = now.toISOString().slice(0, 10);\n      out.push({ json: { kind: 'snapshot', snapshot_key: pk + '|' + day, project_key: pk, domain, snapshot_date: day,\n        trust_score: typeof p.trust_score === 'number' ? p.trust_score : null,\n        total_reviews: Number.isInteger(p.total_reviews) ? p.total_reviews : null,\n        captured_at: now.toISOString() } });\n    }\n  }\n}\nreturn [{ json: { kind: 'summary', summary } }].concat(out);\n"
+        },
+        "id": "65caa07e-99f1-4d28-88cd-a51b09a2f9f2",
+        "name": "Validate",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -384,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json.summary) }}",
+          "options": {}
+        },
+        "id": "1a9b8339-4c97-48d3-bfdb-bc3b2ea2fc3e",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          -160,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "return $input.all().filter(i => i.json.kind === 'review');"
+        },
+        "id": "0c57afad-11d3-4c5e-9df2-7e7f322e2dd8",
+        "name": "Reviews only",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          64,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "upsert",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "c0cO2E6SiD1QY7Qb"
+          },
+          "filters": {
+            "conditions": [
+              {
+                "keyName": "review_id",
+                "keyValue": "={{ $json.review_id }}"
+              }
+            ]
+          },
+          "columns": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "review_id": "={{ $json.review_id }}",
+              "project_key": "={{ $json.project_key }}",
+              "domain": "={{ $json.domain }}",
+              "rating": "={{ $json.rating }}",
+              "published_at": "={{ $json.published_at }}",
+              "language": "={{ $json.language }}",
+              "last_seen_at": "={{ $json.last_seen_at }}"
+            },
+            "matchingColumns": [
+              "review_id"
+            ],
+            "schema": [
+              {
+                "id": "review_id",
+                "displayName": "review_id",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "readOnly": false,
+                "removed": false
+              },
+              {
+                "id": "project_key",
+                "displayName": "project_key",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "readOnly": false,
+                "removed": false
+              },
+              {
+                "id": "domain",
+                "displayName": "domain",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "readOnly": false,
+                "removed": false
+              },
+              {
+                "id": "rating",
+                "displayName": "rating",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "number",
+                "readOnly": false,
+                "removed": false
+              },
+              {
+                "id": "published_at",
+                "displayName": "published_at",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "dateTime",
+                "readOnly": false,
+                "removed": false
+              },
+              {
+                "id": "language",
+                "displayName": "language",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "readOnly": false,
+                "removed": false
+              },
+              {
+                "id": "last_seen_at",
+                "displayName": "last_seen_at",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "dateTime",
+                "readOnly": false,
+                "removed": false
+              }
+            ],
+            "attemptToConvertTypes": true,
+            "convertFieldsToString": false
+          },
+          "options": {}
+        },
+        "id": "7abf45cb-2324-4b34-bd9b-303b725e0a9f",
+        "name": "Upsert review",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          288,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "return $input.all().filter(i => i.json.kind === 'snapshot');"
+        },
+        "id": "f55612e0-6d7e-4571-ab32-17a1b8691b62",
+        "name": "Snapshots only",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          64,
+          432
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "upsert",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "01HAb6YbyvQZ20WA"
+          },
+          "filters": {
+            "conditions": [
+              {
+                "keyName": "snapshot_key",
+                "keyValue": "={{ $json.snapshot_key }}"
+              }
+            ]
+          },
+          "columns": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "snapshot_key": "={{ $json.snapshot_key }}",
+              "project_key": "={{ $json.project_key }}",
+              "domain": "={{ $json.domain }}",
+              "snapshot_date": "={{ $json.snapshot_date }}",
+              "trust_score": "={{ $json.trust_score }}",
+              "total_reviews": "={{ $json.total_reviews }}",
+              "captured_at": "={{ $json.captured_at }}"
+            },
+            "matchingColumns": [
+              "snapshot_key"
+            ],
+            "schema": [
+              {
+                "id": "snapshot_key",
+                "displayName": "snapshot_key",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "readOnly": false,
+                "removed": false
+              },
+              {
+                "id": "project_key",
+                "displayName": "project_key",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "readOnly": false,
+                "removed": false
+              },
+              {
+                "id": "domain",
+                "displayName": "domain",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "readOnly": false,
+                "removed": false
+              },
+              {
+                "id": "snapshot_date",
+                "displayName": "snapshot_date",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "readOnly": false,
+                "removed": false
+              },
+              {
+                "id": "trust_score",
+                "displayName": "trust_score",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "number",
+                "readOnly": false,
+                "removed": false
+              },
+              {
+                "id": "total_reviews",
+                "displayName": "total_reviews",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "number",
+                "readOnly": false,
+                "removed": false
+              },
+              {
+                "id": "captured_at",
+                "displayName": "captured_at",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "dateTime",
+                "readOnly": false,
+                "removed": false
+              }
+            ],
+            "attemptToConvertTypes": true,
+            "convertFieldsToString": false
+          },
+          "options": {}
+        },
+        "id": "b2baa2e3-f5ee-4c4d-b3eb-5c9e87f459e0",
+        "name": "Upsert snapshot",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          288,
+          432
+        ]
+      },
+      {
+        "parameters": {
+          "path": "trustpilot-ready",
+          "options": {
+            "allowedOrigins": "*"
+          }
+        },
+        "id": "484d9dc8-bc2c-4d0a-9e7c-e5b35af2da8d",
+        "name": "Ready (GET)",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          -608,
+          624
+        ],
+        "webhookId": "065ffb25-310a-438d-bfa0-06738aab8598"
+      },
+      {
+        "parameters": {
+          "content": "## Trustpilot ingest\n\nReceives one page of reviews at a time from the daily Cowork collector task (Claude in Chrome), validates key and checksum, and upserts into trustpilot_reviews (by review_id) and trustpilot_snapshots (one row per brand per day, from page 1 only).\n\nReady (GET) exists only to give the collector a page on this domain to send from, if Trustpilot blocks sending directly.",
+          "height": 224,
+          "width": 160,
+          "color": 5
+        },
+        "id": "a96f0594-7d18-40f4-b687-c8b47e2d82c6",
+        "name": "Sticky Note 6199a0bb",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -656,
+          16
+        ]
+      }
+    ],
+    "connections": {
+      "Ingest (POST)": {
+        "main": [
+          [
+            {
+              "node": "Validate",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Respond": {
+        "main": [
+          [
+            {
+              "node": "Reviews only",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Snapshots only",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Reviews only": {
+        "main": [
+          [
+            {
+              "node": "Upsert review",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Snapshots only": {
+        "main": [
+          [
+            {
+              "node": "Upsert snapshot",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Antonio antonio.marusic@efuturemedia.com",
+    "name": "Version 265d0ee4",
+    "description": "",
+    "autosaved": true,
+    "createdAt": "2026-10-20T13:49:30.930Z",
+    "updatedAt": "2026-10-20T13:49:43.000Z",
+    "workflowPublishHistory": [
+      {
+        "id": 2935,
+        "workflowId": "BmuL77AJZSug2G8T",
+        "versionId": "265d0ee4-a21d-4355-93eb-a7d085fd6356",
+        "event": "activated",
+        "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e",
+        "createdAt": "2026-10-20T13:49:43.701Z"
+      },
+      {
+        "id": 2936,
+        "workflowId": "BmuL77AJZSug2G8T",
+        "versionId": "265d0ee4-a21d-4355-93eb-a7d085fd6356",
+        "event": "deactivated",
+        "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e",
+        "createdAt": "2026-10-20T13:50:08.306Z"
+      },
+      {
+        "id": 2937,
+        "workflowId": "BmuL77AJZSug2G8T",
+        "versionId": "265d0ee4-a21d-4355-93eb-a7d085fd6356",
+        "event": "activated",
+        "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e",
+        "createdAt": "2026-10-20T13:50:08.307Z"
+      }
+    ]
+  }
+}
