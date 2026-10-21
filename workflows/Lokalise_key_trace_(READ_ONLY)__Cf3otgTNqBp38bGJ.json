@@ -1,0 +1,430 @@
+{
+  "id": "Cf3otgTNqBp38bGJ",
+  "name": "Lokalise key trace (READ ONLY)",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-20T09:35:11.136Z",
+  "updatedAt": "2026-10-20T10:06:16.698Z",
+  "isArchived": false,
+  "versionId": "9f66ddce-84be-4f2e-9281-ccb1e01a57d3",
+  "versionCounter": 10,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "47d10185-b629-41c5-aa03-8d81b06b1a69",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "4ed82fca-7c71-4a98-ac74-462f58b05fa6",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// EDIT ME for each run.\n// filter: '&filter_untranslated=1' | '&filter_tags=develop' | '&filter_keys=a::b,c::d' | '' (then set added_on)\n// added_on: 'YYYY-MM-DD' to keep only keys created that day ('' = no date filter)\n// repos: repo names in QR-CODE-App; branch_regex: extra branches to scan besides develop/main\n// terms: [] = derive from key names automatically\nreturn [{ json: {\n  project_id: '479073796a6095e8c10e35.09051894',\n  filter: '&filter_untranslated=1',\n  pages: [1],\n  added_on: '',\n  repos: ['pdfhelp-monorepo'],\n  branch_regex: '',\n  terms: []\n} }];"
+      }
+    },
+    {
+      "id": "4bd33e87-92b9-428b-a3e5-3c5223dedf98",
+      "name": "Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const c = $input.first().json; return c.pages.map(function (p) { return { json: { project_id: c.project_id, filter: c.filter, page: p } }; });"
+      }
+    },
+    {
+      "id": "14ca3097-e193-4aa9-9338-c2e00ad5b935",
+      "name": "Fetch Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?include_translations=1&include_screenshots=1&limit=500&page={{ $json.page }}{{ $json.filter }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "ec6c6eba-31f7-43ea-9437-87f4df549458",
+      "name": "Keys",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const c = $('Config').first().json;\nconst out = []; let total = null;\nconst STOP = { title:1, subtitle:1, name:1, card:1, description:1, label:1, text:1, button:1, types:1, forms:1, form:1, hero:1, metadata:1, components:1, navigation:1, dashboard:1, ogtitle:1, ogdescription:1, steps:1, faq:1, question:1, answer:1, placeholder:1, error:1, errors:1, common:1, homepage:1, instruction:1 };\nconst terms = {};\nfor (const it of $input.all()) {\n  const r = it.json; const h = r.headers || {}; if (h['x-pagination-total-count']) { total = h['x-pagination-total-count']; }\n  for (const k of ((r.body && r.body.keys) || [])) {\n    if (k.is_archived) { continue; }\n    if (c.added_on && String(k.created_at || '').indexOf(c.added_on) !== 0) { continue; }\n    const name = (k.key_name && k.key_name.web) || k.key_name;\n    let en = null; const untr = [];\n    for (const t of (k.translations || [])) { const iso = (t.language_iso || '').toLowerCase(); if (iso === 'en') { en = t.translation; continue; } if (!t.translation || !String(t.translation).trim()) { untr.push(iso); } }\n    out.push({ id: k.key_id, name: name, en: en, description: k.description, tags: k.tags, created_at: k.created_at, untranslated: untr.length, screenshots: (k.screenshots || []).length });\n    for (const seg of String(name).split('::')) { const s = seg.toLowerCase(); if (s.length >= 4 && !STOP[s]) { terms[seg] = 1; } }\n  }\n}\nlet since = null;\nfor (const k of out) { const d = String(k.created_at || '').slice(0, 10); if (d && (!since || d < since)) { since = d; } }\nif (since) { const dt = new Date(since + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() - 2); since = dt.toISOString().slice(0, 10); }\nconst batches = {};\nfor (const k of out) { const m = String(k.created_at || '').slice(0, 16); batches[m] = (batches[m] || 0) + 1; }\nreturn [{ json: { total_header: total, count: out.length, batches: batches, since: since, terms: (c.terms && c.terms.length) ? c.terms : Object.keys(terms).slice(0, 80), keys: out } }];"
+      }
+    },
+    {
+      "id": "d830d914-d7ef-4e15-aa64-3462a294515f",
+      "name": "Repos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const c = $('Config').first().json; return c.repos.map(function (r) { return { json: { repo: 'QR-CODE-App/' + r } }; });"
+      }
+    },
+    {
+      "id": "34a84b7a-91a7-4c18-afff-f380b8a10ed8",
+      "name": "Branches",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/branches?per_page=100",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "6c4ece20-b2fc-429a-824b-1b616bfa286f",
+      "name": "Commit Reqs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const c = $('Config').first().json; const since = $('Keys').first().json.since || '2026-01-01';\nconst reqs = $('Repos').all(); const res = $input.all(); const out = [];\nconst extra = c.branch_regex ? new RegExp(c.branch_regex, 'i') : null;\nfor (let i = 0; i < res.length; i++) {\n  const repo = reqs[i].json.repo;\n  const names = (Array.isArray(res[i].json.body) ? res[i].json.body : []).map(function (b) { return b.name; });\n  const pick = names.filter(function (n) { return /^(develop|dev|main|master)$/i.test(n) || (extra && extra.test(n)); });\n  if (pick.length === 0) { pick.push('HEAD'); }\n  for (const n of pick) { out.push({ json: { repo: repo, branch: n, since: since } }); }\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "191a6385-e9a4-44d0-adf7-dc2955b60114",
+      "name": "List Commits",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1600,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/commits?sha={{ encodeURIComponent($json.branch) }}&since={{ $json.since }}T00:00:00Z&per_page=60",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "f4092041-f8ba-4cc3-baca-2df4497108d8",
+      "name": "Pick Commits",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const reqs = $('Commit Reqs').all(); const res = $input.all(); const seen = {}; const out = [];\nfor (let i = 0; i < res.length; i++) {\n  const rq = reqs[i].json; const cs = Array.isArray(res[i].json.body) ? res[i].json.body : [];\n  for (const c of cs) {\n    const k = rq.repo + '@' + c.sha;\n    if (seen[k]) { seen[k].branches.push(rq.branch); continue; }\n    const o = { repo: rq.repo, sha: c.sha, branches: [rq.branch], message: (c.commit && c.commit.message || '').slice(0, 300), date: c.commit && c.commit.author && c.commit.author.date, author: c.commit && c.commit.author && c.commit.author.name, url: c.html_url };\n    seen[k] = o; out.push({ json: o });\n  }\n}\nif (out.length === 0) { out.push({ json: { repo: 'none', sha: 'none', branches: [], message: 'NO COMMITS FOUND' } }); }\nreturn out.slice(0, 150);"
+      }
+    },
+    {
+      "id": "7007a8c9-eab8-47ed-bb48-ba2377724398",
+      "name": "Commit Detail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2000,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/commits/{{ $json.sha }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "92fee877-6988-4605-82e6-a2655430fcd9",
+      "name": "Trace",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const K = $('Keys').first().json; const TERMS = K.terms;\nconst cs = $('Pick Commits').all(); const res = $input.all();\nconst commits = []; const termHits = {}; const skippedSync = [];\nfor (let i = 0; i < res.length; i++) {\n  const c = cs[i] ? cs[i].json : {};\n  // Lokalise download/sync commits contain the keys too but are a consequence, not the origin.\n  if (/lokalise/i.test(String(c.message))) { skippedSync.push((c.sha || '').slice(0, 9)); continue; }\n  const files = (res[i].json.body && Array.isArray(res[i].json.body.files)) ? res[i].json.body.files : [];\n  const hits = []; const hitFiles = {};\n  for (const f of files) {\n    for (const ln of (f.patch || '').split('\\n')) {\n      if (ln.charAt(0) !== '+') { continue; }\n      const low = ln.toLowerCase();\n      for (const t of TERMS) { if (low.indexOf(t.toLowerCase()) >= 0) { hitFiles[f.filename] = 1; termHits[t] = termHits[t] || {}; termHits[t][(c.sha || '').slice(0, 9)] = 1; if (hits.length < 40) { hits.push({ file: f.filename, term: t, line: ln.slice(0, 200) }); } } }\n    }\n  }\n  if (hits.length) {\n    const tickets = (String(c.message).match(/[A-Z][A-Z0-9]+-\\d+/g) || []).filter(function (v, j, a) { return a.indexOf(v) === j; });\n    commits.push({ sha: (c.sha || '').slice(0, 9), repo: c.repo, branches: c.branches, date: c.date, author: c.author, message: c.message, tickets: tickets, url: c.url, files_with_hits: Object.keys(hitFiles), sample: hits });\n  }\n}\nconst ticketTags = {};\nfor (const k of K.keys) { for (const t of (k.tags || [])) { if (/^[A-Z][A-Z0-9]+-\\d+$/.test(t)) { ticketTags[t] = (ticketTags[t] || 0) + 1; } } }\nconst unmatched_terms = TERMS.filter(function (t) { return !termHits[t]; });\nconst unmatched_keys = K.keys.filter(function (k) { const segs = String(k.name).split('::'); return !segs.some(function (s) { return termHits[s]; }); }).map(function (k) { return { name: k.name, en: k.en, created_at: k.created_at, tags: k.tags }; });\nreturn [{ json: { key_count: K.count, batches: K.batches, since: K.since, ticket_tags_on_keys: ticketTags, terms: TERMS, commits: commits, lokalise_sync_commits_skipped: skippedSync, unmatched_terms: unmatched_terms, unmatched_keys: unmatched_keys, keys: K.keys } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pages": {
+      "main": [
+        [
+          {
+            "node": "Fetch Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Keys": {
+      "main": [
+        [
+          {
+            "node": "Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keys": {
+      "main": [
+        [
+          {
+            "node": "Repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Repos": {
+      "main": [
+        [
+          {
+            "node": "Branches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branches": {
+      "main": [
+        [
+          {
+            "node": "Commit Reqs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit Reqs": {
+      "main": [
+        [
+          {
+            "node": "List Commits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Commits": {
+      "main": [
+        [
+          {
+            "node": "Pick Commits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Commits": {
+      "main": [
+        [
+          {
+            "node": "Commit Detail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit Detail": {
+      "main": [
+        [
+          {
+            "node": "Trace",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "Cf3otgTNqBp38bGJ",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-20T09:35:11.138Z",
+      "updatedAt": "2026-10-20T09:35:11.138Z"
+    }
+  ],
+  "activeVersion": null
+}
