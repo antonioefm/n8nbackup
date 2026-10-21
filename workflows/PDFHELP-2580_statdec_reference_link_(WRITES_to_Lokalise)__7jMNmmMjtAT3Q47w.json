@@ -1,0 +1,229 @@
+{
+  "id": "7jMNmmMjtAT3Q47w",
+  "name": "PDFHELP-2580 statdec reference link (WRITES to Lokalise)",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-20T08:50:07.925Z",
+  "updatedAt": "2026-10-20T08:59:42.682Z",
+  "isArchived": false,
+  "versionId": "d8bbf56c-db45-42f6-a140-6056c4730741",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "bee5e859-bb7f-440e-9b6d-ec7781e2c8b9",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "64274986-80e8-4e24-a174-785a3812837c",
+      "name": "Params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: { ids: '959668346,959668350,959668359,959668368,959668369,959668370,959668371,959668381', url: 'https://my.gov.au/en/about/help/digital-id/commonwealth-statutory-declarations', note: 'Reference: https://my.gov.au/en/about/help/digital-id/commonwealth-statutory-declarations \\u2013 check it to find the official translation of \"statutory declaration\".' } }];"
+      }
+    },
+    {
+      "id": "8352d276-0afa-44e0-b089-d5a5bc0e5e0b",
+      "name": "Get Current",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/479073796a6095e8c10e35.09051894/keys?filter_key_ids={{ $json.ids }}&limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "327bd2f4-f98f-40a1-a0f4-1d8edc559ecb",
+      "name": "Build Body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const p = $('Params').first().json;\nconst r = $input.first().json;\nconst send = []; const skipped = [];\nfor (const k of ((r.body && r.body.keys) || [])) {\n  const d = (k.description || '').trim();\n  if (k.is_archived) { skipped.push({ key_id: k.key_id, why: 'archived' }); continue; }\n  if (d.indexOf(p.url) >= 0) { skipped.push({ key_id: k.key_id, why: 'already has link' }); continue; }\n  send.push({ key_id: k.key_id, description: (d ? d + ' ' : '') + p.note });\n}\nreturn [{ json: { body: { keys: send }, send_count: send.length, skipped: skipped, found: ((r.body && r.body.keys) || []).length } }];"
+      }
+    },
+    {
+      "id": "407ef2b6-7232-4539-9d6e-dd83c78e002c",
+      "name": "Update Descriptions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "https://api.lokalise.com/api2/projects/479073796a6095e8c10e35.09051894/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "id": "c88539af-0168-4377-bbd3-f3eff2b3959a",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const r=$input.first().json; const b=$('Build Body').first().json; const ks=(r.body&&r.body.keys)||[]; return [{json:{put_status:r.statusCode, updated:ks.length, keys:ks.map(function(k){return {name:(k.key_name&&k.key_name.web)||k.key_name, d:k.description};}), errors:(r.body&&r.body.errors)||null, skipped:b.skipped, sent:b.send_count, found:b.found}}];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Params": {
+      "main": [
+        [
+          {
+            "node": "Get Current",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Current": {
+      "main": [
+        [
+          {
+            "node": "Build Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Body": {
+      "main": [
+        [
+          {
+            "node": "Update Descriptions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Descriptions": {
+      "main": [
+        [
+          {
+            "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "7jMNmmMjtAT3Q47w",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-20T08:50:07.926Z",
+      "updatedAt": "2026-10-20T08:50:07.926Z"
+    }
+  ],
+  "activeVersion": null
+}
