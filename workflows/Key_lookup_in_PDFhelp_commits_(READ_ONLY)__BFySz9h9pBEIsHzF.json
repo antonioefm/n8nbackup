@@ -1,0 +1,306 @@
+{
+  "id": "BFySz9h9pBEIsHzF",
+  "name": "Key lookup in PDFhelp commits (READ ONLY)",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-20T08:36:09.564Z",
+  "updatedAt": "2026-10-20T08:36:09.564Z",
+  "isArchived": false,
+  "versionId": "f3ef53e1-2425-4e16-9a91-0be8a5db1a51",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "9d6941ea-79f2-44cc-870e-00b198999944",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a15a6d56-6851-4d98-b133-ce47b300faf3",
+      "name": "Repos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return ['pdfhelp-monorepo','pdfhelp-frontend'].map(function (r) { return { json: { repo: 'QR-CODE-App/' + r } }; });"
+      }
+    },
+    {
+      "id": "faf70468-13e1-4d38-b3ef-d22e385a8d79",
+      "name": "Branches",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/branches?per_page=100",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "fde38f40-aadb-4c49-a936-60dc78086523",
+      "name": "Commit Reqs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const reqs = $('Repos').all();\nconst res = $input.all();\nconst out = [];\nfor (let i = 0; i < res.length; i++) {\n  const repo = reqs[i].json.repo;\n  const bs = Array.isArray(res[i].json.body) ? res[i].json.body : [];\n  const names = bs.map(function (b) { return b.name; });\n  const pick = names.filter(function (n) { return /^(develop|dev|main|master)$/i.test(n) || /2580|austral|statdec|nat.?3092|su001|su580|rotate|instruction/i.test(n); });\n  for (const n of pick) { out.push({ json: { repo: repo, branch: n, all_branches: names.length } }); }\n  if (pick.length === 0) { out.push({ json: { repo: repo, branch: 'HEAD', status: res[i].json.statusCode, all_branches: names.length } }); }\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "74d9b8f0-d5cb-4f28-a120-aea6a3c01f2b",
+      "name": "List Commits",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/commits?sha={{ encodeURIComponent($json.branch) }}&since=2026-10-14T00:00:00Z&per_page=60",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "557b3ada-155a-4874-913a-da4568ec4d36",
+      "name": "Pick Commits",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const reqs = $('Commit Reqs').all();\nconst res = $input.all();\nconst seen = {};\nconst out = [];\nfor (let i = 0; i < res.length; i++) {\n  const rq = reqs[i].json;\n  const cs = Array.isArray(res[i].json.body) ? res[i].json.body : [];\n  for (const c of cs) {\n    const k = rq.repo + '@' + c.sha;\n    if (seen[k]) { seen[k].branches.push(rq.branch); continue; }\n    const o = { repo: rq.repo, sha: c.sha, branches: [rq.branch], message: (c.commit && c.commit.message || '').slice(0, 300), date: c.commit && c.commit.author && c.commit.author.date, author: c.commit && c.commit.author && c.commit.author.name, url: c.html_url };\n    seen[k] = o;\n    out.push({ json: o });\n  }\n}\nif (out.length === 0) { out.push({ json: { repo: 'none', sha: 'none', branches: [], message: 'NO COMMITS', statuses: res.map(function (r) { return r.json.statusCode; }) } }); }\nreturn out.slice(0, 150);"
+      }
+    },
+    {
+      "id": "d6076049-331e-4a89-bcde-d448f534e664",
+      "name": "Commit Detail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/commits/{{ $json.sha }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "1ccc4887-724a-4a94-b2e6-5ac5d58e98a2",
+      "name": "Grep",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const TERMS = ['nat3092','statdec','su001','su580','nat-3092','statutory-declaration','disclaimerAto','disclaimerAustralianGovernment','disclaimerServicesAustralia','quickLinks','instruction','rotate','2580'];\nconst cs = $('Pick Commits').all();\nconst res = $input.all();\nconst commits = [];\nconst matches = [];\nfor (let i = 0; i < res.length; i++) {\n  const c = cs[i] ? cs[i].json : {};\n  const body = res[i].json.body || {};\n  const files = Array.isArray(body.files) ? body.files : [];\n  let hits = 0;\n  for (const f of files) {\n    const lines = (f.patch || '').split('\\n');\n    for (let j = 0; j < lines.length; j++) {\n      const ln = lines[j];\n      if (ln.charAt(0) !== '+' && ln.charAt(0) !== '-') { continue; }\n      const low = ln.toLowerCase();\n      let t = null;\n      for (const x of TERMS) { if (low.indexOf(x.toLowerCase()) >= 0) { t = x; break; } }\n      if (!t) { continue; }\n      hits++;\n      if (matches.length < 700) { matches.push({ sha: (c.sha || '').slice(0, 9), repo: c.repo, file: f.filename, term: t, line: ln.slice(0, 220) }); }\n    }\n  }\n  commits.push({ repo: c.repo, sha: (c.sha || '').slice(0, 9), branches: c.branches, date: c.date, author: c.author, message: c.message, url: c.url, files: files.length, file_names: files.map(function (f) { return f.filename; }).slice(0, 40), hits: hits, status: res[i].json.statusCode });\n}\nconst br = $('Commit Reqs').all().map(function (x) { return x.json; });\nreturn [{ json: { branches_checked: br, commits: commits, matches: matches } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Repos": {
+      "main": [
+        [
+          {
+            "node": "Branches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branches": {
+      "main": [
+        [
+          {
+            "node": "Commit Reqs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit Reqs": {
+      "main": [
+        [
+          {
+            "node": "List Commits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Commits": {
+      "main": [
+        [
+          {
+            "node": "Pick Commits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Commits": {
+      "main": [
+        [
+          {
+            "node": "Commit Detail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit Detail": {
+      "main": [
+        [
+          {
+            "node": "Grep",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "BFySz9h9pBEIsHzF",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-20T08:36:09.566Z",
+      "updatedAt": "2026-10-20T08:36:09.566Z"
+    }
+  ],
+  "activeVersion": null
+}
