@@ -2,8 +2,8 @@
   "id": "7pj9ZLUJQAVSvaXG",
   "name": "MS prod - Claim detection",
   "description": null,
-  "active": false,
-  "activeVersionId": null,
+  "active": true,
+  "activeVersionId": "f1e43378-c05c-4477-b7f9-bd90b57af5e6",
   "createdAt": "2026-10-19T09:30:36.723Z",
   "updatedAt": "2026-10-19T20:57:42.399Z",
   "isArchived": false,
@@ -664,5 +664,641 @@
       "updatedAt": "2026-10-19T09:30:36.725Z"
     }
   ],
-  "activeVersion": null
+  "activeVersion": {
+    "versionId": "f1e43378-c05c-4477-b7f9-bd90b57af5e6",
+    "workflowId": "7pj9ZLUJQAVSvaXG",
+    "nodes": [
+      {
+        "id": "65632bc2-52d9-4164-b7f2-62a4fd26b625",
+        "name": "When Executed by Another Workflow",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          0,
+          224
+        ],
+        "parameters": {
+          "inputSource": "workflowInputs",
+          "workflowInputs": {
+            "values": [
+              {
+                "name": "project_key",
+                "type": "string"
+              },
+              {
+                "name": "ticket_id",
+                "type": "number"
+              },
+              {
+                "name": "text",
+                "type": "string"
+              },
+              {
+                "name": "payments_email",
+                "type": "string"
+              },
+              {
+                "name": "stage",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "a3045954-8694-46bc-9c8d-e8f354f04fa4",
+        "name": "Get Project Config",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          224,
+          224
+        ],
+        "parameters": {
+          "dataTableId": {
+            "__rl": true,
+            "cachedResultName": "cs_project_config",
+            "mode": "list",
+            "value": "IRxwFN8iBhHLFQxQ"
+          },
+          "filters": {
+            "conditions": [
+              {
+                "keyName": "project_key",
+                "keyValue": "={{ $('When Executed by Another Workflow').first().json.project_key }}"
+              }
+            ]
+          },
+          "limit": 1,
+          "matchType": "allConditions",
+          "operation": "get"
+        }
+      },
+      {
+        "id": "66b697cc-d489-4c51-b95a-dc1bbc988a9c",
+        "name": "Claim checks enabled?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          448,
+          224
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "cd-en-3",
+                "leftValue": "={{ $('Get Project Config').first().json.record_case3_enabled === true || $('Get Project Config').first().json.record_case5_enabled === true }}",
+                "operator": {
+                  "operation": "true",
+                  "singleValue": true,
+                  "type": "boolean"
+                },
+                "rightValue": ""
+              },
+              {
+                "id": "cd-en-t",
+                "leftValue": "={{ String($('When Executed by Another Workflow').first().json.text || '').trim().length > 0 }}",
+                "operator": {
+                  "operation": "true",
+                  "singleValue": true,
+                  "type": "boolean"
+                },
+                "rightValue": ""
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 2
+            }
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "7da05485-3148-4e95-be87-dea862aea1d9",
+        "name": "Detect claims",
+        "type": "@n8n/n8n-nodes-langchain.openAi",
+        "typeVersion": 2.1,
+        "position": [
+          672,
+          144
+        ],
+        "parameters": {
+          "builtInTools": {},
+          "modelId": {
+            "__rl": true,
+            "cachedResultName": "GPT-5.4",
+            "mode": "list",
+            "value": "gpt-5.4"
+          },
+          "options": {
+            "textFormat": {
+              "textOptions": {
+                "schema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"refund_missing\": {\n      \"type\": \"boolean\"\n    },\n    \"refund_amount_disputed\": {\n      \"type\": \"boolean\"\n    },\n    \"cancelled_before_renewal\": {\n      \"type\": \"boolean\"\n    },\n    \"evidence_refund_missing\": {\n      \"type\": \"string\"\n    },\n    \"evidence_refund_amount_disputed\": {\n      \"type\": \"string\"\n    },\n    \"evidence_cancelled_before_renewal\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"refund_missing\",\n    \"refund_amount_disputed\",\n    \"cancelled_before_renewal\",\n    \"evidence_refund_missing\",\n    \"evidence_refund_amount_disputed\",\n    \"evidence_cancelled_before_renewal\"\n  ],\n  \"additionalProperties\": false\n}",
+                "type": "json_schema"
+              }
+            }
+          },
+          "responses": {
+            "values": [
+              {
+                "content": "You check one customer support message for three specific claims. Read only what the customer wrote in this message: ignore quoted earlier emails, forwarded text and signatures. Judge each flag independently. Return true only when the customer clearly states the claim; when unsure, return false.\n\n1. refund_missing\nTrue when the customer says a refund they were promised, told about or already given has not arrived, is missing, does not show on their card, bank or PayPal statement, or was never received.\nFalse when the customer is only asking for a refund, or only asks whether a refund was processed without saying it is missing.\n\n2. refund_amount_disputed\nTrue when the customer says a refund they received is the wrong amount: partial, less than they paid, less than they were promised, or in the wrong currency.\nFalse when they dispute a charge and no refund is involved.\n\n3. cancelled_before_renewal\nTrue when the customer says they cancelled, unsubscribed, deleted their account or asked to cancel BEFORE they were charged (before the renewal, the next billing date or the end of the trial) and were charged anyway.\nFalse when they only ask to cancel now, or say they forgot to cancel.\n\nFor every flag that is true, copy the customer's own words that show it (at most 200 characters) into the matching evidence field. Use an empty string when the flag is false.\n\nReturn only the JSON object.",
+                "role": "system"
+              },
+              {
+                "content": "=Customer message:\n{{ $('When Executed by Another Workflow').first().json.text }}"
+              }
+            ]
+          }
+        },
+        "credentials": {
+          "openAiApi": {
+            "id": "BL8s9crH3uYeeY0Z",
+            "name": "mindspree-prod-n8n-automation"
+          }
+        },
+        "onError": "continueRegularOutput",
+        "retryOnFail": true,
+        "alwaysOutputData": true
+      },
+      {
+        "id": "6052653b-5651-492c-a615-0bbc2aa77963",
+        "name": "Evaluate claims",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          896,
+          144
+        ],
+        "parameters": {
+          "jsCode": "// Record-based cases 3 and 5, claim side (detect, not verify - 2026-10-14).\n//   Case 3: the customer says a refund is missing OR its amount is wrong.\n//           Straight to manual when record_case3_enforce is on (Tseko, 2026-10-15).\n//   Case 5: the customer says they cancelled before the renewal. Only TAGGED\n//           here (claim_cancelled_before_renewal). The refund requests flow\n//           diverts it at the rejection macro, and only there (2026-10-15).\n// Never throws: an unreadable AI answer counts as \"no claim\".\nconst input = $('When Executed by Another Workflow').first().json;\nconst cfg = $('Get Project Config').first().json || {};\nfunction truthy(v) {\n  return v === true || v === 1 || v === 'true' || v === '1' || v === 'yes';\n}\nconst c3Enabled = truthy(cfg.record_case3_enabled);\nconst c3Enforce = truthy(cfg.record_case3_enforce);\nconst c5Enabled = truthy(cfg.record_case5_enabled);\n\nlet ai = {};\nlet aiError = null;\ntry {\n  const raw = $('Detect claims').first().json || {};\n  if (raw.error) throw new Error(typeof raw.error === 'string' ? raw.error : JSON.stringify(raw.error).slice(0, 200));\n  let t = raw.output && raw.output[0] && raw.output[0].content && raw.output[0].content[0] && raw.output[0].content[0].text;\n  if (typeof t === 'string') t = JSON.parse(t);\n  ai = t || {};\n} catch (e) {\n  ai = {};\n  aiError = String(e && e.message || e);\n}\n\nconst refundMissing = ai.refund_missing === true;\nconst refundAmount = ai.refund_amount_disputed === true;\nconst cancelledBefore = ai.cancelled_before_renewal === true;\n\nconst case3 = c3Enabled && (refundMissing || refundAmount);\nconst case5Claim = c5Enabled && cancelledBefore;\n\nconst tags = [];\nif (case3) {\n  if (refundMissing) tags.push('claim_refund_missing');\n  if (refundAmount) tags.push('claim_refund_amount');\n  tags.push('record_case_3', 'record_based_flag');\n}\nif (case5Claim) tags.push('claim_cancelled_before_renewal');\n\nfunction clip(s) { return String(s || '').replace(/\\s+/g, ' ').trim().slice(0, 200); }\n\nreturn [{\n  json: {\n    claims_checked: true,\n    stage: input.stage || null,\n    ticket_id: input.ticket_id,\n    case3: case3,\n    case5_claim: case5Claim,\n    should_block: case3 && c3Enforce,\n    case3_enforce: c3Enforce,\n    claim_refund_missing: refundMissing,\n    claim_refund_amount: refundAmount,\n    claim_cancelled_before_renewal: cancelledBefore,\n    evidence_refund_missing: clip(ai.evidence_refund_missing),\n    evidence_refund_amount: clip(ai.evidence_refund_amount_disputed),\n    evidence_cancelled_before_renewal: clip(ai.evidence_cancelled_before_renewal),\n    tags: tags,\n    ai_error: aiError\n  },\n  pairedItem: { item: 0 }\n}];",
+          "mode": "runOnceForAllItems"
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "1bafa970-2df3-494c-bec5-0903364ef8a1",
+        "name": "Any claim?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1120,
+          144
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "cd-any",
+                "leftValue": "={{ ($json.tags || []).length > 0 }}",
+                "operator": {
+                  "operation": "true",
+                  "singleValue": true,
+                  "type": "boolean"
+                },
+                "rightValue": ""
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 2
+            }
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "dc922c6f-b5f3-4655-a62c-5b4753cb996c",
+        "name": "Add claim tags",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          1344,
+          80
+        ],
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "jsonBody": "={{ JSON.stringify({ tags: $('Evaluate claims').first().json.tags }) }}",
+          "method": "PUT",
+          "nodeCredentialType": "zendeskOAuth2Api",
+          "options": {},
+          "sendBody": true,
+          "specifyBody": "json",
+          "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $(\"Evaluate claims\").first().json.ticket_id + \"/tags\" }}"
+        },
+        "credentials": {
+          "zendeskOAuth2Api": {
+            "id": "SgSmWFEmWX2nFXmm",
+            "name": "Mindspree Zendesk OAuth"
+          }
+        },
+        "notes": "PUT on /tags adds tags (POST would replace them all).",
+        "onError": "continueRegularOutput",
+        "retryOnFail": true
+      },
+      {
+        "id": "7b209d17-1e35-4ff1-9fff-2894fdd88a8e",
+        "name": "Case 3: Divert now?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1568,
+          80
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "cd-block",
+                "leftValue": "={{ $('Evaluate claims').first().json.should_block }}",
+                "operator": {
+                  "operation": "true",
+                  "singleValue": true,
+                  "type": "boolean"
+                },
+                "rightValue": ""
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 2
+            }
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "5a26cab0-7da0-4274-a0a9-a27856de8a82",
+        "name": "Set search input",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          1792,
+          0
+        ],
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "cd-rt",
+                "name": "requestType",
+                "type": "string",
+                "value": "search"
+              },
+              {
+                "id": "cd-em",
+                "name": "email",
+                "type": "string",
+                "value": "={{ $('When Executed by Another Workflow').first().json.payments_email }}"
+              }
+            ]
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "63583688-d508-4dcd-bb61-f5639e512458",
+        "name": "Call 'CS - HMAC'",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.3,
+        "position": [
+          2016,
+          0
+        ],
+        "parameters": {
+          "options": {},
+          "workflowId": {
+            "__rl": true,
+            "cachedResultName": "MS prod - HMAC",
+            "cachedResultUrl": "/workflow/3Yz00G0kXnnDiuxf",
+            "mode": "list",
+            "value": "3Yz00G0kXnnDiuxf"
+          },
+          "workflowInputs": {
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true,
+            "mappingMode": "defineBelow",
+            "matchingColumns": [],
+            "schema": [],
+            "value": {}
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "4af69de1-7f4f-4517-8c10-339106eb56f3",
+        "name": "bot/search",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          2240,
+          0
+        ],
+        "parameters": {
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "X-Timestamp",
+                "value": "={{ $json.timestamp }}"
+              },
+              {
+                "name": "X-Nonce",
+                "value": "={{ $json.nonce }}"
+              },
+              {
+                "name": "X-Key-Id",
+                "value": "={{ $json.keyID }}"
+              },
+              {
+                "name": "X-Signature",
+                "value": "={{ $json.signedString }}"
+              }
+            ]
+          },
+          "jsonBody": "={{ $json.sortedBody }}",
+          "method": "POST",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true,
+                "neverError": true,
+                "responseFormat": "json"
+              }
+            }
+          },
+          "sendBody": true,
+          "sendHeaders": true,
+          "specifyBody": "json",
+          "url": "={{ $(\"Get Project Config\").first().json.payments_api_base_url }}/api/payments/v1/bot/search"
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "060c996d-197d-4c09-a54f-77a6264a703e",
+        "name": "Build case 3 note",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2464,
+          0
+        ],
+        "parameters": {
+          "jsCode": "// Internal note for a case 3 divert. The payments data only enriches the\n// note; the divert itself was already decided by the claim (detect-only).\nconst cfg = $('Get Project Config').first().json || {};\nconst v = $('Evaluate claims').first().json;\nlet resp = {};\ntry { resp = $('bot/search').first().json || {}; } catch (e) { resp = {}; }\nconst body = resp.body || {};\n\nfunction day(iso) { return iso ? String(iso).slice(0, 10) : '?'; }\n\nconst lines = [\n  'Note: This ticket matched record-based case 3 - the customer says a refund is missing or that its amount is wrong.',\n  '',\n  'Automation has been stopped and no reply was sent to the customer. Please handle this ticket manually.',\n  ''\n];\nif (v.claim_refund_missing) lines.push('Customer says the refund is missing: \"' + v.evidence_refund_missing + '\"');\nif (v.claim_refund_amount) lines.push('Customer says the refund amount is wrong: \"' + v.evidence_refund_amount + '\"');\nlines.push('');\n\nif (resp.statusCode === 200) {\n  const refunds = Array.isArray(body.refundedTransactions) ? body.refundedTransactions : [];\n  if (refunds.length === 0) {\n    lines.push('Refunds on record: none for the email the customer wrote from.');\n  } else {\n    lines.push('Refunds on record (' + refunds.length + '):');\n    refunds.forEach(function (r) {\n      const amount = (r.amount != null ? r.amount : '?') + (r.currency ? ' ' + r.currency : '');\n      const provider = r.provider && r.provider.type ? r.provider.type : 'unknown provider';\n      const refundDate = r.refundDate ? day(r.refundDate) : 'not available yet';\n      lines.push('- ' + amount + ' refunded, ' + (r.type || 'unknown type') + ' charge of ' + day(r.transactionDate) + ', refund date ' + refundDate + ', ' + provider);\n    });\n  }\n  if (body.subscriptionStatus) lines.push('Subscription status: ' + body.subscriptionStatus + (body.cancellationDate ? ', cancellation date ' + day(body.cancellationDate) : ''));\n} else {\n  lines.push('Payments lookup: no account found for the email the customer wrote from' + (resp.statusCode ? ' (status ' + resp.statusCode + ')' : '') + '.');\n}\n\nconst ticket = { comment: { public: false, body: lines.join('\\n') } };\nconst openStatusId = Number(cfg.ticket_custom_status_open_id);\nif (Number.isFinite(openStatusId) && openStatusId > 0) ticket.custom_status_id = openStatusId;\nconst allowFieldId = Number(cfg.ticket_field_allow_automation);\nif (Number.isFinite(allowFieldId) && allowFieldId > 0) ticket.custom_fields = [{ id: allowFieldId, value: '_no_' }];\n\nreturn [{ json: { ticket_id: v.ticket_id, zendesk_body: { ticket: ticket } }, pairedItem: { item: 0 } }];",
+          "mode": "runOnceForAllItems"
+        }
+      },
+      {
+        "id": "c9a7fc6b-c709-40d2-a5c4-fd378d09eb3b",
+        "name": "Take out of automation",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          2688,
+          0
+        ],
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "jsonBody": "={{ JSON.stringify($json.zendesk_body) }}",
+          "method": "PUT",
+          "nodeCredentialType": "zendeskOAuth2Api",
+          "options": {},
+          "sendBody": true,
+          "specifyBody": "json",
+          "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $json.ticket_id }}"
+        },
+        "credentials": {
+          "zendeskOAuth2Api": {
+            "id": "SgSmWFEmWX2nFXmm",
+            "name": "Mindspree Zendesk OAuth"
+          }
+        },
+        "notes": "Internal note + open + Allow automation _no_.",
+        "onError": "continueRegularOutput",
+        "retryOnFail": true
+      },
+      {
+        "id": "e093f8f1-3b51-4c3a-830f-bc695197105d",
+        "name": "Return verdict",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2912,
+          224
+        ],
+        "parameters": {
+          "jsCode": "// Single exit point, so the caller always gets the same shape back.\n// should_block is only true when the ticket was actually taken out of\n// automation. If that Zendesk write failed, the caller carries on as before.\nlet v = null;\ntry { v = $('Evaluate claims').first().json; } catch (e) { v = null; }\nif (!v) {\n  v = { claims_checked: false, case3: false, case5_claim: false, should_block: false, tags: [] };\n}\nlet blocked = false;\nif (v.should_block) {\n  try {\n    const r = $('Take out of automation').first().json || {};\n    blocked = !r.error;\n  } catch (e) { blocked = false; }\n}\nconst out = Object.assign({}, v, { should_block: blocked, block_requested: !!v.should_block });\nreturn [{ json: out, pairedItem: { item: 0 } }];",
+          "mode": "runOnceForAllItems"
+        }
+      },
+      {
+        "id": "3eb529dc-003b-4260-9f5b-b981f2dbf301",
+        "name": "Sticky Note brand config",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          0,
+          480
+        ],
+        "parameters": {
+          "color": 5,
+          "content": "# MS prod - Claim detection\n\nBrand copy of `CS - Claim detection [Template]` (template sync, 19 Oct 2026).\n\nCalled from `MS prod - Main automation flow` (node `CD: Claim detection`, first message, refund and cancellation requests) and `MS prod - 2nd message trigger` (node `CD: Claim detection`) with project_key, ticket_id, text, payments_email and stage.\n\nGet Project Config reads `record_case3_enabled`, `record_case3_enforce`, `record_case5_enabled`, `zendesk_domain`, `payments_api_base_url`, `ticket_custom_status_open_id` and `ticket_field_allow_automation` from `cs_project_config` (row mindspree_prod). With both case switches off (null) the AI call is skipped.\n\nReturns one item: `should_block` (case 3 diverted), `case3`, `case5_claim`, `tags`, evidence.\n\n## Brand-specific\nOpenAI credential on `Detect claims` and Zendesk credential on `Add claim tags` / `Take out of automation` are Mindspree. `Call 'CS - HMAC'` points at `MS prod - HMAC`.",
+          "height": 360,
+          "width": 700
+        }
+      }
+    ],
+    "connections": {
+      "Add claim tags": {
+        "main": [
+          [
+            {
+              "node": "Case 3: Divert now?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Any claim?": {
+        "main": [
+          [
+            {
+              "node": "Add claim tags",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Return verdict",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build case 3 note": {
+        "main": [
+          [
+            {
+              "node": "Take out of automation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Call 'CS - HMAC'": {
+        "main": [
+          [
+            {
+              "node": "bot/search",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Case 3: Divert now?": {
+        "main": [
+          [
+            {
+              "node": "Set search input",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Return verdict",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Claim checks enabled?": {
+        "main": [
+          [
+            {
+              "node": "Detect claims",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Return verdict",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Detect claims": {
+        "main": [
+          [
+            {
+              "node": "Evaluate claims",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Evaluate claims": {
+        "main": [
+          [
+            {
+              "node": "Any claim?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Project Config": {
+        "main": [
+          [
+            {
+              "node": "Claim checks enabled?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Set search input": {
+        "main": [
+          [
+            {
+              "node": "Call 'CS - HMAC'",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Take out of automation": {
+        "main": [
+          [
+            {
+              "node": "Return verdict",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "When Executed by Another Workflow": {
+        "main": [
+          [
+            {
+              "node": "Get Project Config",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "bot/search": {
+        "main": [
+          [
+            {
+              "node": "Build case 3 note",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Antonio antonio.marusic@efuturemedia.com",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "createdAt": "2026-10-19T20:57:42.401Z",
+    "updatedAt": "2026-10-19T20:57:42.401Z",
+    "workflowPublishHistory": [
+      {
+        "id": 3067,
+        "workflowId": "7pj9ZLUJQAVSvaXG",
+        "versionId": "f1e43378-c05c-4477-b7f9-bd90b57af5e6",
+        "event": "activated",
+        "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e",
+        "createdAt": "2026-10-22T07:11:16.803Z"
+      }
+    ]
+  }
 }
