@@ -3,7 +3,7 @@
   "name": "PS prod - Request eligibility check (second message)",
   "description": null,
   "active": true,
-  "activeVersionId": "14316903-93e8-46a3-90f5-92a9e71df8d4",
+  "activeVersionId": "08d43f07-daa2-4deb-a66c-f4a16526f2e5",
   "createdAt": "2026-06-10T08:34:35.548Z",
   "updatedAt": "2026-10-19T20:59:02.336Z",
   "isArchived": false,
@@ -1818,7 +1818,7 @@
     }
   ],
   "activeVersion": {
-    "versionId": "14316903-93e8-46a3-90f5-92a9e71df8d4",
+    "versionId": "08d43f07-daa2-4deb-a66c-f4a16526f2e5",
     "workflowId": "6lYSxMlA2bQYIaaq",
     "nodes": [
       {
@@ -2086,7 +2086,7 @@
           "method": "PUT",
           "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $('Restore trigger data').first().json.body['ticket.id'] }}",
           "authentication": "predefinedCredentialType",
-          "nodeCredentialType": "zendeskApi",
+          "nodeCredentialType": "zendeskOAuth2Api",
           "sendBody": true,
           "bodyParameters": {
             "parameters": [
@@ -2116,9 +2116,9 @@
         ],
         "retryOnFail": true,
         "credentials": {
-          "zendeskApi": {
-            "id": "z41y1j8bbsyi2W61",
-            "name": "Personality Zendesk prod account"
+          "zendeskOAuth2Api": {
+            "id": "KmMGCsnVLfQSzRWB",
+            "name": "Personality Zendesk OAuth"
           }
         }
       },
@@ -2236,7 +2236,7 @@
         "parameters": {
           "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $('Restore trigger data').first().json.body['ticket.id'] + \"?include=metric_sets\" }}",
           "authentication": "predefinedCredentialType",
-          "nodeCredentialType": "zendeskApi",
+          "nodeCredentialType": "zendeskOAuth2Api",
           "options": {}
         },
         "id": "b00f243e-854e-49fa-81f0-969e4346ae0f",
@@ -2251,9 +2251,9 @@
         "maxTries": 3,
         "waitBetweenTries": 2000,
         "credentials": {
-          "zendeskApi": {
-            "id": "z41y1j8bbsyi2W61",
-            "name": "Personality Zendesk prod account"
+          "zendeskOAuth2Api": {
+            "id": "KmMGCsnVLfQSzRWB",
+            "name": "Personality Zendesk OAuth"
           }
         },
         "notes": "Live re-read of the ticket. Runs before the blocklist read and requester lookup so a duplicate delivery costs one GET, not the whole pipeline."
@@ -2470,7 +2470,7 @@
       },
       {
         "parameters": {
-          "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\n\nconst ticketId = trig.body['ticket.id'];\nconst noteBody = $('Note: Auto-solve email').first().json.note_body;\n\nconst ticket = {\n  status: 'solved',\n  comment: { public: false, body: noteBody }\n};\n\n// TAGS. `additional_tags` is ONLY supported on the Update Many Tickets endpoint.\n// On a single-ticket PUT Zendesk silently discards it - 200 response, no tag\n// event in the audit. This tag was never actually being applied. A single-ticket\n// PUT only accepts `tags`, which replaces the array, so merge the existing ones.\nconst liveTicket = $('Get ticket status').first().json.ticket || {};\nconst tags = Array.isArray(liveTicket.tags) ? liveTicket.tags.slice() : [];\nif (tags.indexOf('autosolve_email') === -1) {\n  tags.push('autosolve_email');\n}\nticket.tags = tags;\n\n// Zendesk enforces required custom fields on the solve transition and validates\n// against the INCOMING payload, not the stored ticket:\n//   422 RecordInvalid - \"Language: is required when solving a ticket\"\n// So every required field has to ride along in this one PUT.\nconst fields = [];\n\nconst catFieldId = Number(cfg.ticket_custom_field_category);\nconst catValue = cfg.category_value_duplicate_contact;\nif (Number.isFinite(catFieldId) && catFieldId > 0\n    && catValue !== null && catValue !== undefined && String(catValue).trim() !== '') {\n  fields.push({ id: catFieldId, value: String(catValue) });\n}\n\nconst langFieldId = Number(cfg.ticket_field_language_id);\nconst langValue = cfg.language_value_english;\nif (Number.isFinite(langFieldId) && langFieldId > 0\n    && langValue !== null && langValue !== undefined && String(langValue).trim() !== '') {\n  fields.push({ id: langFieldId, value: String(langValue) });\n}\n\n// Rejection Complaint (record-based case 2) - required to solve on Personality.\n// This path never sends a refund rejection, so it writes \"no\". STICKY: a ticket\n// that already carries \"yes\" keeps it - same rule as the Zendesk ticket update\n// request sub-workflow, so an earlier rejection is never erased.\nlet rcValue = null;\nconst rcFieldId = Number(cfg.ticket_field_rejection_complaint);\nif (Number.isFinite(rcFieldId) && rcFieldId > 0) {\n  const liveFields = Array.isArray(liveTicket.custom_fields) ? liveTicket.custom_fields : [];\n  const rcCurrent = liveFields.find(f => Number(f.id) === rcFieldId);\n  rcValue = (rcCurrent && rcCurrent.value === 'yes') ? 'yes' : 'no';\n  fields.push({ id: rcFieldId, value: rcValue });\n}\n\nif (fields.length > 0) {\n  ticket.custom_fields = fields;\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    note_body: noteBody,\n    fields_applied: fields.length,\n    rejection_complaint: rcValue,\n    tags_sent: ticket.tags,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
+          "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\n\nconst ticketId = trig.body['ticket.id'];\nconst noteBody = $('Note: Auto-solve email').first().json.note_body;\n\nconst ticket = {\n  status: 'solved',\n  comment: { public: false, body: noteBody }\n};\n\n// TAGS. `additional_tags` is ONLY supported on the Update Many Tickets endpoint.\n// On a single-ticket PUT Zendesk silently discards it - 200 response, no tag\n// event in the audit. This tag was never actually being applied. A single-ticket\n// PUT only accepts `tags`, which replaces the array, so merge the existing ones.\nconst liveTicket = $('Get ticket status').first().json.ticket || {};\nconst tags = Array.isArray(liveTicket.tags) ? liveTicket.tags.slice() : [];\nif (tags.indexOf('autosolve_email') === -1) {\n  tags.push('autosolve_email');\n}\nticket.tags = tags;\n\n// Zendesk enforces required custom fields on the solve transition and validates\n// against the INCOMING payload, not the stored ticket:\n//   422 RecordInvalid - \"Language: is required when solving a ticket\"\n// So every required field has to ride along in this one PUT.\nconst fields = [];\n\nconst catFieldId = Number(cfg.ticket_custom_field_category);\nconst catValue = cfg.category_value_duplicate_contact;\nif (Number.isFinite(catFieldId) && catFieldId > 0\n    && catValue !== null && catValue !== undefined && String(catValue).trim() !== '') {\n  fields.push({ id: catFieldId, value: String(catValue) });\n}\n\nconst langFieldId = Number(cfg.ticket_field_language_id);\nconst langValue = cfg.language_value_english;\nif (Number.isFinite(langFieldId) && langFieldId > 0\n    && langValue !== null && langValue !== undefined && String(langValue).trim() !== '') {\n  fields.push({ id: langFieldId, value: String(langValue) });\n}\n\n// Rejection Complaint (record-based case 2) - required to solve on Personality.\n// This path never sends a refund rejection, so it writes \"no\". STICKY: a ticket\n// that already carries \"yes\" keeps it - same rule as the Zendesk ticket update\n// request sub-workflow, so an earlier rejection is never erased.\nlet rcValue = null;\nconst rcFieldId = Number(cfg.ticket_field_rejection_complaint);\nif (Number.isFinite(rcFieldId) && rcFieldId > 0) {\n  const liveFields = Array.isArray(liveTicket.custom_fields) ? liveTicket.custom_fields : [];\n  const rcCurrent = liveFields.find(f => Number(f.id) === rcFieldId);\n  // Option values from cs_project_config (empty = yes / no).\n  const rcYes = String(cfg.rejection_complaint_value_yes || 'yes');\n  const rcNo = String(cfg.rejection_complaint_value_no || 'no');\n  rcValue = (rcCurrent && rcCurrent.value === rcYes) ? rcYes : rcNo;\n  fields.push({ id: rcFieldId, value: rcValue });\n}\n\nif (fields.length > 0) {\n  ticket.custom_fields = fields;\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    note_body: noteBody,\n    fields_applied: fields.length,\n    rejection_complaint: rcValue,\n    tags_sent: ticket.tags,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
         },
         "id": "156d765f-c6a3-4b47-85b3-785ac7f71a26",
         "name": "Build auto-solve payload",
@@ -2487,7 +2487,7 @@
           "method": "PUT",
           "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $json.ticket_id }}",
           "authentication": "predefinedCredentialType",
-          "nodeCredentialType": "zendeskApi",
+          "nodeCredentialType": "zendeskOAuth2Api",
           "sendBody": true,
           "specifyBody": "json",
           "jsonBody": "={{ JSON.stringify($json.zendesk_body) }}",
@@ -2502,9 +2502,9 @@
           960
         ],
         "credentials": {
-          "zendeskApi": {
-            "id": "z41y1j8bbsyi2W61",
-            "name": "Personality Zendesk prod account"
+          "zendeskOAuth2Api": {
+            "id": "KmMGCsnVLfQSzRWB",
+            "name": "Personality Zendesk OAuth"
           }
         },
         "notes": "Private note + status solved + tag autosolve_email + Duplicate contact category. No public comment, so the customer is never notified."
@@ -2594,7 +2594,7 @@
         "parameters": {
           "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $('Restore trigger data').first().json.body['ticket.id'] + \"/comments.json\" }}",
           "authentication": "predefinedCredentialType",
-          "nodeCredentialType": "zendeskApi",
+          "nodeCredentialType": "zendeskOAuth2Api",
           "options": {}
         },
         "id": "56ec9774-4832-4a2b-8c60-8f07017a3e86",
@@ -2606,9 +2606,9 @@
           1744
         ],
         "credentials": {
-          "zendeskApi": {
-            "id": "z41y1j8bbsyi2W61",
-            "name": "Personality Zendesk prod account"
+          "zendeskOAuth2Api": {
+            "id": "KmMGCsnVLfQSzRWB",
+            "name": "Personality Zendesk OAuth"
           }
         },
         "notes": "On the follow-up path the ticket's description is still the ORIGINAL message, so it cannot be used for matching. The new text lives in the latest customer comment and has to be fetched. This runs here rather than later in the 2nd message flow so that tickets dropped by the message-limit and classification gates are still covered."
@@ -2714,7 +2714,7 @@
           "method": "PUT",
           "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $json.ticket_id }}",
           "authentication": "predefinedCredentialType",
-          "nodeCredentialType": "zendeskApi",
+          "nodeCredentialType": "zendeskOAuth2Api",
           "sendBody": true,
           "specifyBody": "json",
           "jsonBody": "={{ JSON.stringify($json.zendesk_body) }}",
@@ -2729,9 +2729,9 @@
           1568
         ],
         "credentials": {
-          "zendeskApi": {
-            "id": "z41y1j8bbsyi2W61",
-            "name": "Personality Zendesk prod account"
+          "zendeskOAuth2Api": {
+            "id": "KmMGCsnVLfQSzRWB",
+            "name": "Personality Zendesk OAuth"
           }
         }
       },
@@ -2930,7 +2930,7 @@
           "method": "PUT",
           "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $json.ticket_id }}",
           "authentication": "predefinedCredentialType",
-          "nodeCredentialType": "zendeskApi",
+          "nodeCredentialType": "zendeskOAuth2Api",
           "sendBody": true,
           "specifyBody": "json",
           "jsonBody": "={{ JSON.stringify($json.zendesk_body) }}",
@@ -2945,9 +2945,9 @@
           1488
         ],
         "credentials": {
-          "zendeskApi": {
-            "id": "z41y1j8bbsyi2W61",
-            "name": "Personality Zendesk prod account"
+          "zendeskOAuth2Api": {
+            "id": "KmMGCsnVLfQSzRWB",
+            "name": "Personality Zendesk OAuth"
           }
         }
       },
@@ -3525,20 +3525,20 @@
       }
     },
     "nodeGroups": [],
-    "authors": "Antonio antonio.marusic@efuturemedia.com (via MCP)",
-    "name": "High-risk matcher: punctuation/line-break tolerant, letters untouched",
-    "description": "Match High Risk Keywords (follow-up): spaces, line breaks and punctuation inside a phrase now count as one space on both sides (letters and accents untouched). Turkish İ fix; emoji-only keywords no longer skipped. Draft only.",
+    "authors": "Antonio antonio.marusic@efuturemedia.com",
+    "name": null,
+    "description": null,
     "autosaved": false,
-    "createdAt": "2026-10-07T09:05:57.501Z",
-    "updatedAt": "2026-10-07T09:24:40.000Z",
+    "createdAt": "2026-10-19T20:59:02.337Z",
+    "updatedAt": "2026-10-19T20:59:02.337Z",
     "workflowPublishHistory": [
       {
-        "id": 2416,
+        "id": 3039,
         "workflowId": "6lYSxMlA2bQYIaaq",
-        "versionId": "14316903-93e8-46a3-90f5-92a9e71df8d4",
+        "versionId": "08d43f07-daa2-4deb-a66c-f4a16526f2e5",
         "event": "activated",
         "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e",
-        "createdAt": "2026-10-07T09:24:40.018Z"
+        "createdAt": "2026-10-22T07:10:52.510Z"
       }
     ]
   }
