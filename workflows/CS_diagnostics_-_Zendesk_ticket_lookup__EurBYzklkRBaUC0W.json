@@ -1,0 +1,1483 @@
+{
+  "id": "EurBYzklkRBaUC0W",
+  "name": "CS diagnostics - Zendesk ticket lookup",
+  "description": "Read-only Zendesk lookup for CS diagnostics: ticket state plus condensed audit timeline, per-brand OAuth. Called by the daily incident pack; webhook for ad hoc use.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-22T10:21:08.400Z",
+  "updatedAt": "2026-10-22T10:21:25.333Z",
+  "isArchived": false,
+  "versionId": "122b9ba2-fecc-41e3-8a23-3745f4161b5a",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "da4303d0-1362-4805-8b63-fbd03d982d1d",
+      "name": "When called by another workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "subdomain",
+              "type": "string"
+            },
+            {
+              "name": "ticket_id",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "c54c32eb-ae01-4850-8f10-2b1c67fb4652",
+      "name": "Normalize request",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        100
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "norm-sub",
+              "name": "subdomain",
+              "value": "={{ String(($json.body && $json.body.subdomain) || $json.subdomain || \"\").trim().toLowerCase() }}",
+              "type": "string"
+            },
+            {
+              "id": "norm-id",
+              "name": "ticket_id",
+              "value": "={{ String(($json.body && $json.body.ticket_id) || $json.ticket_id || \"\").replace(/[^0-9]/g, \"\") }}",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "1a8c4516-3a14-443f-bb19-bbcd1aa9b955",
+      "name": "Ad hoc lookup",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cs-diagnostics-zendesk-lookup",
+        "responseMode": "lastNode",
+        "responseData": "firstEntryJson"
+      },
+      "webhookId": "6312b55f-9df0-4072-ae82-bfbb7ee2a6a4"
+    },
+    {
+      "id": "a61540a6-a7f0-4c35-b42a-72a588908ca7",
+      "name": "Valid request",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.subdomain }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "leftValue": "={{ $json.ticket_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "5858a6aa-0d38-42ed-8f4d-6dbc2e081b0c",
+      "name": "Get brand config",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        720,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "IRxwFN8iBhHLFQxQ"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "zendesk_domain",
+              "condition": "eq",
+              "keyValue": "={{ $json.subdomain }}"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "c0e56dc3-442f-47d5-9978-df4675720aca",
+      "name": "Build requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const req = $('Normalize request').first().json;\nconst base = 'https://' + req.subdomain + '.zendesk.com/api/v2/tickets/' + req.ticket_id;\nreturn [\n  { json: { subdomain: req.subdomain, ticket_id: req.ticket_id, kind: 'ticket', url: base + '.json' } },\n  { json: { subdomain: req.subdomain, ticket_id: req.ticket_id, kind: 'audits', url: base + '/audits.json?include=users&sort_order=desc&per_page=100' } }\n];"
+      }
+    },
+    {
+      "id": "8a88b571-b9f8-47cf-8f55-eff996354d38",
+      "name": "Route by brand",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1200,
+        100
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputKey": "lovestylehelp",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.subdomain }}",
+                    "rightValue": "lovestylehelp",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "personalitytest",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.subdomain }}",
+                    "rightValue": "personalitytest",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "mindspree",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.subdomain }}",
+                    "rightValue": "mindspree",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "myimage",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.subdomain }}",
+                    "rightValue": "myimage",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "resumewise",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.subdomain }}",
+                    "rightValue": "resumewise",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "pdfhelphelp",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.subdomain }}",
+                    "rightValue": "pdfhelphelp",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "unicopy",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.subdomain }}",
+                    "rightValue": "unicopy",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "realchecker",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.subdomain }}",
+                    "rightValue": "realchecker",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "myqrcode",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.subdomain }}",
+                    "rightValue": "myqrcode",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "mobitrace",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.subdomain }}",
+                    "rightValue": "mobitrace",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "lovelanguagesupport",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.subdomain }}",
+                    "rightValue": "lovelanguagesupport",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "brainiqtest",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.subdomain }}",
+                    "rightValue": "brainiqtest",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "scannerly",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.subdomain }}",
+                    "rightValue": "scannerly",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "qrcreate",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.subdomain }}",
+                    "rightValue": "qrcreate",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "vinready",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.subdomain }}",
+                    "rightValue": "vinready",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "chatbotonline",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.subdomain }}",
+                    "rightValue": "chatbotonline",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "No credential for subdomain"
+        }
+      }
+    },
+    {
+      "id": "73c5230f-55a0-4031-bf76-3655751627c8",
+      "name": "Zendesk LoveStyle",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1500,
+        -1500
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "l0FUBda97eCRmNQV",
+          "name": "LoveStyle Zendesk OAuth"
+        }
+      }
+    },
+    {
+      "id": "f11ea452-9ff0-4833-b604-917a6058337b",
+      "name": "Condense ticket",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const req = $('Normalize request').first().json;\nconst sub = req.subdomain;\nconst tid = req.ticket_id;\nlet rows = [];\ntry { rows = $('Get brand config').all().map(i => i.json).filter(r => r && r.project_key); } catch (e) { rows = []; }\nconst cfg = rows.filter(r => String(r.project_key).slice(-5) === '_prod')[0] || rows[0] || {};\nconst cut = (v, n) => {\n  if (v === undefined || v === null) return '';\n  let s = typeof v === 'string' ? v : JSON.stringify(v);\n  if (!s) return '';\n  s = s.split(String.fromCharCode(13)).join('');\n  return s.length > n ? s.slice(0, n) + ' [...]' : s;\n};\nlet ticket = null;\nlet auditsBody = null;\nconst errors = [];\nif (!cfg.project_key) errors.push('No cs_project_config row for zendesk_domain ' + sub);\nfor (const it of $input.all()) {\n  const j = it.json || {};\n  if (j.ticket && j.ticket.id) ticket = j.ticket;\n  else if (Array.isArray(j.audits)) auditsBody = j;\n  else if (j.kind && j.url) { if (errors.indexOf('No Zendesk credential branch for subdomain ' + sub) < 0) errors.push('No Zendesk credential branch for subdomain ' + sub); }\n  else errors.push('Zendesk API: ' + cut(j, 300));\n}\nconst agentId = cfg.automation_agent_id ? String(cfg.automation_agent_id) : '';\nconst names = {};\nconst addName = (id, label) => { if (id) names[String(id)] = label; };\naddName(cfg.ticket_field_allow_automation, 'Allow automation');\naddName(cfg.ticket_custom_field_category, 'Category');\naddName(cfg.ticket_field_language_id, 'Language');\naddName(cfg.ticket_custom_field_automation_label_id, 'Automation label');\naddName(cfg.ticket_field_rejection_complaint, 'Rejection complaint');\naddName(cfg.ticket_field_chatbot_classification_id, 'Chatbot classification');\naddName(cfg.ticket_field_contact_form_classification_id, 'Contact form classification');\nconst users = {};\n((auditsBody && auditsBody.users) || []).forEach(u => { users[String(u.id)] = u; });\nconst who = id => {\n  const k = String(id);\n  if (agentId && k === agentId) return 'AUTOMATION (n8n agent)';\n  if (k === '-1') return 'Zendesk system';\n  const u = users[k];\n  return u ? (u.name + ' (' + u.role + ')') : ('user ' + k);\n};\nconst fieldLabel = f => names[String(f)] || (/^[0-9]+$/.test(String(f)) ? 'field ' + f : String(f));\nconst toList = v => Array.isArray(v) ? v : String(v || '').split(' ').filter(Boolean);\nconst describe = ev => {\n  const t = ev.type;\n  if (t === 'Comment') return (ev.public ? 'PUBLIC REPLY: ' : 'INTERNAL NOTE: ') + cut(ev.plain_body || ev.body, 500);\n  if (t === 'AgentMacroReference') return 'MACRO APPLIED: ' + (ev.macro_title || '') + ' (' + ev.macro_id + ')';\n  if (t === 'Change' || t === 'Create') {\n    const f = ev.field_name;\n    if (f === 'tags') {\n      const prev = t === 'Change' ? toList(ev.previous_value) : [];\n      const val = toList(ev.value);\n      const add = val.filter(x => prev.indexOf(x) < 0);\n      const rem = prev.filter(x => val.indexOf(x) < 0);\n      if (!add.length && !rem.length) return null;\n      return 'TAGS' + (add.length ? ' +' + add.join(' +') : '') + (rem.length ? ' -' + rem.join(' -') : '');\n    }\n    if (t === 'Create' && ['status', 'subject', 'priority', 'type'].indexOf(f) < 0 && !names[String(f)]) return null;\n    return fieldLabel(f) + ': ' + (t === 'Change' ? cut(ev.previous_value, 80) + ' -> ' : '') + cut(ev.value, 120);\n  }\n  if (['Notification', 'NotificationWithCc', 'Cc', 'FollowerChange', 'CommentPrivacyChange', 'EmailCcChange', 'FollowerNotification'].indexOf(t) >= 0) return null;\n  return t + (ev.value ? ': ' + cut(ev.value, 120) : '');\n};\nlet audits = ((auditsBody && auditsBody.audits) || []).slice().sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));\nconst total = audits.length;\nconst truncated = total > 60 || !!(auditsBody && auditsBody.next_page);\nif (audits.length > 60) audits = audits.slice(-60);\nconst timeline = audits.map(a => {\n  const via = a.via || {};\n  const src = via.source || {};\n  const from = src.from || {};\n  let viaText = via.channel || '';\n  if (src.rel) viaText += ' / ' + src.rel;\n  if (from.title) viaText += ' (' + from.title + ')';\n  const evs = (a.events || []).map(describe).filter(Boolean);\n  return { at: a.created_at, by: who(a.author_id), via: viaText, events: evs };\n}).filter(e => e.events.length);\nconst cf = {};\n((ticket && ticket.custom_fields) || []).forEach(f => { cf[String(f.id)] = f.value; });\nconst key = {};\nObject.keys(names).forEach(id => { key[names[id]] = cf[id] !== undefined ? cf[id] : null; });\nconst autoEntries = timeline.filter(e => e.by.indexOf('AUTOMATION') === 0);\nconst last = autoEntries[autoEntries.length - 1];\nreturn [{ json: {\n  ok: !!ticket && errors.length === 0,\n  subdomain: sub,\n  ticket_id: tid,\n  project_key: cfg.project_key || null,\n  ticket_url: 'https://' + sub + '.zendesk.com/agent/tickets/' + tid,\n  status: ticket ? ticket.status : null,\n  subject: ticket ? cut(ticket.subject, 160) : null,\n  channel: ticket && ticket.via ? ticket.via.channel : null,\n  created_at: ticket ? ticket.created_at : null,\n  updated_at: ticket ? ticket.updated_at : null,\n  tags: ticket ? ticket.tags : [],\n  key_fields: key,\n  automation: { agent_id: agentId || null, actions: autoEntries.length, last_action_at: last ? last.at : null, last_action: last ? cut(last.events.join(' | '), 400) : null },\n  timeline: timeline,\n  timeline_total_audits: total,\n  timeline_truncated: truncated,\n  errors: errors\n} }];"
+      }
+    },
+    {
+      "id": "6c8d47ea-4a84-49c7-a6a7-847698a38aa2",
+      "name": "Zendesk Personality",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1500,
+        -1300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "KmMGCsnVLfQSzRWB",
+          "name": "Personality Zendesk OAuth"
+        }
+      }
+    },
+    {
+      "id": "afa5eab4-c613-4b32-bc47-d409570e4408",
+      "name": "Zendesk Mindspree",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1500,
+        -1100
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "SgSmWFEmWX2nFXmm",
+          "name": "Mindspree Zendesk OAuth"
+        }
+      }
+    },
+    {
+      "id": "238cbc54-dacf-414f-bb96-8c48efc15977",
+      "name": "Zendesk MyImage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1500,
+        -900
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "CQFddkxVL2bDvPRo",
+          "name": "MyImage Zendesk OAuth"
+        }
+      }
+    },
+    {
+      "id": "6ce2af71-5977-442c-81dd-f58623ebae5f",
+      "name": "Zendesk ResumeWise",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1500,
+        -700
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "Lm4fHzdRzWqc7T2E",
+          "name": "ResumeWise Zendesk OAuth"
+        }
+      }
+    },
+    {
+      "id": "aa78759e-16c5-4a19-9359-088d02556896",
+      "name": "Zendesk PDF Help",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1500,
+        -500
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "nUC12RvzKJcMKxbS",
+          "name": "PDF Help Zendesk OAuth"
+        }
+      }
+    },
+    {
+      "id": "96a65604-1eb7-4639-b154-16df55a76ed6",
+      "name": "Zendesk Unicopy",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1500,
+        -300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "fFGAZklvTgcNHxoz",
+          "name": "Unicopy Zendesk OAuth"
+        }
+      }
+    },
+    {
+      "id": "c943496d-a5d8-4e4a-8e8d-fc3b3aabb6eb",
+      "name": "Zendesk Realchecker",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1500,
+        -100
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "Oiek4pqYY75QVNcy",
+          "name": "Realchecker Zendesk OAuth"
+        }
+      }
+    },
+    {
+      "id": "1e0e5247-0e95-444b-882c-b1f94da0ad14",
+      "name": "Zendesk MyQRCode",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1500,
+        100
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "YUOLtvqwgmSTlJEN",
+          "name": "MyQRCode Zendesk OAuth"
+        }
+      }
+    },
+    {
+      "id": "d8cc784b-6266-4150-8e49-e63b8d933a04",
+      "name": "Zendesk Mobitrace",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1500,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "m5SUNcIpFJ2MyIBo",
+          "name": "Mobitrace Zendesk OAuth"
+        }
+      }
+    },
+    {
+      "id": "f51033ce-13b5-4fb6-baea-70e8186e004a",
+      "name": "Zendesk LoveLanguage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1500,
+        500
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "MnSodwSUYdok20QX",
+          "name": "LoveLanguage Zendesk OAuth"
+        }
+      }
+    },
+    {
+      "id": "80f0c759-b3fd-49b9-a6c1-d4f2f81cfeae",
+      "name": "Zendesk BrainIQ",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1500,
+        700
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "xjaqQiz119q2SXLI",
+          "name": "BrainIQ Test Zendesk OAuth"
+        }
+      }
+    },
+    {
+      "id": "57943df5-6ef8-4467-9298-de519384328a",
+      "name": "Zendesk Scannerly",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1500,
+        900
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "YowmRrSBIfezWMAc",
+          "name": "Scannerly Zendesk OAuth"
+        }
+      }
+    },
+    {
+      "id": "d8f26a44-9db6-4a85-878b-962e17c0425b",
+      "name": "Zendesk QR Create",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1500,
+        1100
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "B0VocZdPzPVse3GQ",
+          "name": "QR Create Zendesk OAuth"
+        }
+      }
+    },
+    {
+      "id": "afdc144a-b4ce-40b9-bc3f-23338cb1e69c",
+      "name": "Zendesk Vinready",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1500,
+        1300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "fJeStlnAYKtxvgKU",
+          "name": "Vinready Zendesk OAuth"
+        }
+      }
+    },
+    {
+      "id": "997e2496-2cba-4e93-89e3-4cbfa4126fec",
+      "name": "Zendesk ChatbotOnline",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1500,
+        1500
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "xtNsTJyxBcBUVrge",
+          "name": "Chatbotonline Zendesk OAuth"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "When called by another workflow": {
+      "main": [
+        [
+          {
+            "node": "Normalize request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize request": {
+      "main": [
+        [
+          {
+            "node": "Valid request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ad hoc lookup": {
+      "main": [
+        [
+          {
+            "node": "Normalize request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid request": {
+      "main": [
+        [
+          {
+            "node": "Get brand config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get brand config": {
+      "main": [
+        [
+          {
+            "node": "Build requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build requests": {
+      "main": [
+        [
+          {
+            "node": "Route by brand",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by brand": {
+      "main": [
+        [
+          {
+            "node": "Zendesk LoveStyle",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zendesk Personality",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zendesk Mindspree",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zendesk MyImage",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zendesk ResumeWise",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zendesk PDF Help",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zendesk Unicopy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zendesk Realchecker",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zendesk MyQRCode",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zendesk Mobitrace",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zendesk LoveLanguage",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zendesk BrainIQ",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zendesk Scannerly",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zendesk QR Create",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zendesk Vinready",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zendesk ChatbotOnline",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Condense ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk LoveStyle": {
+      "main": [
+        [
+          {
+            "node": "Condense ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk Personality": {
+      "main": [
+        [
+          {
+            "node": "Condense ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk Mindspree": {
+      "main": [
+        [
+          {
+            "node": "Condense ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk MyImage": {
+      "main": [
+        [
+          {
+            "node": "Condense ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk ResumeWise": {
+      "main": [
+        [
+          {
+            "node": "Condense ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk PDF Help": {
+      "main": [
+        [
+          {
+            "node": "Condense ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk Unicopy": {
+      "main": [
+        [
+          {
+            "node": "Condense ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk Realchecker": {
+      "main": [
+        [
+          {
+            "node": "Condense ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk MyQRCode": {
+      "main": [
+        [
+          {
+            "node": "Condense ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk Mobitrace": {
+      "main": [
+        [
+          {
+            "node": "Condense ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk LoveLanguage": {
+      "main": [
+        [
+          {
+            "node": "Condense ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk BrainIQ": {
+      "main": [
+        [
+          {
+            "node": "Condense ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk Scannerly": {
+      "main": [
+        [
+          {
+            "node": "Condense ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk QR Create": {
+      "main": [
+        [
+          {
+            "node": "Condense ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk Vinready": {
+      "main": [
+        [
+          {
+            "node": "Condense ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk ChatbotOnline": {
+      "main": [
+        [
+          {
+            "node": "Condense ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [
+    {
+      "id": "a6890797-7f62-4220-8791-6f158838d918",
+      "name": "Prepare request",
+      "nodeIds": [
+        "c54c32eb-ae01-4850-8f10-2b1c67fb4652",
+        "a61540a6-a7f0-4c35-b42a-72a588908ca7",
+        "5858a6aa-0d38-42ed-8f4d-6dbc2e081b0c",
+        "c0e56dc3-442f-47d5-9978-df4675720aca"
+      ],
+      "description": "Normalizes subdomain and ticket ID, reads the brand row from cs_project_config, builds the ticket and audits requests"
+    },
+    {
+      "id": "3d1b2909-13fd-49d4-8438-2c2588454b20",
+      "name": "Fetch and condense",
+      "nodeIds": [
+        "8a88b571-b9f8-47cf-8f55-eff996354d38",
+        "73c5230f-55a0-4031-bf76-3655751627c8",
+        "6c8d47ea-4a84-49c7-a6a7-847698a38aa2",
+        "afa5eab4-c613-4b32-bc47-d409570e4408",
+        "238cbc54-dacf-414f-bb96-8c48efc15977",
+        "6ce2af71-5977-442c-81dd-f58623ebae5f",
+        "aa78759e-16c5-4a19-9359-088d02556896",
+        "96a65604-1eb7-4639-b154-16df55a76ed6",
+        "c943496d-a5d8-4e4a-8e8d-fc3b3aabb6eb",
+        "1e0e5247-0e95-444b-882c-b1f94da0ad14",
+        "d8cc784b-6266-4150-8e49-e63b8d933a04",
+        "f51033ce-13b5-4fb6-baea-70e8186e004a",
+        "80f0c759-b3fd-49b9-a6c1-d4f2f81cfeae",
+        "57943df5-6ef8-4467-9298-de519384328a",
+        "d8f26a44-9db6-4a85-878b-962e17c0425b",
+        "afdc144a-b4ce-40b9-bc3f-23338cb1e69c",
+        "997e2496-2cba-4e93-89e3-4cbfa4126fec",
+        "f11ea452-9ff0-4833-b604-917a6058337b"
+      ],
+      "description": "Calls the brand Zendesk with its OAuth credential (GET only) and condenses ticket state and audit timeline"
+    }
+  ],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "saveManualExecutions": true,
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 300
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "EurBYzklkRBaUC0W",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "updatedAt": "2025-09-16T08:57:49.000Z"
+      },
+      "createdAt": "2026-10-22T10:21:08.405Z",
+      "updatedAt": "2026-10-22T10:21:08.405Z"
+    }
+  ],
+  "activeVersion": null
+}
