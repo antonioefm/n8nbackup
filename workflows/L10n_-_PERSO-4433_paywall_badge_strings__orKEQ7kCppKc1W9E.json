@@ -1,0 +1,200 @@
+{
+  "id": "orKEQ7kCppKc1W9E",
+  "name": "L10n - PERSO-4433 paywall badge strings",
+  "description": "Read-only: pulls results_saved_badge / results_saved_expired / get_my_results translations from Personality Lokalise projects for PERSO-4433 verification.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-27T10:34:24.814Z",
+  "updatedAt": "2026-10-27T10:34:24.814Z",
+  "isArchived": false,
+  "versionId": "a4b5ddc7-bcfe-4441-9f9c-c55a6647a26e",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "cb85dea0-307d-402c-8766-5c5fc3746e07",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "17a61ea6-a52f-4c7e-b129-72cc5053600a",
+      "name": "Fetch Lokalise Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=500&page=1&include_statistics=0&include_settings=0",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "25ca4239-8f31-45a4-9da3-126531547a2d",
+      "name": "Build Key Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const leaves = ['results_saved_badge','results_saved_expired','get_my_results'];\nconst prefixes = ['pages.get_results.uncover.','get_results.uncover.','uncover.','','pages::get_results::uncover::'];\nconst names = [];\nfor (const p of prefixes) { for (const l of leaves) { names.push(p + l); } }\nconst filter = encodeURIComponent(names.join(','));\nconst out = [];\nfor (const it of items) {\n  for (const p of (it.json.projects || [])) {\n    const n = (p.name || '').toLowerCase();\n    if (n.indexOf('perso') < 0) { continue; }\n    out.push({ json: { project_id: p.project_id, project_name: p.name, filter: filter } });\n  }\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "82094bb0-6fb7-4a3b-9861-ba881c38a2ed",
+      "name": "Fetch Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?filter_keys={{ $json.filter }}&include_translations=1&limit=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "f5cb12d7-2fc8-4994-94f2-596539279f6e",
+      "name": "Collect Strings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const LANGS = ['en','es','pl','de','fr','it','nl','pt','ko','th'];\nconst reqs = $('Build Key Requests').all();\nconst res = $input.all();\nconst out = [];\nfor (let i = 0; i < res.length; i++) {\n  const meta = (reqs[i] || {}).json || {};\n  const r = res[i].json || {};\n  const keys = (r.body && r.body.keys) ? r.body.keys : [];\n  const found = [];\n  for (const k of keys) {\n    const tr = {};\n    for (const t of (k.translations || [])) {\n      const iso = (t.language_iso || '').toLowerCase();\n      if (LANGS.indexOf(iso) >= 0) { tr[iso] = { text: t.translation, reviewed: t.is_reviewed, modified: t.modified_at }; }\n    }\n    found.push({ key: k.key_name, archived: k.is_archived, description: k.description, tags: k.tags, translations: tr });\n  }\n  out.push({ json: { project: meta.project_name, project_id: meta.project_id, status: r.statusCode, keys: found } });\n}\nreturn out;\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lokalise Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lokalise Projects": {
+      "main": [
+        [
+          {
+            "node": "Build Key Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Key Requests": {
+      "main": [
+        [
+          {
+            "node": "Fetch Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Keys": {
+      "main": [
+        [
+          {
+            "node": "Collect Strings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "orKEQ7kCppKc1W9E",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-27T10:34:24.819Z",
+      "updatedAt": "2026-10-27T10:34:24.819Z"
+    }
+  ],
+  "activeVersion": null
+}
