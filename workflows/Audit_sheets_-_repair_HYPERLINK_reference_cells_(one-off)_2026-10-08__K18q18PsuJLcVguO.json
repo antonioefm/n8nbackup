@@ -1,0 +1,240 @@
+{
+  "id": "K18q18PsuJLcVguO",
+  "name": "Audit sheets - repair HYPERLINK reference cells (one-off) 2026-10-08",
+  "description": "One-off: converts =HYPERLINK formula Reference cells (#ERROR! in es_ES sheets) in the targets-audit review folder into rich-text links. Google Sheets only, no Lokalise.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-08T05:43:13.738Z",
+  "updatedAt": "2026-10-08T05:43:13.738Z",
+  "isArchived": false,
+  "versionId": "a0ec6eb4-62eb-4f6d-a8e0-9841f96a5c51",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "dac732fe-2310-4077-bb23-7c35dd8104df",
+      "name": "Run manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "7a0a1dbc-e458-48d9-ac36-24d471c9679c",
+      "name": "List audit sheets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://www.googleapis.com/drive/v3/files?q={{ encodeURIComponent(\"'1XuEi6ey5T1GvOYGdJWmvkdMUDyD9NkR3' in parents and trashed = false and mimeType = 'application/vnd.google-apps.spreadsheet'\") }}&fields=files(id,name)&pageSize=500&supportsAllDrives=true&includeItemsFromAllDrives=true",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Gt1NY0PXKDxBUQGy",
+          "name": "Google Sheets account"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "9af280fa-2577-40a1-aa66-b4718482ac13",
+      "name": "One item per sheet",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const files = ($input.first().json.files || []);\nif (!files.length) { throw new Error('No spreadsheets found in the audit folder'); }\nreturn files.map(function (f) { return { json: { id: f.id, name: f.name } }; });"
+      }
+    },
+    {
+      "id": "2dc6816f-42cd-44b2-8eba-2f84115cf57f",
+      "name": "Read cells",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $json.id }}?fields=spreadsheetId,properties.title,sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(userEnteredValue))))",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1500
+            }
+          }
+        }
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Gt1NY0PXKDxBUQGy",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "a447388a-628a-4a17-b6b8-b772609cedca",
+      "name": "Plan link fixes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Replace every =HYPERLINK(\"url\",\"label\") cell with the label as text + a link (locale-independent).\nconst RX = /^=HYPERLINK\\(\\s*\"((?:[^\"]|\"\")*)\"\\s*[,;]\\s*\"((?:[^\"]|\"\")*)\"\\s*\\)$/i;\nconst out = [];\nfor (const it of $input.all()) {\n  const s = it.json || {};\n  const reqs = [];\n  for (const sh of (s.sheets || [])) {\n    const sid = sh.properties.sheetId;\n    for (const d of (sh.data || [])) {\n      const r0 = d.startRow || 0, c0 = d.startColumn || 0;\n      (d.rowData || []).forEach(function (row, ri) {\n        (row.values || []).forEach(function (v, ci) {\n          const f = v && v.userEnteredValue && v.userEnteredValue.formulaValue;\n          if (!f) { return; }\n          const m = String(f).trim().match(RX);\n          if (!m) { return; }\n          const url = m[1].split('\"\"').join('\"');\n          const label = m[2].split('\"\"').join('\"') || url;\n          reqs.push({ updateCells: { start: { sheetId: sid, rowIndex: r0 + ri, columnIndex: c0 + ci }, rows: [{ values: [{ userEnteredValue: { stringValue: label }, textFormatRuns: [{ startIndex: 0, format: { link: { uri: url } } }] }] }], fields: 'userEnteredValue,textFormatRuns' } });\n        });\n      });\n    }\n  }\n  if (reqs.length) { out.push({ json: { spreadsheetId: s.spreadsheetId, title: (s.properties || {}).title, cells: reqs.length, body: { requests: reqs } } }); }\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "f5d136f5-7f0f-43bc-9740-cca144273f6f",
+      "name": "Write link fixes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://sheets.googleapis.com/v4/spreadsheets/' + $json.spreadsheetId + ':batchUpdate' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1500
+            }
+          }
+        }
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Gt1NY0PXKDxBUQGy",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Run manually": {
+      "main": [
+        [
+          {
+            "node": "List audit sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List audit sheets": {
+      "main": [
+        [
+          {
+            "node": "One item per sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One item per sheet": {
+      "main": [
+        [
+          {
+            "node": "Read cells",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read cells": {
+      "main": [
+        [
+          {
+            "node": "Plan link fixes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan link fixes": {
+      "main": [
+        [
+          {
+            "node": "Write link fixes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "K18q18PsuJLcVguO",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-08T05:43:13.745Z",
+      "updatedAt": "2026-10-08T05:43:13.745Z"
+    }
+  ],
+  "activeVersion": null
+}
