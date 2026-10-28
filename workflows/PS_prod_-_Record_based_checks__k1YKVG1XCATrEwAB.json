@@ -1,0 +1,374 @@
+{
+  "id": "k1YKVG1XCATrEwAB",
+  "name": "PS prod - Record based checks",
+  "description": "Record-based checks: 1a, 1b, 2 (cross-ticket) under record_checks_*, and 6 (chargeback or dispute on record, refunds only) under record_case6_*. Returns a verdict.",
+  "active": true,
+  "activeVersionId": "9dacf7b5-d804-4c04-9a0f-798b58657413",
+  "createdAt": "2026-09-21T12:55:02.804Z",
+  "updatedAt": "2026-10-19T20:59:03.121Z",
+  "isArchived": false,
+  "versionId": "9dacf7b5-d804-4c04-9a0f-798b58657413",
+  "versionCounter": 10,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "93b31520-717a-485c-9192-ce2c369c623a",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "project_key",
+              "type": "string"
+            },
+            {
+              "name": "ticket_id",
+              "type": "number"
+            },
+            {
+              "name": "requester_email",
+              "type": "string"
+            },
+            {
+              "name": "transactions_json",
+              "type": "string"
+            },
+            {
+              "name": "refunded_transactions_json",
+              "type": "string"
+            },
+            {
+              "name": "request_type",
+              "type": "string"
+            },
+            {
+              "name": "chargeback_transactions_json",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "b67064a1-8bd6-4bb7-b3cc-9be3cec5a9d3",
+      "name": "Get Project Config",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "IRxwFN8iBhHLFQxQ",
+          "cachedResultName": "cs_project_config"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "project_key",
+              "keyValue": "={{ $('When Executed by Another Workflow').first().json.project_key }}"
+            }
+          ]
+        },
+        "limit": 1
+      }
+    },
+    {
+      "id": "0aeecbd8-9b33-41d1-ac95-400aeb404ee8",
+      "name": "RB: Requester ticket history",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/search.json?query=\" + encodeURIComponent(\"type:ticket requester:\" + $(\"When Executed by Another Workflow\").first().json.requester_email) + \"&sort_by=created_at&sort_order=desc&per_page=100\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {}
+      },
+      "retryOnFail": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "KmMGCsnVLfQSzRWB",
+          "name": "Personality Zendesk OAuth"
+        }
+      }
+    },
+    {
+      "id": "8e4f577b-1ef1-4916-9cd1-cfdceff890c6",
+      "name": "RB: Evaluate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Record-based checks.\n// Cases covered here: 1a (2+ refund requests from the same customer, any\n// request type), 1b (refund spanning 2+ transactions or 2+ subscriptions,\n// refund requests only), the cross-ticket half of case 2 (a refund request\n// after an earlier ticket was marked Rejection Complaint = yes) and case 6\n// (a chargeback or dispute on record, refund requests only).\n// Case 7b is NOT here - it is in-ticket only and lives in the 2nd message\n// eligibility check. Neither is the same-ticket half of case 2 - it lives in\n// the 2nd message trigger, after Is refund request. Case 6 on replies also\n// lives in the 2nd message trigger, after DEV bot/search1.\n//\n// Everything is computed from data already in hand: Zendesk ticket history for\n// the requester, and the payments bot/search arrays passed in by the caller.\n// No AI, no payments call of its own.\n\nconst input = $('When Executed by Another Workflow').first().json;\nconst cfg = $('Get Project Config').first().json || {};\nconst search = $('RB: Requester ticket history').first().json || {};\n\nconst ticketId = Number(input.ticket_id);\n\n// --- config, with safe defaults -------------------------------------------\n// enabled/enforce are fail-CLOSED on enabled (a project that has not been\n// configured does not run the checks) and fail-SAFE on enforce (an unconfigured\n// project tags but never blocks).\nfunction truthy(v) {\n  return v === true || v === 1 || v === 'true' || v === '1' || v === 'yes';\n}\nconst enabled = truthy(cfg.record_checks_enabled);\nconst enforce = truthy(cfg.record_checks_enforce);\nconst tagPrefix = String(cfg.record_refund_tag_prefix || 'refund').toLowerCase();\n\n// Case 6 has its own pair of switches (decision 2026-10-14), independent of\n// record_checks_enabled / record_checks_enforce, so it can be dropped to\n// tag-only or switched off without touching 1a / 1b / 2.\nconst case6Enabled = truthy(cfg.record_case6_enabled);\nconst case6Enforce = truthy(cfg.record_case6_enforce);\n\n// --- request type ----------------------------------------------------------\n// Classifier token passed in by the main flow: r = refund, c = cancellation.\n// other_auto never reaches these checks. If the caller did not pass it, the\n// request is treated as a refund - that was the behaviour before the input\n// existed, and over-flagging is the safer failure for a flag check.\nconst requestType = String(input.request_type == null ? '' : input.request_type).trim().toLowerCase();\nconst isRefundRequest = requestType === '' || requestType === 'r';\n\n// --- case 1a: prior refund requests from the same requester ----------------\n// Any tag beginning with the configured prefix marks a prior ticket as a refund\n// request. Measured on Personality 2026-09: refund_auto, refund__within_30_days__monthly,\n// refund__30_day_policy__last_charge_only and friends all share the prefix.\n//\n// The CURRENT ticket is excluded. The search returns it too (it is an open\n// ticket for this requester), and counting it would make every refund request\n// look like a repeat.\nconst results = Array.isArray(search.results) ? search.results : [];\nconst priorTickets = results.filter(function (t) {\n  return t && t.id !== ticketId;\n});\n\nconst priorRefundTickets = priorTickets.filter(function (t) {\n  const tags = Array.isArray(t.tags) ? t.tags : [];\n  return tags.some(function (tag) {\n    return String(tag).toLowerCase().indexOf(tagPrefix) === 0;\n  });\n});\n\n// current request + 1 prior = 2 refund requests, which is the case threshold\nconst case1a = priorRefundTickets.length >= 1;\n\n// --- case 1b: refund spanning multiple transactions or subscriptions -------\n// transactions[] is the 30-day refundable window by design - the payments API\n// deliberately does not return older ones because they cannot be refunded.\n// So this fires on 2+ refundable charges inside that window, which is the\n// agreed scope. refundedTransactions[] is all-time and is reported for context\n// but does not itself trip 1b.\nfunction parseArray(raw) {\n  if (Array.isArray(raw)) return raw;\n  if (!raw) return [];\n  try {\n    const parsed = JSON.parse(raw);\n    return Array.isArray(parsed) ? parsed : [];\n  } catch (e) {\n    return [];\n  }\n}\n\nconst transactions = parseArray(input.transactions_json);\nconst refunded = parseArray(input.refunded_transactions_json);\nconst chargebacks = parseArray(input.chargeback_transactions_json);\n\nconst subIds = [];\ntransactions.forEach(function (t) {\n  const sid = t && (t.subscriptionId || t.subscription_id);\n  if (sid && subIds.indexOf(sid) === -1) subIds.push(sid);\n});\n\n// Refund requests only, by decision 2026-09-23. A cancellation that touches\n// several charges or subscriptions is not a risk in itself.\n// The subscription half needs subscriptionId on each transaction. bot/search\n// does not return it yet (checked 2026-10-15), so today only the 2+\n// transactions half can fire; the subscription half starts working as soon as\n// the payments team adds the field, with no change here.\nconst case1b = isRefundRequest && (transactions.length >= 2 || subIds.length >= 2);\n\n// --- case 2 (cross-ticket): refund requested again after a rejection -------\n// An earlier ticket from this requester carries Rejection Complaint = yes (set\n// by the Zendesk ticket update request sub-workflow when the rejection macro\n// was sent, or by an agent on a manual rejection) and the customer is now\n// asking for a refund again. The search results already include each ticket's\n// custom_fields, so this costs no extra call. Tickets from before the field\n// existed carry no value and are deliberately not considered (2026-09-23).\nconst rcFieldId = Number(cfg.ticket_field_rejection_complaint);\nconst rcConfigured = Number.isFinite(rcFieldId) && rcFieldId > 0;\n// \"Yes\" option value from cs_project_config (empty = yes).\nconst rcYesValue = String(cfg.rejection_complaint_value_yes || 'yes');\nconst priorRejectedTickets = rcConfigured ? priorTickets.filter(function (t) {\n  const fields = Array.isArray(t.custom_fields) ? t.custom_fields : [];\n  return fields.some(function (f) {\n    return f && Number(f.id) === rcFieldId && f.value === rcYesValue;\n  });\n}) : [];\n\nconst case2 = isRefundRequest && priorRejectedTickets.length >= 1;\n\n// --- case 6: chargeback or dispute on record --------------------------------\n// chargebackTransactions[] is all-time and mixes chargebacks and disputes.\n// Existence is enough (decision 2026-10-14): the API does not say whether a\n// dispute is open, won or lost, and it does not matter for routing.\n// Refund requests only - a cancellation request with a chargeback carries on.\nconst case6 = case6Enabled && isRefundRequest && chargebacks.length >= 1;\n\nfunction day(iso) {\n  return iso ? String(iso).slice(0, 10) : '?';\n}\nfunction describeChargeback(c) {\n  c = c || {};\n  const amount = (c.amount != null ? c.amount : '?') + (c.currency ? ' ' + c.currency : '');\n  const provider = c.provider && c.provider.type ? c.provider.type : 'unknown provider';\n  return 'recorded ' + day(c.chargebackDate) + ', ' + amount + ' disputed, ' + provider +\n    ', ' + (c.type || 'unknown type') + ' charge of ' + day(c.transactionDate);\n}\n\n// --- verdict ---------------------------------------------------------------\n// Cases 1a / 1b / 2 only count when record_checks_enabled is on; case 6 only\n// when record_case6_enabled is on. Each family blocks under its own enforce.\nconst cases = [];\nconst tags = [];\nconst reasons = [];\nif (enabled) {\n  if (case1a) {\n    cases.push('1a'); tags.push('record_case_1a');\n    reasons.push('Customer has ' + priorRefundTickets.length + ' previous refund request ticket(s): ' + priorRefundTickets.map(function (t) { return '#' + t.id; }).join(', '));\n  }\n  if (case1b) {\n    cases.push('1b'); tags.push('record_case_1b');\n    reasons.push('Refund spans ' + transactions.length + ' refundable transaction(s)' + (subIds.length > 0 ? ' across ' + subIds.length + ' subscription(s)' : '') + ' in the 30 day window');\n  }\n  if (case2) {\n    cases.push('2'); tags.push('record_case_2');\n    reasons.push('Customer had a refund rejected on previous ticket(s): ' + priorRejectedTickets.map(function (t) { return '#' + t.id; }).join(', '));\n  }\n}\nconst cat1Matched = cases.length > 0;\n\nif (case6) {\n  cases.push('6'); tags.push('record_case_6');\n  reasons.push('Chargeback or dispute on record (' + chargebacks.length + '): ' + chargebacks.map(describeChargeback).join('; '));\n}\n\nconst matched = cases.length > 0;\nif (matched) tags.push('record_based_flag');\n\nconst shouldBlock = (cat1Matched && enforce) || (case6 && case6Enforce);\n\nreturn [{\n  json: {\n    rb_enabled: enabled,\n    rb_enforce: enforce,\n    rb_matched: matched,\n    rb_should_block: shouldBlock,\n    rb_cases: cases,\n    rb_tags: tags,\n    rb_reason: reasons.join(' | '),\n    rb_case_1a: case1a,\n    rb_case_1b: case1b,\n    rb_case_2: case2,\n    rb_case_6: case6,\n    rb_case6_enabled: case6Enabled,\n    rb_case6_enforce: case6Enforce,\n    rb_request_type: requestType || null,\n    rb_prior_ticket_count: priorTickets.length,\n    rb_prior_refund_ticket_count: priorRefundTickets.length,\n    rb_prior_refund_ticket_ids: priorRefundTickets.map(function (t) { return t.id; }),\n    rb_prior_rejected_ticket_ids: priorRejectedTickets.map(function (t) { return t.id; }),\n    rb_transaction_count: transactions.length,\n    rb_subscription_count: subIds.length,\n    rb_refunded_transaction_count: refunded.length,\n    rb_chargeback_count: chargebacks.length,\n    rb_search_error: search.error ? String(search.error) : null\n  }\n}];\n"
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Get Project Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RB: Requester ticket history": {
+      "main": [
+        [
+          {
+            "node": "RB: Evaluate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Project Config": {
+      "main": [
+        [
+          {
+            "node": "RB: Requester ticket history",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "BY3PNiyJJJ9EMdEi",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "k1YKVG1XCATrEwAB",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "updatedAt": "2025-09-16T08:57:49.000Z"
+      },
+      "createdAt": "2026-09-21T12:55:02.809Z",
+      "updatedAt": "2026-09-21T12:55:02.809Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "9dacf7b5-d804-4c04-9a0f-798b58657413",
+    "workflowId": "k1YKVG1XCATrEwAB",
+    "nodes": [
+      {
+        "id": "93b31520-717a-485c-9192-ce2c369c623a",
+        "name": "When Executed by Another Workflow",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "inputSource": "workflowInputs",
+          "workflowInputs": {
+            "values": [
+              {
+                "name": "project_key",
+                "type": "string"
+              },
+              {
+                "name": "ticket_id",
+                "type": "number"
+              },
+              {
+                "name": "requester_email",
+                "type": "string"
+              },
+              {
+                "name": "transactions_json",
+                "type": "string"
+              },
+              {
+                "name": "refunded_transactions_json",
+                "type": "string"
+              },
+              {
+                "name": "request_type",
+                "type": "string"
+              },
+              {
+                "name": "chargeback_transactions_json",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "b67064a1-8bd6-4bb7-b3cc-9be3cec5a9d3",
+        "name": "Get Project Config",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          224,
+          0
+        ],
+        "parameters": {
+          "operation": "get",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "IRxwFN8iBhHLFQxQ",
+            "cachedResultName": "cs_project_config"
+          },
+          "matchType": "allConditions",
+          "filters": {
+            "conditions": [
+              {
+                "keyName": "project_key",
+                "keyValue": "={{ $('When Executed by Another Workflow').first().json.project_key }}"
+              }
+            ]
+          },
+          "limit": 1
+        }
+      },
+      {
+        "id": "0aeecbd8-9b33-41d1-ac95-400aeb404ee8",
+        "name": "RB: Requester ticket history",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          448,
+          0
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/search.json?query=\" + encodeURIComponent(\"type:ticket requester:\" + $(\"When Executed by Another Workflow\").first().json.requester_email) + \"&sort_by=created_at&sort_order=desc&per_page=100\" }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "zendeskOAuth2Api",
+          "options": {}
+        },
+        "retryOnFail": true,
+        "onError": "continueRegularOutput",
+        "credentials": {
+          "zendeskOAuth2Api": {
+            "id": "KmMGCsnVLfQSzRWB",
+            "name": "Personality Zendesk OAuth"
+          }
+        }
+      },
+      {
+        "id": "8e4f577b-1ef1-4916-9cd1-cfdceff890c6",
+        "name": "RB: Evaluate",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          672,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "// Record-based checks.\n// Cases covered here: 1a (2+ refund requests from the same customer, any\n// request type), 1b (refund spanning 2+ transactions or 2+ subscriptions,\n// refund requests only), the cross-ticket half of case 2 (a refund request\n// after an earlier ticket was marked Rejection Complaint = yes) and case 6\n// (a chargeback or dispute on record, refund requests only).\n// Case 7b is NOT here - it is in-ticket only and lives in the 2nd message\n// eligibility check. Neither is the same-ticket half of case 2 - it lives in\n// the 2nd message trigger, after Is refund request. Case 6 on replies also\n// lives in the 2nd message trigger, after DEV bot/search1.\n//\n// Everything is computed from data already in hand: Zendesk ticket history for\n// the requester, and the payments bot/search arrays passed in by the caller.\n// No AI, no payments call of its own.\n\nconst input = $('When Executed by Another Workflow').first().json;\nconst cfg = $('Get Project Config').first().json || {};\nconst search = $('RB: Requester ticket history').first().json || {};\n\nconst ticketId = Number(input.ticket_id);\n\n// --- config, with safe defaults -------------------------------------------\n// enabled/enforce are fail-CLOSED on enabled (a project that has not been\n// configured does not run the checks) and fail-SAFE on enforce (an unconfigured\n// project tags but never blocks).\nfunction truthy(v) {\n  return v === true || v === 1 || v === 'true' || v === '1' || v === 'yes';\n}\nconst enabled = truthy(cfg.record_checks_enabled);\nconst enforce = truthy(cfg.record_checks_enforce);\nconst tagPrefix = String(cfg.record_refund_tag_prefix || 'refund').toLowerCase();\n\n// Case 6 has its own pair of switches (decision 2026-10-14), independent of\n// record_checks_enabled / record_checks_enforce, so it can be dropped to\n// tag-only or switched off without touching 1a / 1b / 2.\nconst case6Enabled = truthy(cfg.record_case6_enabled);\nconst case6Enforce = truthy(cfg.record_case6_enforce);\n\n// --- request type ----------------------------------------------------------\n// Classifier token passed in by the main flow: r = refund, c = cancellation.\n// other_auto never reaches these checks. If the caller did not pass it, the\n// request is treated as a refund - that was the behaviour before the input\n// existed, and over-flagging is the safer failure for a flag check.\nconst requestType = String(input.request_type == null ? '' : input.request_type).trim().toLowerCase();\nconst isRefundRequest = requestType === '' || requestType === 'r';\n\n// --- case 1a: prior refund requests from the same requester ----------------\n// Any tag beginning with the configured prefix marks a prior ticket as a refund\n// request. Measured on Personality 2026-09: refund_auto, refund__within_30_days__monthly,\n// refund__30_day_policy__last_charge_only and friends all share the prefix.\n//\n// The CURRENT ticket is excluded. The search returns it too (it is an open\n// ticket for this requester), and counting it would make every refund request\n// look like a repeat.\nconst results = Array.isArray(search.results) ? search.results : [];\nconst priorTickets = results.filter(function (t) {\n  return t && t.id !== ticketId;\n});\n\nconst priorRefundTickets = priorTickets.filter(function (t) {\n  const tags = Array.isArray(t.tags) ? t.tags : [];\n  return tags.some(function (tag) {\n    return String(tag).toLowerCase().indexOf(tagPrefix) === 0;\n  });\n});\n\n// current request + 1 prior = 2 refund requests, which is the case threshold\nconst case1a = priorRefundTickets.length >= 1;\n\n// --- case 1b: refund spanning multiple transactions or subscriptions -------\n// transactions[] is the 30-day refundable window by design - the payments API\n// deliberately does not return older ones because they cannot be refunded.\n// So this fires on 2+ refundable charges inside that window, which is the\n// agreed scope. refundedTransactions[] is all-time and is reported for context\n// but does not itself trip 1b.\nfunction parseArray(raw) {\n  if (Array.isArray(raw)) return raw;\n  if (!raw) return [];\n  try {\n    const parsed = JSON.parse(raw);\n    return Array.isArray(parsed) ? parsed : [];\n  } catch (e) {\n    return [];\n  }\n}\n\nconst transactions = parseArray(input.transactions_json);\nconst refunded = parseArray(input.refunded_transactions_json);\nconst chargebacks = parseArray(input.chargeback_transactions_json);\n\nconst subIds = [];\ntransactions.forEach(function (t) {\n  const sid = t && (t.subscriptionId || t.subscription_id);\n  if (sid && subIds.indexOf(sid) === -1) subIds.push(sid);\n});\n\n// Refund requests only, by decision 2026-09-23. A cancellation that touches\n// several charges or subscriptions is not a risk in itself.\n// The subscription half needs subscriptionId on each transaction. bot/search\n// does not return it yet (checked 2026-10-15), so today only the 2+\n// transactions half can fire; the subscription half starts working as soon as\n// the payments team adds the field, with no change here.\nconst case1b = isRefundRequest && (transactions.length >= 2 || subIds.length >= 2);\n\n// --- case 2 (cross-ticket): refund requested again after a rejection -------\n// An earlier ticket from this requester carries Rejection Complaint = yes (set\n// by the Zendesk ticket update request sub-workflow when the rejection macro\n// was sent, or by an agent on a manual rejection) and the customer is now\n// asking for a refund again. The search results already include each ticket's\n// custom_fields, so this costs no extra call. Tickets from before the field\n// existed carry no value and are deliberately not considered (2026-09-23).\nconst rcFieldId = Number(cfg.ticket_field_rejection_complaint);\nconst rcConfigured = Number.isFinite(rcFieldId) && rcFieldId > 0;\n// \"Yes\" option value from cs_project_config (empty = yes).\nconst rcYesValue = String(cfg.rejection_complaint_value_yes || 'yes');\nconst priorRejectedTickets = rcConfigured ? priorTickets.filter(function (t) {\n  const fields = Array.isArray(t.custom_fields) ? t.custom_fields : [];\n  return fields.some(function (f) {\n    return f && Number(f.id) === rcFieldId && f.value === rcYesValue;\n  });\n}) : [];\n\nconst case2 = isRefundRequest && priorRejectedTickets.length >= 1;\n\n// --- case 6: chargeback or dispute on record --------------------------------\n// chargebackTransactions[] is all-time and mixes chargebacks and disputes.\n// Existence is enough (decision 2026-10-14): the API does not say whether a\n// dispute is open, won or lost, and it does not matter for routing.\n// Refund requests only - a cancellation request with a chargeback carries on.\nconst case6 = case6Enabled && isRefundRequest && chargebacks.length >= 1;\n\nfunction day(iso) {\n  return iso ? String(iso).slice(0, 10) : '?';\n}\nfunction describeChargeback(c) {\n  c = c || {};\n  const amount = (c.amount != null ? c.amount : '?') + (c.currency ? ' ' + c.currency : '');\n  const provider = c.provider && c.provider.type ? c.provider.type : 'unknown provider';\n  return 'recorded ' + day(c.chargebackDate) + ', ' + amount + ' disputed, ' + provider +\n    ', ' + (c.type || 'unknown type') + ' charge of ' + day(c.transactionDate);\n}\n\n// --- verdict ---------------------------------------------------------------\n// Cases 1a / 1b / 2 only count when record_checks_enabled is on; case 6 only\n// when record_case6_enabled is on. Each family blocks under its own enforce.\nconst cases = [];\nconst tags = [];\nconst reasons = [];\nif (enabled) {\n  if (case1a) {\n    cases.push('1a'); tags.push('record_case_1a');\n    reasons.push('Customer has ' + priorRefundTickets.length + ' previous refund request ticket(s): ' + priorRefundTickets.map(function (t) { return '#' + t.id; }).join(', '));\n  }\n  if (case1b) {\n    cases.push('1b'); tags.push('record_case_1b');\n    reasons.push('Refund spans ' + transactions.length + ' refundable transaction(s)' + (subIds.length > 0 ? ' across ' + subIds.length + ' subscription(s)' : '') + ' in the 30 day window');\n  }\n  if (case2) {\n    cases.push('2'); tags.push('record_case_2');\n    reasons.push('Customer had a refund rejected on previous ticket(s): ' + priorRejectedTickets.map(function (t) { return '#' + t.id; }).join(', '));\n  }\n}\nconst cat1Matched = cases.length > 0;\n\nif (case6) {\n  cases.push('6'); tags.push('record_case_6');\n  reasons.push('Chargeback or dispute on record (' + chargebacks.length + '): ' + chargebacks.map(describeChargeback).join('; '));\n}\n\nconst matched = cases.length > 0;\nif (matched) tags.push('record_based_flag');\n\nconst shouldBlock = (cat1Matched && enforce) || (case6 && case6Enforce);\n\nreturn [{\n  json: {\n    rb_enabled: enabled,\n    rb_enforce: enforce,\n    rb_matched: matched,\n    rb_should_block: shouldBlock,\n    rb_cases: cases,\n    rb_tags: tags,\n    rb_reason: reasons.join(' | '),\n    rb_case_1a: case1a,\n    rb_case_1b: case1b,\n    rb_case_2: case2,\n    rb_case_6: case6,\n    rb_case6_enabled: case6Enabled,\n    rb_case6_enforce: case6Enforce,\n    rb_request_type: requestType || null,\n    rb_prior_ticket_count: priorTickets.length,\n    rb_prior_refund_ticket_count: priorRefundTickets.length,\n    rb_prior_refund_ticket_ids: priorRefundTickets.map(function (t) { return t.id; }),\n    rb_prior_rejected_ticket_ids: priorRejectedTickets.map(function (t) { return t.id; }),\n    rb_transaction_count: transactions.length,\n    rb_subscription_count: subIds.length,\n    rb_refunded_transaction_count: refunded.length,\n    rb_chargeback_count: chargebacks.length,\n    rb_search_error: search.error ? String(search.error) : null\n  }\n}];\n"
+        }
+      }
+    ],
+    "connections": {
+      "When Executed by Another Workflow": {
+        "main": [
+          [
+            {
+              "node": "Get Project Config",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "RB: Requester ticket history": {
+        "main": [
+          [
+            {
+              "node": "RB: Evaluate",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Project Config": {
+        "main": [
+          [
+            {
+              "node": "RB: Requester ticket history",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Antonio antonio.marusic@efuturemedia.com",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "createdAt": "2026-10-19T20:59:03.122Z",
+    "updatedAt": "2026-10-19T20:59:03.122Z",
+    "workflowPublishHistory": [
+      {
+        "id": 3035,
+        "workflowId": "k1YKVG1XCATrEwAB",
+        "versionId": "9dacf7b5-d804-4c04-9a0f-798b58657413",
+        "event": "activated",
+        "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e",
+        "createdAt": "2026-10-22T07:10:50.131Z"
+      }
+    ]
+  }
+}
