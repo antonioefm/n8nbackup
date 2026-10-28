@@ -1,0 +1,407 @@
+{
+  "id": "sJqFDQKfqUGtJ4dt",
+  "name": "Lokalise - BrainIQtest ES translate (members area)",
+  "description": "Translates empty ES of BrainIQtest members-content with OpenAI gpt-4.1 per namespace (style guide, glossary incl. brainIQ, phrasebook, exact TM), validates HTML, writes unverified + tag 'members area'. TEST flag in Build Batches.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-16T11:02:24.123Z",
+  "updatedAt": "2026-10-19T09:10:51.381Z",
+  "isArchived": false,
+  "versionId": "d5bdf61c-295b-4fe9-9231-6538770adc26",
+  "versionCounter": 10,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "7691c982-74c8-4251-a9bf-0744143a3823",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "25dc2c68-dfd2-4914-8534-e31a4ba6ba48",
+      "name": "Fetch Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/185916266aa3d6649ca6f7.57851232/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "include_translations",
+              "value": "1"
+            },
+            {
+              "name": "disable_references",
+              "value": "1"
+            },
+            {
+              "name": "limit",
+              "value": "500"
+            },
+            {
+              "name": "pagination",
+              "value": "cursor"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 50,
+              "requestInterval": 250
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "8bcfecd6-a0f5-4cf8-8e83-d050c099acc3",
+      "name": "Fetch Glossary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.body.meta.nextCursor }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body.meta.hasMore }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20,
+              "requestInterval": 250
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "becd534f-4a02-4658-9f4c-8ae4ccb30fa6",
+      "name": "Build Batches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ---- Build Batches ----\nconst TEST = false;              // true = one lesson + one test only (review run); false = MAX_GROUPS namespaces\nconst MAX_GROUPS = 40;           // namespaces (lessons/tests/challenges/courses) per run; rerun to continue\nconst SEGMENT_LESSONS = true;    // lesson keys with HTML are sent as text segments (tags cannot break)\nconst TAG = 'members area';\nconst CUT = 1792145000;          // keys created by the 2026-10-16 10:07 UTC import (tag-only housekeeping)\n\nconst PHRASEBOOK = [\n ['Objective','Objetivo'],['Definition','Definición'],['Significance','Importancia'],\n ['Example','Ejemplo'],['Examples','Ejemplos'],['Benefit','Beneficio'],['How It Works','Cómo funciona'],\n ['How to Apply','Cómo aplicarlo'],['Key Takeaways','Ideas clave'],['Conclusion','Conclusión'],\n ['Why It Matters','Por qué es importante'],['Why It Works','Por qué funciona'],['Purpose','Propósito'],\n ['Challenge (noun, incl. exercise names like \"5-Minute Focus Challenge\")','Desafío (e.g. \"Desafío de enfoque de 5 minutos\"); never \"reto\"'],\n ['challenges','desafíos'],['daily challenges','desafíos diarios'],\n ['cognitive lag / lag','retraso cognitivo / retraso (never keep \"lag\" in English)'],\n ['Solution','Solución'],['Ask','Pregúntate'],['Act','Actúa'],['Why?','¿Por qué?'],\n ['Real-World Applications','Aplicaciones prácticas'],['In Business & Leadership','En los negocios y el liderazgo'],\n ['In Business & Productivity','En los negocios y la productividad'],['In Research & Education','En la investigación y la educación'],\n ['In Health & Fitness','En la salud y la forma física'],['In Academics','En el ámbito académico'],\n ['In Personal Productivity','En la productividad personal'],['Cognitive Load','Carga cognitiva'],\n ['By the end of this lesson, learners will:','Al final de esta clase, podrás:'],\n ['This lesson explored','En esta clase hemos explorado'],\n ['Knowledge Assessment Test','Test de evaluación de conocimientos'],\n ['lesson','clase'],['course','curso'],['mindfulness','atención plena'],['flow / flow state','estado de flujo'],\n ['AI','IA'],['prefrontal cortex','corteza prefrontal'],['hippocampus','hipocampo'],['dopamine','dopamina'],\n ['multitasking','multitarea'],['processing speed','velocidad de procesamiento'],['emotional intelligence','inteligencia emocional'],\n ['decision fatigue','fatiga de decisión'],['deep work','trabajo profundo'],['cognitive flexibility','flexibilidad cognitiva'],\n ['working memory','memoria de trabajo'],['test (quiz)','test (plural invariable: los test)'],['IQ','IQ (never CI)']\n];\nconst GLOSS_SKIP = {'about':1,'single':1,'engage':1,'enter':1,'plan':1,'give':1,'high':1,'no':1,'or':1,'name':1,'change':1,'help':1,'the':1,'a':1};\nconst NL = String.fromCharCode(10);\n\nconst SYSTEM = [\n'You are a senior Spanish (Spain) translator localizing the BrainIQ members area (brain-training courses, lessons, challenges and knowledge tests) for FutureMedia.',\n'Translate English to Spanish. Return ONLY a JSON object mapping each key_id (as a string) to its Spanish translation. No preamble, no markdown fences.',\n'SEGMENTED KEYS: when a key has \"segments\" (the text pieces found between its HTML tags, in order), the value for that key_id must be a JSON ARRAY of the Spanish pieces, with exactly the same number of items in the same order. Do not add tags. Use \"en\" for the full context; you may move words between adjacent pieces of the same sentence when Spanish word order requires it, but every piece must stay non-empty and keep its role (a bold label stays the label).',\n'',\n'STYLE GUIDE (Spanish – Global, mandatory):',\n'- Informal register: always \"tú\" (podrás, tu, te). Never usted.',\n'- Direct, natural, engaging, easy to understand; active voice; colloquial expressions allowed where natural.',\n'- Inclusive: prefer neutral phrasing over gendered forms (e.g. \"Al final de esta clase, podrás:\" not \"los alumnos\"; \"una persona inversora\", \"equipos directivos\", \"personal académico\"); never @, x or -e endings.',\n'- Sentence case in titles and headings; never copy English Title Case.',\n'- Titles and headings (::title, <h2>, <h3>) never start with a gerund: use a noun or an infinitive (\"Comparación de la multitarea y la monotarea\", not \"Comparando…\").',\n'- After a colon, continue in lowercase (\"La monotarea es superior: el pensamiento analítico…\", \"Cómo funciona: trabaja…\", \"Beneficio: entrena…\"), except proper nouns, acronyms and direct quotations.',\n'- Quotation marks: Spanish angular quotes «…»; inside them use “…”, then ‘…’. Never use \"…\" or “…” as first-level quotes.',\n'- Always opening ¿ and ¡. Use exclamation marks sparingly.',\n'- Translate everything: no English words left in the text (e.g. \"lag\" → \"retraso\"), except brand, product and app names.',\n'- Write \"y\" instead of \"&\" / \"&amp;\".',\n'- Numbers: decimal comma, thousands period (10.000), \"5 %\" with a space, 24-hour time, currency after amount (29,99 €). Abbreviations: p. ej., n.º, h, min, s.',\n'- Buttons/short UI labels: infinitive. Instructions and calls to action: tú imperative.',\n'',\n'KEY NAMES ARE CONTEXT: read each key name. ::title = lesson/test title; ::steps:::0 opens the lesson and repeats the title in <h2>; ::questions::N::question = a question (use ¿…?); ::questions::N::answers::M = one answer option of question N (short, parallel to its siblings); ::resultMessage = feedback shown after the test; ::excerpt = short summary.',\n'',\n'CONSISTENCY WITHIN THE KEY NAMESPACE (critical):',\n'All keys in one request belong to the same namespace (one course, lesson, challenge or test: members-content::<type>::<id>). Translate them as ONE coherent text:',\n'- A title key and the heading that repeats it (e.g. ::title and the <h2> of steps:::0) must be translated identically.',\n'- The same English term or phrase gets the same Spanish translation everywhere in the namespace (and per the phrasebook below across namespaces).',\n'- Keep verb tense and mood consistent: explanations in present tense; instructions in tú imperative; \"Benefit\"/effect lines (\"Improves…\", \"Reduces…\") in 3rd-person present (Mejora…, Reduce…); learning objectives after \"Al final de esta clase, podrás:\" in infinitive (Entender, Aprender, Desarrollar, Descubrir, Identificar…).',\n'- Lists must be grammatically parallel: every item of the same list (<li1>, <li2>, numbered steps, bolded labels) uses the same structure (all infinitives, all imperatives, all noun phrases, etc.).',\n'- Test/challenge answers to the same question must share the same grammatical form and length style, and must not give away the correct answer through wording, gender agreement or length. Answer options are not full sentences unless the English is.',\n'- Question prompts are proper questions with ¿…?.',\n'- Translate meaning, not word by word; keep technical/scientific terms accurate (RAE/Fundéu).',\n'- TRANSLATION MEMORY: when a key carries \"tm\" (an approved Spanish translation of the identical English), reuse it verbatim unless it breaks the glossary or style guide.',\n'',\n'MARKUP (critical): keep every HTML tag exactly as in the source, in the same order and count (<h2>, <h3>, <b>, <span>, <ul>, <li1>, <li2>, <li>, etc.). Translate only text between tags. Keep the line breaks, tabs and spacing between tags. You may move words between adjacent text spans of the same sentence only if Spanish word order requires it, but never drop, add or reorder tags. Keep numbers, product names and app names (Evernote, Notion, Apple Watch…) unchanged.',\n'',\n'PHRASEBOOK (use exactly):'\n].join(NL) + NL + PHRASEBOOK.map(function(p){return '- '+p[0]+' → '+p[1];}).join(NL);\n\n// glossary (shared Lokalise glossary): shared / untagged / BrainIQ terms, es present\nconst OKTAGS = { 'shared':1, 'brainiqtest':1, 'brainiq':1, 'to_review':1 };\nconst gl = [];\nfor (const it of $('Fetch Glossary').all()) {\n  for (const t of (((it.json || {}).body || {}).data || [])) {\n    const tags = (t.tags || []).map(function(x){return String(x).toLowerCase();});\n    if (tags.length && !tags.some(function(x){return OKTAGS[x];})) { continue; }\n    const tr = (t.translations || []).filter(function(x){return x.langIso==='es' || x.langId===1056;})[0] || {};\n    const es = tr.translation;\n    if (!t.term || (!es && t.translatable)) { continue; }\n    if (GLOSS_SKIP[t.term.toLowerCase()]) { continue; }\n    gl.push({ term: t.term, es: t.translatable ? es : t.term, forbidden: !!t.forbidden, desc: tr.description || t.description || '' });\n  }\n}\nfunction esc(s){return s.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&');}\nfunction segs(en){ return en.split(/(<[^>]+>)/).filter(function(p,i){ return i % 2 === 0 && p.trim(); }).map(function(p){ return p.trim(); }); }\n\nconst groups = {}; const order = []; const tagOnly = []; const TM = {};\nlet seen = 0, scoped = 0, emptyEs = 0;\nconst all = [];\nfor (const it of $('Fetch Keys').all()) { for (const k of (((it.json || {}).body || {}).keys || [])) { all.push(k); } }\nfor (const k of all) {\n  if (k.is_archived) { continue; }\n  let en = '', es = '';\n  for (const tr of (k.translations || [])) { let v = tr.translation; if (typeof v !== 'string') { v = JSON.stringify(v); } if (tr.language_iso === 'en') { en = v; } if (tr.language_iso === 'es') { es = v; } }\n  if (en.trim() && es.trim() && !k.is_plural) { const n = en.trim(); if (!TM[n]) { TM[n] = es; } }\n}\nfor (const k of all) {\n  seen++;\n  if (k.is_archived) { continue; }\n  const kn = (typeof k.key_name === 'object') ? (k.key_name.web || k.key_name.other || '') : k.key_name;\n  if (kn.indexOf('members-content::') !== 0) { continue; }\n  scoped++;\n  let en = '', es = '';\n  for (const tr of (k.translations || [])) {\n    let v = tr.translation; if (typeof v !== 'string') { v = JSON.stringify(v); }\n    if (tr.language_iso === 'en') { en = v; } if (tr.language_iso === 'es') { es = v; }\n  }\n  const hasTag = (k.tags || []).indexOf(TAG) >= 0;\n  if (es || !en.trim() || k.is_plural) { if (!hasTag && k.created_at_timestamp >= CUT) { tagOnly.push(k.key_id); } continue; }\n  emptyEs++;\n  const ns = kn.split('::').slice(0, 3).join('::');\n  if (!groups[ns]) { groups[ns] = []; order.push(ns); }\n  const seg = SEGMENT_LESSONS && ns.indexOf('members-content::lessons::') === 0 && /<[^>]+>/.test(en);\n  groups[ns].push({ id: k.key_id, k: kn, en: en, d: String(k.description || '').slice(0, 300), tm: TM[en.trim()] || '', seg: seg });\n}\norder.sort();\nlet pick = order;\nif (TEST) {\n  const l = order.filter(function(n){return n.indexOf('members-content::lessons::')===0;});\n  const t = order.filter(function(n){return n.indexOf('members-content::tests::')===0;});\n  pick = [].concat(l.slice(0,1), t.slice(0,1));\n}\nconst out = [];\nfor (let gi = 0; gi < pick.length && gi < MAX_GROUPS; gi++) {\n  const ns = pick[gi];\n  const ks = groups[ns].sort(function(a,b){return a.k.localeCompare(b.k, 'en', {numeric:true});});\n  const plain = ks.map(function(x){return x.en.replace(/<[^>]+>/g,' ');}).join(NL).toLowerCase();\n  const hits = gl.filter(function(g){ try { return new RegExp('\\\\b'+esc(g.term.toLowerCase())+'\\\\b').test(plain); } catch(e) { return false; } }).slice(0, 60);\n  const glText = hits.length ? hits.map(function(g){return '- '+g.term+(g.forbidden?' (FORBIDDEN – do not use)':' → '+g.es)+(g.desc?' ['+g.desc+']':'');}).join(NL) : '(none)';\n  const payload = ks.map(function(x){ const o = { key_id: String(x.id), key: x.k, en: x.en }; if (x.seg) { o.segments = segs(x.en); } if (x.d) { o.description = x.d; } if (x.tm) { o.tm = x.tm; } return o; });\n  const user = 'Namespace: ' + ns + NL + NL + 'Glossary terms found in this namespace (Lokalise glossary; it overrides the style guide. Apply when the English word is used in the same sense; these entries come from app UI so ignore an entry only if its sense clearly differs):' + NL + glText +\n    NL + NL + 'Keys (sorted, translate all ' + ks.length + '; answer with a JSON object {\"<key_id>\": \"<Spanish>\"}, or {\"<key_id>\": [\"<piece>\", …]} for keys with segments):' + NL + JSON.stringify(payload);\n  out.push({ json: { ns: ns, n: ks.length, keys: ks.map(function(x){return {id: x.id, en: x.en, seg: x.seg};}), system: SYSTEM, user: user, tag_only: (gi === 0 ? tagOnly : []) } });\n}\nconst meta = { test: TEST, keys_seen: seen, members_keys: scoped, to_translate: emptyEs, groups_total: order.length, groups_this_run: out.length, tag_only: tagOnly.length, glossary_terms_used: gl.length, tm_entries: Object.keys(TM).length };\nfor (const o of out) { o.json.meta = meta; }\nreturn out;\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "97c69313-9c68-4d78-be95-3083a92d0bd2",
+      "name": "Run Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        -120
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function allRuns(name) {\n  const out = [];\n  for (let i = 0; i < 1000; i++) {\n    let items;\n    try { items = $(name).all(0, i); } catch (e) { break; }\n    if (!items || items.length === 0) { break; }\n    for (const it of items) { out.push(it.json); }\n  }\n  return out;\n}\nconst v = allRuns('Validate & Build Payload');\nconst w = allRuns('Write to Lokalise');\nconst meta = ($('Build Batches').first() || {json:{}}).json.meta || {};\nconst rows = v.map(function(x, i){ const r = w[i] || {}; const errs = (r.body && r.body.errors) ? r.body.errors : []; return { ns: x.ns, keys: x.n, written: x.written, failed: x.failed, write_status: r.statusCode, write_errors: errs.length ? JSON.stringify(errs).slice(0, 300) : null, write_error: (r.statusCode && r.statusCode !== 200) ? JSON.stringify(r.body).slice(0, 300) : null }; });\nreturn [{ json: { meta: meta, namespaces_done: rows.length, written_total: rows.reduce(function(a,r){return a + (r.write_status===200 ? r.written : 0);},0), failed_total: rows.reduce(function(a,r){return a + r.failed.length;},0), problems: rows.filter(function(r){return r.failed.length || r.write_status !== 200 || r.write_errors;}), groups: rows.map(function(r){return r.ns + ' ' + r.written + '/' + r.keys;}) } }];\n"
+      }
+    },
+    {
+      "id": "e4086fa7-094d-431a-ab61-5c6b1fa0372c",
+      "name": "Validate & Build Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        120
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// ---- Validate & Build Payload (runOnceForEachItem) ----\nconst TAG = 'members area';\nconst b = $('Loop Over Namespaces').item.json;\nconst r = $json || {};\nlet raw = ''; let apiErr = null;\nif (r.choices && r.choices[0] && r.choices[0].message) { raw = String(r.choices[0].message.content || ''); }\nelse if (r.error) { apiErr = 'OpenAI error: ' + JSON.stringify(r.error).slice(0, 200); }\nconst s = raw.indexOf('{'), e = raw.lastIndexOf('}');\nlet map = {}; let parseError = apiErr;\nif (!apiErr) { try { map = JSON.parse(raw.slice(s, e + 1)); } catch (err) { parseError = String(err).slice(0, 200); } }\nif (map && map.t && typeof map.t === 'object') { map = map.t; }\n\nconst TAGRE = /(<[^>]+>)/;\nfunction rebuild(en, es) {\n  const ep = en.split(TAGRE), sp = es.split(TAGRE);\n  const etags = ep.filter(function(_,i){return i%2===1;}), stags = sp.filter(function(_,i){return i%2===1;});\n  if (etags.length !== stags.length) { return { ok: false, why: 'tag count ' + etags.length + ' vs ' + stags.length }; }\n  for (let i = 0; i < etags.length; i++) { if (etags[i].toLowerCase() !== stags[i].toLowerCase()) { return { ok: false, why: 'tag mismatch ' + etags[i] + ' vs ' + stags[i] }; } }\n  const res = [];\n  for (let i = 0; i < ep.length; i++) {\n    if (i % 2 === 1) { res.push(ep[i]); continue; }\n    if (!ep[i].trim()) { res.push(ep[i]); continue; }\n    if (!sp[i].trim()) { return { ok: false, why: 'empty text segment' }; }\n    res.push(sp[i]);\n  }\n  return { ok: true, text: res.join('') };\n}\nfunction rebuildSeg(en, pieces) {\n  const ep = en.split(TAGRE); const res = []; let j = 0;\n  for (let i = 0; i < ep.length; i++) {\n    const p = ep[i];\n    if (i % 2 === 1 || !p.trim()) { res.push(p); continue; }\n    const t = pieces[j++];\n    if (typeof t !== 'string' || !t.trim()) { return { ok: false, why: 'empty segment ' + j }; }\n    const lead = p.match(/^\\s*/)[0], trail = p.match(/\\s*$/)[0];\n    res.push(lead + t.trim() + trail);\n  }\n  if (j !== pieces.length) { return { ok: false, why: 'segment count ' + j + ' vs ' + pieces.length }; }\n  return { ok: true, text: res.join('') };\n}\nconst PH = /%\\d*\\$?[sd]|\\{\\{[^}]+\\}\\}|\\{[^{}]+\\}|\\[%[^\\]]*\\]/g;\nconst keysOut = []; const failed = []; let written = 0;\nfor (const k of b.keys) {\n  const es = map[String(k.id)];\n  let rb = null;\n  if (Array.isArray(es)) { rb = rebuildSeg(k.en, es); }\n  else if (typeof es === 'string' && es.trim()) { rb = rebuild(k.en, es); }\n  else { failed.push({ id: k.id, why: parseError || 'missing in response' }); continue; }\n  if (!rb.ok) { failed.push({ id: k.id, why: rb.why }); continue; }\n  const p1 = (k.en.match(PH) || []).sort().join('|'), p2 = (rb.text.match(PH) || []).sort().join('|');\n  if (p1 !== p2) { failed.push({ id: k.id, why: 'placeholder mismatch' }); continue; }\n  keysOut.push({ key_id: k.id, tags: [TAG], merge_tags: true, translations: [{ language_iso: 'es', translation: rb.text, is_unverified: true }] });\n  written++;\n}\nfor (const id of (b.tag_only || [])) { keysOut.push({ key_id: id, tags: [TAG], merge_tags: true }); }\nif (keysOut.length === 0) { keysOut.push({ key_id: b.keys.length ? b.keys[0].id : 0, tags: [TAG], merge_tags: true }); }\nreturn { json: { ns: b.ns, n: b.n, written: written, failed: failed, tag_only: (b.tag_only || []).length, body: { keys: keysOut }, raw_len: raw.length, raw_head: raw.slice(0, 300), usage: r.usage || null } };\n"
+      }
+    },
+    {
+      "id": "d42580fb-4374-45dc-8c32-43f5aa3bc873",
+      "name": "Write to Lokalise",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1540,
+        120
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "https://api.lokalise.com/api2/projects/185916266aa3d6649ca6f7.57851232/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "33388c8d-d770-4aac-a81c-7724d2b5559f",
+      "name": "Loop Over Namespaces",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "65c3b77c-ca76-4b7a-9b6a-9b3e809c141b",
+      "name": "Translate (OpenAI)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        120
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4.1', temperature: 0.2, max_tokens: 32768, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: $json.system }, { role: 'user', content: $json.user } ] }) }}",
+        "method": "POST",
+        "nodeCredentialType": "openAiApi",
+        "options": {
+          "timeout": 300000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "https://api.openai.com/v1/chat/completions"
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "yra2iG8pnmCKhZIc",
+          "name": "Futuremedia - n8n project"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Keys": {
+      "main": [
+        [
+          {
+            "node": "Fetch Glossary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Glossary": {
+      "main": [
+        [
+          {
+            "node": "Build Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Batches": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Namespaces",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Build Payload": {
+      "main": [
+        [
+          {
+            "node": "Write to Lokalise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write to Lokalise": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Namespaces",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Namespaces": {
+      "main": [
+        [
+          {
+            "node": "Run Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Translate (OpenAI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Translate (OpenAI)": {
+      "main": [
+        [
+          {
+            "node": "Validate & Build Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "sJqFDQKfqUGtJ4dt",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-16T11:02:24.127Z",
+      "updatedAt": "2026-10-16T11:02:24.127Z"
+    }
+  ],
+  "activeVersion": null
+}
