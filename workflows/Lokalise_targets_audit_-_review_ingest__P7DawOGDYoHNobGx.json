@@ -1,0 +1,1568 @@
+{
+  "id": "P7DawOGDYoHNobGx",
+  "name": "Lokalise targets audit - review ingest",
+  "description": "Hourly: when Maria reacts ✅ on an audit summary, reads the review sheet and stores decisions as precedent. On new sheets every Rejected row needs a reason; if any is missing nothing is stored and a reminder is posted once.",
+  "active": true,
+  "activeVersionId": "847be2ee-a55f-49ba-908c-9730fd1e2a5c",
+  "createdAt": "2026-09-25T15:00:14.421Z",
+  "updatedAt": "2026-10-13T10:31:34.230Z",
+  "isArchived": false,
+  "versionId": "847be2ee-a55f-49ba-908c-9730fd1e2a5c",
+  "versionCounter": 8,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "c292362b-5af1-4e7f-b267-8989c2d75edc",
+      "name": "Hourly on weekdays",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 5 8-20 * * 1-5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "be90856b-1899-447c-8c12-668f10191053",
+      "name": "Read rotation log",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "WLdY3s15GBJjEsSq"
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "ff536ce3-dda6-4e5d-a384-76d177f36c5e",
+      "name": "Pending reviews",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// One audit run can log several rotation rows (one per Lokalise project of the product) that share one review sheet: keep one per sheet.\n// ingested = 'needs_reason' means the last check found Rejected rows without a reason: re-checked every hour until fixed.\nconst rows = $input.all().map(function (i) { return i.json || {}; }).filter(function (r) { return r.sheet_id && r.slack_ts && String(r.ingested || '') !== 'yes'; });\nconst seen = {};\nconst out = [];\nfor (const r of rows) {\n  if (seen[r.sheet_id]) { continue; }\n  seen[r.sheet_id] = true;\n  out.push({ json: { row_id: r.id, project_id: r.project_id, project_name: r.project_name, jira_key: r.jira_key, sheet_id: r.sheet_id, slack_ts: String(r.slack_ts), prev: String(r.ingested || '') } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "0b7c1158-7b4c-47b0-a3fa-cc542ea76bb8",
+      "name": "Get summary reactions",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        660,
+        100
+      ],
+      "parameters": {
+        "resource": "reaction",
+        "operation": "get",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C094NS33FN0"
+        },
+        "timestamp": "={{ $json.slack_ts }}"
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "webhookId": "226dca47-a13a-4dba-a149-e031d45b6468"
+    },
+    {
+      "id": "1c91fb2c-bf75-4186-8d8c-3a66fa75a75b",
+      "name": "Pick reviewed sheet",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const REVIEWER = 'U09A8KRRAPM';\nconst OK = ['white_check_mark', 'heavy_check_mark', 'ballot_box_with_check'];\nconst pend = $('Pending reviews').all();\nconst re = $input.all();\nfor (let i = 0; i < pend.length; i++) {\n  const m = (re[i] && re[i].json && re[i].json.message) || {};\n  const rs = m.reactions || [];\n  const done = rs.some(function (r) { return OK.indexOf(r.name) !== -1 && (r.users || []).indexOf(REVIEWER) !== -1; });\n  if (done) { return [{ json: pend[i].json }]; }\n}\nreturn [];"
+      }
+    },
+    {
+      "id": "c0a7113c-d4e3-407c-9d5c-494fc9f88a63",
+      "name": "Mark ingested",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "WLdY3s15GBJjEsSq"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "condition": "eq",
+              "keyName": "sheet_id",
+              "keyValue": "={{ $json.sheet_id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ingested": "yes"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "ingested",
+              "displayName": "ingested",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "1f2caaf9-adbd-4844-a6c7-20f6993fef06",
+      "name": "Read original IDs",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1540,
+        100
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "read",
+        "authentication": "oAuth2",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Pick reviewed sheet').first().json.sheet_id }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "_ids"
+        }
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Gt1NY0PXKDxBUQGy",
+          "name": "Google Sheets account"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "c020407b-68fc-4a4b-b03a-8f2dcf8b0dd8",
+      "name": "Build decisions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const p = $('Pick reviewed sheet').first().json;\n// Read every review tab (one per language since 2026-10-07; older sheets have a single 'Findings' tab).\n// Since 2026-10-07 the visible tabs have no ID column: rows are matched to _ids by Project | Language | Key | Rule / term | Issue.\n// Older sheets that still show an ID column are matched by ID first.\nfunction ck(o) { return ['Project', 'Language', 'Key', 'Rule / term', 'Issue'].map(function (h) { return String(o[h] === undefined || o[h] === null ? '' : o[h]).trim(); }).join('|'); }\nconst curById = {};\nconst curByKey = {};\nconst vr = ($('Read review tabs').first().json.valueRanges) || [];\nconst rowsCur = [];\nfor (const r of vr) {\n  const vals = r.values || [];\n  if (!vals.length) { continue; }\n  const head = vals[0].map(function (h) { return String(h); });\n  for (let i = 1; i < vals.length; i++) {\n    const o = {};\n    for (let k = 0; k < head.length; k++) { o[head[k]] = vals[i][k] === undefined ? '' : vals[i][k]; }\n    rowsCur.push(o);\n    if (o.ID) { curById[String(o.ID)] = o; }\n    else if (o.Key || o.Check) { const kk = ck(o); (curByKey[kk] = curByKey[kk] || []).push(o); }\n  }\n}\nif (!vr.length) { throw new Error('Review sheet ' + p.sheet_id + ': no readable tabs - refusing to treat every finding as rejected'); }\nfunction has(col) { return rowsCur.some(function (r) { return Object.prototype.hasOwnProperty.call(r, col); }); }\n// Sheet formats, newest first:\n//  'Decision' dropdown (2026-10-05): Approved / Rejected; blank = not reviewed (skipped); deleted row = rejected.\n//  'Approve? (x)' (2026-10-02): x = approved, unmarked or deleted = rejected.\n//  'Reject? (x)' (older): x or deleted = rejected, everything else = approved.\n// Sheets with the 'Reason (required if Rejected)' column (2026-10-13): a reason is mandatory for every Rejected row.\n// If any is missing, nothing is stored and a reminder is posted; the sheet is re-checked every hour until fixed.\nconst mode = has('Decision') ? 'decision' : (has('Approve? (x)') ? 'approve' : 'reject');\nconst strict = has('Reason (required if Rejected)');\nconst out = [];\nconst missing = [];\nconst today = $now.setZone('Europe/Madrid').toFormat('yyyy-MM-dd');\nfor (const it of $('Read original IDs').all()) {\n  const o = it.json || {};\n  if (!o.ID) { continue; }\n  let c = curById[String(o.ID)] || null;\n  if (!c) { const l = curByKey[ck(o)]; c = l && l.length ? l.shift() : null; }\n  let rejected;\n  if (!c) { rejected = true; }\n  else if (mode === 'decision') {\n    const v = String(c['Decision'] || '').trim().toLowerCase();\n    if (v === 'approved') { rejected = false; } else if (v === 'rejected') { rejected = true; } else { continue; }\n  }\n  else if (mode === 'approve') { rejected = String(c['Approve? (x)'] || '').trim() === ''; }\n  else { rejected = String(c['Reject? (x)'] || '').trim() !== ''; }\n  const reason = c ? String(c['Reason (required if Rejected)'] || c['Reason (optional)'] || '').trim() : 'row deleted in review';\n  if (strict && rejected && c && !reason) { missing.push('• ' + String(o.Language || c.Language || o.ISO || '') + ' — ' + String(o.Key || c.Key || '') + ' (' + String(o['Rule / term'] || c['Rule / term'] || '') + ')'); continue; }\n  out.push({ json: { iso: String(o.ISO || ''), project: String(o.Project || (c && c.Project) || p.project_name), decision: rejected ? 'rejected' : 'approved', rule: String(o['Rule / term'] || ''), en: String(o.English || '').slice(0, 400), translation: String(o.Translation || '').slice(0, 400), issue: String(o.Issue || '').slice(0, 300), reason: rejected ? (reason || (mode === 'approve' ? 'not approved in review' : 'rejected in review')) : '', reviewed_at: today } });\n}\nif (missing.length) { return [{ json: { needs_reason: true, count: missing.length, missing: missing.slice(0, 15), more: Math.max(0, missing.length - 15) } }]; }\nreturn out;"
+      }
+    },
+    {
+      "id": "8d28a8e3-3002-440f-a064-4e5c74a1cbe6",
+      "name": "Store decisions",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2200,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "zIhywBksdBpwbHp1"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "iso",
+              "displayName": "iso",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "project",
+              "displayName": "project",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "decision",
+              "displayName": "decision",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rule",
+              "displayName": "rule",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "en",
+              "displayName": "en",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "translation",
+              "displayName": "translation",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "issue",
+              "displayName": "issue",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reason",
+              "displayName": "reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reviewed_at",
+              "displayName": "reviewed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "50623263-7014-4bab-80b7-dde195606325",
+      "name": "Confirm in thread",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        2420,
+        0
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C094NS33FN0"
+        },
+        "text": "=Review ingested: {{ $('Build decisions').all().filter(i => i.json.decision === 'approved').length }} approved · {{ $('Build decisions').all().filter(i => i.json.decision === 'rejected').length }} rejected",
+        "otherOptions": {
+          "includeLinkToWorkflow": false,
+          "thread_ts": {
+            "replyValues": {
+              "thread_ts": "={{ $('Pick reviewed sheet').first().json.slack_ts }}"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "executeOnce": true,
+      "webhookId": "471f70e4-4ae4-4979-8f49-b38f3557a001"
+    },
+    {
+      "id": "c6e4c032-b4dc-4268-93b2-b13bba805714",
+      "name": "Run manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "e98717ec-fac8-4eea-92a1-333897617f34",
+      "name": "Sticky Note 800bfb86",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -300
+      ],
+      "parameters": {
+        "content": "## Targets audit - review ingest\n\nHourly on weekdays. For each audit run whose review sheet is not ingested yet, checks the #i18n-team summary for a :white_check_mark: from Maria. When found, reads EVERY tab of the sheet except _ids (one tab per language since 2026-10-07; older sheets have one Findings tab). **Decision** dropdown: Approved / Rejected; blank = not reviewed and skipped; deleted rows = rejected. Older sheets: Approve? (x) = approved, unmarked = rejected; Reject? (x) = rejected. Decisions go to targets_audit_feedback and are used as precedent by the nightly audit. One sheet per run.",
+        "color": 4,
+        "width": 560,
+        "height": 220
+      }
+    },
+    {
+      "id": "cb20240f-edee-4c93-baf6-a169799ccf4a",
+      "name": "List review tabs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        100
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "method": "GET",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "options": {
+          "timeout": 30000
+        },
+        "url": "={{ 'https://sheets.googleapis.com/v4/spreadsheets/' + $('Pick reviewed sheet').first().json.sheet_id + '?fields=sheets.properties.title' }}"
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Gt1NY0PXKDxBUQGy",
+          "name": "Google Sheets account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "executeOnce": true
+    },
+    {
+      "id": "a4e61535-7dfa-417f-9c8a-c007d3d62a49",
+      "name": "Read review tabs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1430,
+        260
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "method": "GET",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "options": {
+          "timeout": 60000
+        },
+        "url": "={{ 'https://sheets.googleapis.com/v4/spreadsheets/' + $('Pick reviewed sheet').first().json.sheet_id + '/values:batchGet?' + ($json.sheets || []).map(function (s) { return s.properties.title; }).filter(function (t) { return t !== '_ids'; }).map(function (t) { return 'ranges=' + encodeURIComponent(\"'\" + t.replace(/'/g, \"''\") + \"'\"); }).join('&') }}"
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Gt1NY0PXKDxBUQGy",
+          "name": "Google Sheets account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "executeOnce": true
+    },
+    {
+      "id": "3c5dac12-f751-4dd0-aab9-315bb5d7adff",
+      "name": "Missing reasons?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1980,
+        100
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "mr1",
+              "leftValue": "={{ $json.needs_reason === true ? 'yes' : 'no' }}",
+              "operator": {
+                "operation": "equals",
+                "type": "string"
+              },
+              "rightValue": "yes"
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "832bbe59-bec3-4e2d-b864-a82e2454d28a",
+      "name": "Flag needs reason",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2200,
+        260
+      ],
+      "parameters": {
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [],
+          "schema": [
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "ingested",
+              "id": "ingested",
+              "required": false,
+              "type": "string"
+            }
+          ],
+          "value": {
+            "ingested": "needs_reason"
+          }
+        },
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "WLdY3s15GBJjEsSq"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "condition": "eq",
+              "keyName": "sheet_id",
+              "keyValue": "={{ $('Pick reviewed sheet').first().json.sheet_id }}"
+            }
+          ]
+        },
+        "matchType": "allConditions",
+        "operation": "update",
+        "resource": "row"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "cebc0a68-3cb1-4d7b-9870-b6b077215762",
+      "name": "First reminder?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2420,
+        260
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "fr1",
+              "leftValue": "={{ $('Pick reviewed sheet').first().json.prev }}",
+              "operator": {
+                "operation": "notEquals",
+                "type": "string"
+              },
+              "rightValue": "needs_reason"
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "cc6f41b6-80d9-4d47-b8a4-6a42220fbb5c",
+      "name": "Ask for missing reasons",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        2640,
+        260
+      ],
+      "parameters": {
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C094NS33FN0"
+        },
+        "operation": "post",
+        "otherOptions": {
+          "includeLinkToWorkflow": false,
+          "thread_ts": {
+            "replyValues": {
+              "thread_ts": "={{ $('Pick reviewed sheet').first().json.slack_ts }}"
+            }
+          }
+        },
+        "resource": "message",
+        "select": "channel",
+        "text": "={{ ':warning: ' + $('Build decisions').first().json.count + ' row(s) are marked *Rejected* without a reason. A reason is required for every rejection: fill in the _Reason (required if Rejected)_ column (empty ones are highlighted in red). Nothing has been stored yet; the review is picked up automatically within the hour once every rejection has a reason.' + String.fromCharCode(10) + $('Build decisions').first().json.missing.join(String.fromCharCode(10)) + ($('Build decisions').first().json.more ? String.fromCharCode(10) + '… and ' + $('Build decisions').first().json.more + ' more' : '') }}"
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "webhookId": "8d38d44a-2880-4255-a250-d18e89752095"
+    }
+  ],
+  "connections": {
+    "Hourly on weekdays": {
+      "main": [
+        [
+          {
+            "node": "Read rotation log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read rotation log": {
+      "main": [
+        [
+          {
+            "node": "Pending reviews",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pending reviews": {
+      "main": [
+        [
+          {
+            "node": "Get summary reactions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get summary reactions": {
+      "main": [
+        [
+          {
+            "node": "Pick reviewed sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick reviewed sheet": {
+      "main": [
+        [
+          {
+            "node": "Mark ingested",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read original IDs": {
+      "main": [
+        [
+          {
+            "node": "Build decisions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store decisions": {
+      "main": [
+        [
+          {
+            "node": "Confirm in thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run manually": {
+      "main": [
+        [
+          {
+            "node": "Read rotation log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark ingested": {
+      "main": [
+        [
+          {
+            "node": "List review tabs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List review tabs": {
+      "main": [
+        [
+          {
+            "node": "Read review tabs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read review tabs": {
+      "main": [
+        [
+          {
+            "node": "Read original IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build decisions": {
+      "main": [
+        [
+          {
+            "node": "Missing reasons?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Missing reasons?": {
+      "main": [
+        [
+          {
+            "node": "Flag needs reason",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Store decisions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flag needs reason": {
+      "main": [
+        [
+          {
+            "node": "First reminder?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "First reminder?": {
+      "main": [
+        [
+          {
+            "node": "Ask for missing reasons",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Madrid"
+  },
+  "staticData": {
+    "node:Hourly on weekdays": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    }
+  },
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "P7DawOGDYoHNobGx",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-25T15:00:14.423Z",
+      "updatedAt": "2026-09-25T15:00:14.423Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "847be2ee-a55f-49ba-908c-9730fd1e2a5c",
+    "workflowId": "P7DawOGDYoHNobGx",
+    "nodes": [
+      {
+        "id": "c292362b-5af1-4e7f-b267-8989c2d75edc",
+        "name": "Hourly on weekdays",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "0 5 8-20 * * 1-5"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "be90856b-1899-447c-8c12-668f10191053",
+        "name": "Read rotation log",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          220,
+          100
+        ],
+        "parameters": {
+          "resource": "row",
+          "operation": "get",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "WLdY3s15GBJjEsSq"
+          },
+          "returnAll": true
+        }
+      },
+      {
+        "id": "ff536ce3-dda6-4e5d-a384-76d177f36c5e",
+        "name": "Pending reviews",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          440,
+          100
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "// One audit run can log several rotation rows (one per Lokalise project of the product) that share one review sheet: keep one per sheet.\n// ingested = 'needs_reason' means the last check found Rejected rows without a reason: re-checked every hour until fixed.\nconst rows = $input.all().map(function (i) { return i.json || {}; }).filter(function (r) { return r.sheet_id && r.slack_ts && String(r.ingested || '') !== 'yes'; });\nconst seen = {};\nconst out = [];\nfor (const r of rows) {\n  if (seen[r.sheet_id]) { continue; }\n  seen[r.sheet_id] = true;\n  out.push({ json: { row_id: r.id, project_id: r.project_id, project_name: r.project_name, jira_key: r.jira_key, sheet_id: r.sheet_id, slack_ts: String(r.slack_ts), prev: String(r.ingested || '') } });\n}\nreturn out;"
+        }
+      },
+      {
+        "id": "0b7c1158-7b4c-47b0-a3fa-cc542ea76bb8",
+        "name": "Get summary reactions",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.3,
+        "position": [
+          660,
+          100
+        ],
+        "parameters": {
+          "resource": "reaction",
+          "operation": "get",
+          "channelId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "C094NS33FN0"
+          },
+          "timestamp": "={{ $json.slack_ts }}"
+        },
+        "credentials": {
+          "slackApi": {
+            "id": "CXa5wwj5tndNAnHG",
+            "name": "i18n assignment bot"
+          }
+        },
+        "onError": "continueRegularOutput",
+        "webhookId": "226dca47-a13a-4dba-a149-e031d45b6468"
+      },
+      {
+        "id": "1c91fb2c-bf75-4186-8d8c-3a66fa75a75b",
+        "name": "Pick reviewed sheet",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          880,
+          100
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const REVIEWER = 'U09A8KRRAPM';\nconst OK = ['white_check_mark', 'heavy_check_mark', 'ballot_box_with_check'];\nconst pend = $('Pending reviews').all();\nconst re = $input.all();\nfor (let i = 0; i < pend.length; i++) {\n  const m = (re[i] && re[i].json && re[i].json.message) || {};\n  const rs = m.reactions || [];\n  const done = rs.some(function (r) { return OK.indexOf(r.name) !== -1 && (r.users || []).indexOf(REVIEWER) !== -1; });\n  if (done) { return [{ json: pend[i].json }]; }\n}\nreturn [];"
+        }
+      },
+      {
+        "id": "c0a7113c-d4e3-407c-9d5c-494fc9f88a63",
+        "name": "Mark ingested",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          1100,
+          100
+        ],
+        "parameters": {
+          "resource": "row",
+          "operation": "update",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "WLdY3s15GBJjEsSq"
+          },
+          "matchType": "allConditions",
+          "filters": {
+            "conditions": [
+              {
+                "condition": "eq",
+                "keyName": "sheet_id",
+                "keyValue": "={{ $json.sheet_id }}"
+              }
+            ]
+          },
+          "columns": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "ingested": "yes"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "ingested",
+                "displayName": "ingested",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "1f2caaf9-adbd-4844-a6c7-20f6993fef06",
+        "name": "Read original IDs",
+        "type": "n8n-nodes-base.googleSheets",
+        "typeVersion": 4.7,
+        "position": [
+          1540,
+          100
+        ],
+        "parameters": {
+          "resource": "sheet",
+          "operation": "read",
+          "authentication": "oAuth2",
+          "documentId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "={{ $('Pick reviewed sheet').first().json.sheet_id }}"
+          },
+          "sheetName": {
+            "__rl": true,
+            "mode": "name",
+            "value": "_ids"
+          }
+        },
+        "credentials": {
+          "googleSheetsOAuth2Api": {
+            "id": "Gt1NY0PXKDxBUQGy",
+            "name": "Google Sheets account"
+          }
+        },
+        "executeOnce": true
+      },
+      {
+        "id": "c020407b-68fc-4a4b-b03a-8f2dcf8b0dd8",
+        "name": "Build decisions",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1760,
+          100
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const p = $('Pick reviewed sheet').first().json;\n// Read every review tab (one per language since 2026-10-07; older sheets have a single 'Findings' tab).\n// Since 2026-10-07 the visible tabs have no ID column: rows are matched to _ids by Project | Language | Key | Rule / term | Issue.\n// Older sheets that still show an ID column are matched by ID first.\nfunction ck(o) { return ['Project', 'Language', 'Key', 'Rule / term', 'Issue'].map(function (h) { return String(o[h] === undefined || o[h] === null ? '' : o[h]).trim(); }).join('|'); }\nconst curById = {};\nconst curByKey = {};\nconst vr = ($('Read review tabs').first().json.valueRanges) || [];\nconst rowsCur = [];\nfor (const r of vr) {\n  const vals = r.values || [];\n  if (!vals.length) { continue; }\n  const head = vals[0].map(function (h) { return String(h); });\n  for (let i = 1; i < vals.length; i++) {\n    const o = {};\n    for (let k = 0; k < head.length; k++) { o[head[k]] = vals[i][k] === undefined ? '' : vals[i][k]; }\n    rowsCur.push(o);\n    if (o.ID) { curById[String(o.ID)] = o; }\n    else if (o.Key || o.Check) { const kk = ck(o); (curByKey[kk] = curByKey[kk] || []).push(o); }\n  }\n}\nif (!vr.length) { throw new Error('Review sheet ' + p.sheet_id + ': no readable tabs - refusing to treat every finding as rejected'); }\nfunction has(col) { return rowsCur.some(function (r) { return Object.prototype.hasOwnProperty.call(r, col); }); }\n// Sheet formats, newest first:\n//  'Decision' dropdown (2026-10-05): Approved / Rejected; blank = not reviewed (skipped); deleted row = rejected.\n//  'Approve? (x)' (2026-10-02): x = approved, unmarked or deleted = rejected.\n//  'Reject? (x)' (older): x or deleted = rejected, everything else = approved.\n// Sheets with the 'Reason (required if Rejected)' column (2026-10-13): a reason is mandatory for every Rejected row.\n// If any is missing, nothing is stored and a reminder is posted; the sheet is re-checked every hour until fixed.\nconst mode = has('Decision') ? 'decision' : (has('Approve? (x)') ? 'approve' : 'reject');\nconst strict = has('Reason (required if Rejected)');\nconst out = [];\nconst missing = [];\nconst today = $now.setZone('Europe/Madrid').toFormat('yyyy-MM-dd');\nfor (const it of $('Read original IDs').all()) {\n  const o = it.json || {};\n  if (!o.ID) { continue; }\n  let c = curById[String(o.ID)] || null;\n  if (!c) { const l = curByKey[ck(o)]; c = l && l.length ? l.shift() : null; }\n  let rejected;\n  if (!c) { rejected = true; }\n  else if (mode === 'decision') {\n    const v = String(c['Decision'] || '').trim().toLowerCase();\n    if (v === 'approved') { rejected = false; } else if (v === 'rejected') { rejected = true; } else { continue; }\n  }\n  else if (mode === 'approve') { rejected = String(c['Approve? (x)'] || '').trim() === ''; }\n  else { rejected = String(c['Reject? (x)'] || '').trim() !== ''; }\n  const reason = c ? String(c['Reason (required if Rejected)'] || c['Reason (optional)'] || '').trim() : 'row deleted in review';\n  if (strict && rejected && c && !reason) { missing.push('• ' + String(o.Language || c.Language || o.ISO || '') + ' — ' + String(o.Key || c.Key || '') + ' (' + String(o['Rule / term'] || c['Rule / term'] || '') + ')'); continue; }\n  out.push({ json: { iso: String(o.ISO || ''), project: String(o.Project || (c && c.Project) || p.project_name), decision: rejected ? 'rejected' : 'approved', rule: String(o['Rule / term'] || ''), en: String(o.English || '').slice(0, 400), translation: String(o.Translation || '').slice(0, 400), issue: String(o.Issue || '').slice(0, 300), reason: rejected ? (reason || (mode === 'approve' ? 'not approved in review' : 'rejected in review')) : '', reviewed_at: today } });\n}\nif (missing.length) { return [{ json: { needs_reason: true, count: missing.length, missing: missing.slice(0, 15), more: Math.max(0, missing.length - 15) } }]; }\nreturn out;"
+        }
+      },
+      {
+        "id": "8d28a8e3-3002-440f-a064-4e5c74a1cbe6",
+        "name": "Store decisions",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          2200,
+          0
+        ],
+        "parameters": {
+          "resource": "row",
+          "operation": "insert",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "zIhywBksdBpwbHp1"
+          },
+          "columns": {
+            "mappingMode": "autoMapInputData",
+            "value": {},
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "iso",
+                "displayName": "iso",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "project",
+                "displayName": "project",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "decision",
+                "displayName": "decision",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "rule",
+                "displayName": "rule",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "en",
+                "displayName": "en",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "translation",
+                "displayName": "translation",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "issue",
+                "displayName": "issue",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "reason",
+                "displayName": "reason",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "reviewed_at",
+                "displayName": "reviewed_at",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "50623263-7014-4bab-80b7-dde195606325",
+        "name": "Confirm in thread",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.3,
+        "position": [
+          2420,
+          0
+        ],
+        "parameters": {
+          "resource": "message",
+          "operation": "post",
+          "select": "channel",
+          "channelId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "C094NS33FN0"
+          },
+          "text": "=Review ingested: {{ $('Build decisions').all().filter(i => i.json.decision === 'approved').length }} approved · {{ $('Build decisions').all().filter(i => i.json.decision === 'rejected').length }} rejected",
+          "otherOptions": {
+            "includeLinkToWorkflow": false,
+            "thread_ts": {
+              "replyValues": {
+                "thread_ts": "={{ $('Pick reviewed sheet').first().json.slack_ts }}"
+              }
+            }
+          }
+        },
+        "credentials": {
+          "slackApi": {
+            "id": "CXa5wwj5tndNAnHG",
+            "name": "i18n assignment bot"
+          }
+        },
+        "executeOnce": true,
+        "webhookId": "471f70e4-4ae4-4979-8f49-b38f3557a001"
+      },
+      {
+        "id": "c6e4c032-b4dc-4268-93b2-b13bba805714",
+        "name": "Run manually",
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1,
+        "position": [
+          0,
+          200
+        ],
+        "parameters": {}
+      },
+      {
+        "id": "e98717ec-fac8-4eea-92a1-333897617f34",
+        "name": "Sticky Note 800bfb86",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          0,
+          -300
+        ],
+        "parameters": {
+          "content": "## Targets audit - review ingest\n\nHourly on weekdays. For each audit run whose review sheet is not ingested yet, checks the #i18n-team summary for a :white_check_mark: from Maria. When found, reads EVERY tab of the sheet except _ids (one tab per language since 2026-10-07; older sheets have one Findings tab). **Decision** dropdown: Approved / Rejected; blank = not reviewed and skipped; deleted rows = rejected. Older sheets: Approve? (x) = approved, unmarked = rejected; Reject? (x) = rejected. Decisions go to targets_audit_feedback and are used as precedent by the nightly audit. One sheet per run.",
+          "color": 4,
+          "width": 560,
+          "height": 220
+        }
+      },
+      {
+        "id": "cb20240f-edee-4c93-baf6-a169799ccf4a",
+        "name": "List review tabs",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1320,
+          100
+        ],
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "method": "GET",
+          "nodeCredentialType": "googleSheetsOAuth2Api",
+          "options": {
+            "timeout": 30000
+          },
+          "url": "={{ 'https://sheets.googleapis.com/v4/spreadsheets/' + $('Pick reviewed sheet').first().json.sheet_id + '?fields=sheets.properties.title' }}"
+        },
+        "credentials": {
+          "googleSheetsOAuth2Api": {
+            "id": "Gt1NY0PXKDxBUQGy",
+            "name": "Google Sheets account"
+          }
+        },
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 5000,
+        "executeOnce": true
+      },
+      {
+        "id": "a4e61535-7dfa-417f-9c8a-c007d3d62a49",
+        "name": "Read review tabs",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1430,
+          260
+        ],
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "method": "GET",
+          "nodeCredentialType": "googleSheetsOAuth2Api",
+          "options": {
+            "timeout": 60000
+          },
+          "url": "={{ 'https://sheets.googleapis.com/v4/spreadsheets/' + $('Pick reviewed sheet').first().json.sheet_id + '/values:batchGet?' + ($json.sheets || []).map(function (s) { return s.properties.title; }).filter(function (t) { return t !== '_ids'; }).map(function (t) { return 'ranges=' + encodeURIComponent(\"'\" + t.replace(/'/g, \"''\") + \"'\"); }).join('&') }}"
+        },
+        "credentials": {
+          "googleSheetsOAuth2Api": {
+            "id": "Gt1NY0PXKDxBUQGy",
+            "name": "Google Sheets account"
+          }
+        },
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 5000,
+        "executeOnce": true
+      },
+      {
+        "id": "3c5dac12-f751-4dd0-aab9-315bb5d7adff",
+        "name": "Missing reasons?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1980,
+          100
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "mr1",
+                "leftValue": "={{ $json.needs_reason === true ? 'yes' : 'no' }}",
+                "operator": {
+                  "operation": "equals",
+                  "type": "string"
+                },
+                "rightValue": "yes"
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 2
+            }
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "832bbe59-bec3-4e2d-b864-a82e2454d28a",
+        "name": "Flag needs reason",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          2200,
+          260
+        ],
+        "parameters": {
+          "columns": {
+            "mappingMode": "defineBelow",
+            "matchingColumns": [],
+            "schema": [
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "ingested",
+                "id": "ingested",
+                "required": false,
+                "type": "string"
+              }
+            ],
+            "value": {
+              "ingested": "needs_reason"
+            }
+          },
+          "dataTableId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "WLdY3s15GBJjEsSq"
+          },
+          "filters": {
+            "conditions": [
+              {
+                "condition": "eq",
+                "keyName": "sheet_id",
+                "keyValue": "={{ $('Pick reviewed sheet').first().json.sheet_id }}"
+              }
+            ]
+          },
+          "matchType": "allConditions",
+          "operation": "update",
+          "resource": "row"
+        },
+        "executeOnce": true
+      },
+      {
+        "id": "cebc0a68-3cb1-4d7b-9870-b6b077215762",
+        "name": "First reminder?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          2420,
+          260
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "fr1",
+                "leftValue": "={{ $('Pick reviewed sheet').first().json.prev }}",
+                "operator": {
+                  "operation": "notEquals",
+                  "type": "string"
+                },
+                "rightValue": "needs_reason"
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 2
+            }
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "cc6f41b6-80d9-4d47-b8a4-6a42220fbb5c",
+        "name": "Ask for missing reasons",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.3,
+        "position": [
+          2640,
+          260
+        ],
+        "parameters": {
+          "channelId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "C094NS33FN0"
+          },
+          "operation": "post",
+          "otherOptions": {
+            "includeLinkToWorkflow": false,
+            "thread_ts": {
+              "replyValues": {
+                "thread_ts": "={{ $('Pick reviewed sheet').first().json.slack_ts }}"
+              }
+            }
+          },
+          "resource": "message",
+          "select": "channel",
+          "text": "={{ ':warning: ' + $('Build decisions').first().json.count + ' row(s) are marked *Rejected* without a reason. A reason is required for every rejection: fill in the _Reason (required if Rejected)_ column (empty ones are highlighted in red). Nothing has been stored yet; the review is picked up automatically within the hour once every rejection has a reason.' + String.fromCharCode(10) + $('Build decisions').first().json.missing.join(String.fromCharCode(10)) + ($('Build decisions').first().json.more ? String.fromCharCode(10) + '… and ' + $('Build decisions').first().json.more + ' more' : '') }}"
+        },
+        "credentials": {
+          "slackApi": {
+            "id": "CXa5wwj5tndNAnHG",
+            "name": "i18n assignment bot"
+          }
+        },
+        "webhookId": "8d38d44a-2880-4255-a250-d18e89752095"
+      }
+    ],
+    "connections": {
+      "Hourly on weekdays": {
+        "main": [
+          [
+            {
+              "node": "Read rotation log",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read rotation log": {
+        "main": [
+          [
+            {
+              "node": "Pending reviews",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Pending reviews": {
+        "main": [
+          [
+            {
+              "node": "Get summary reactions",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get summary reactions": {
+        "main": [
+          [
+            {
+              "node": "Pick reviewed sheet",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Pick reviewed sheet": {
+        "main": [
+          [
+            {
+              "node": "Mark ingested",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read original IDs": {
+        "main": [
+          [
+            {
+              "node": "Build decisions",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Store decisions": {
+        "main": [
+          [
+            {
+              "node": "Confirm in thread",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Run manually": {
+        "main": [
+          [
+            {
+              "node": "Read rotation log",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Mark ingested": {
+        "main": [
+          [
+            {
+              "node": "List review tabs",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "List review tabs": {
+        "main": [
+          [
+            {
+              "node": "Read review tabs",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read review tabs": {
+        "main": [
+          [
+            {
+              "node": "Read original IDs",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build decisions": {
+        "main": [
+          [
+            {
+              "node": "Missing reasons?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Missing reasons?": {
+        "main": [
+          [
+            {
+              "node": "Flag needs reason",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Store decisions",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Flag needs reason": {
+        "main": [
+          [
+            {
+              "node": "First reminder?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "First reminder?": {
+        "main": [
+          [
+            {
+              "node": "Ask for missing reasons",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Maria Sica (via MCP)",
+    "name": "Reason mandatory for Rejected rows",
+    "description": "Sheets with the 'Reason (required if Rejected)' column: if any Rejected row has no reason, nothing is stored, the run is flagged needs_reason, and a one-time reminder listing the rows is posted in the summary thread. Re-checked hourly until every rejection has a reason. Older sheets keep their previous behaviour.",
+    "autosaved": false,
+    "createdAt": "2026-10-13T10:31:34.234Z",
+    "updatedAt": "2026-10-13T10:31:34.234Z",
+    "workflowPublishHistory": [
+      {
+        "id": 2582,
+        "workflowId": "P7DawOGDYoHNobGx",
+        "versionId": "847be2ee-a55f-49ba-908c-9730fd1e2a5c",
+        "event": "activated",
+        "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
+        "createdAt": "2026-10-13T10:31:35.883Z"
+      }
+    ]
+  }
+}
