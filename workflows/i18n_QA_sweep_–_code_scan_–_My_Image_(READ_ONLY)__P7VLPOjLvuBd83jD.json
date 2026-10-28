@@ -1,0 +1,327 @@
+{
+  "id": "P7VLPOjLvuBd83jD",
+  "name": "i18n QA sweep – code scan – My Image (READ ONLY)",
+  "description": "Read-only i18n code scan of QR-CODE-App/myimage-frontend and myimage-backend for the i18n QA sweep. Fetches the repo tree and files via GitHub and runs code_scan.js inside n8n.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-16T06:16:02.917Z",
+  "updatedAt": "2026-10-16T06:30:17.655Z",
+  "isArchived": false,
+  "versionId": "21cc3fd0-20b8-405c-ba84-b87686005523",
+  "versionCounter": 4,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "1d82e75a-1a3a-4a0d-b3f6-762abb26d763",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "b3c3149f-2119-495d-a48b-5a760db1ff74",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        192
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\"repo\": \"myimage-frontend\", \"subdir\": \"\", \"dnt\": [\"MyImage\", \"My Image\", \"myimage.io\", \"Stripe\", \"PayPal\", \"Google Pay\", \"Apple Pay\", \"Visa\", \"Mastercard\", \"American Express\", \"Google\", \"Facebook\", \"App Store\", \"Omnixo Apps EOOD\"]}"
+      }
+    },
+    {
+      "id": "b82d3f35-2100-4186-8539-46d57b816c61",
+      "name": "Get Repo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/QR-CODE-App/{{ $json.repo }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi"
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      }
+    },
+    {
+      "id": "a940f974-5d6d-4f6b-912e-9e8cb806ee80",
+      "name": "Get Tree",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/QR-CODE-App/{{ $('Config').item.json.repo }}/git/trees/{{ $json.default_branch }}?recursive=1",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi"
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      }
+    },
+    {
+      "id": "5b193e5e-4387-4892-a2a6-3b083ee0a5eb",
+      "name": "Filter Tree",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const res = $input.first().json;\nconst tree = res.tree || [];\nconst branch = $('Get Repo').first().json.default_branch;\nconst cfg = $('Config').first().json;\nconst repo = cfg.repo;\nconst sub = (cfg.subdir || '').replace(/\\/$/, '');\nconst EXT = /\\.(js|jsx|ts|tsx|vue|svelte|html|hbs|mjml|njk|ejs|json|svg)$/i;\nconst SKIP = /(^|\\/)(node_modules|dist|build|\\.next|coverage|__tests__|__mocks__|mocks?|fixtures|storybook|\\.storybook|e2e|cypress|playwright)(\\/|$)|\\.(test|spec|stories)\\.[jt]sx?$|\\.d\\.ts$|(package-lock|yarn\\.lock|pnpm-lock)|(^|\\/)package\\.json$|(^|\\/)tsconfig[^/]*$/i;\n// Per-locale legal documents (src/locales/<doc>/<locale>.html) are translated content, not code\nconst LEGAL_LOCALE_HTML = /(^|\\/)locales\\/[^/]+\\/[a-z]{2,3}(_[A-Za-z]+)?\\.html$/;\nconst isEn = p => /(^|\\/)(en|en-US|en_US)(\\.json|\\/[^/]+\\.json)$/.test(p);\nlet files = tree.filter(t => t.type === 'blob' && EXT.test(t.path) && !SKIP.test(t.path) && !LEGAL_LOCALE_HTML.test(t.path) && (t.size || 0) < 600000 && (!sub || t.path.startsWith(sub + '/')));\nfiles = files.filter(t => !/\\.json$/i.test(t.path) || isEn(t.path));\nconst total = files.length;\nconst capped = total > 1500;\nfiles = files.slice(0, 1500);\nif (!files.length) return [{ json: { skip: true, tree_truncated: !!res.truncated } }];\nreturn files.map((f, i) => ({ json: { repo, branch, path: f.path, meta: i === 0 ? { total, capped, tree_truncated: !!res.truncated } : undefined } }));\n"
+      }
+    },
+    {
+      "id": "75550127-4526-4f2e-a3cb-8e2e41885820",
+      "name": "Scan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "/*\n * Static i18n scan of a repo. Read-only.\n *\n * Runs in two places with the same logic:\n *   1. n8n Code node (\"Run Once for All Items\"): paste the whole file; each input item is\n *      { json: { repo, path, content } }. The last lines return findings as items.\n *   2. Locally: node code_scan.js <dir> [repoName] > code_findings.json   (for an uploaded zip)\n *\n * Checks\n *   Hardcoded string   JSX/Vue/Svelte text nodes and user-facing attributes not wrapped in t()\n *   Hardcoded message  toast / alert / setError / validation messages with literal English\n *   Concatenation      t() joined with + or template literals (word order breaks)\n *   Hardcoded plural   count === 1 ? ... / \"(s)\" / pluralize()\n *   Locale formatting  toLocale*() with no locale or 'en-US', Intl.* with 'en', '$' + amount, US date masks\n *   Image with text    image referenced with no locale in its path (candidate — runtime OCR confirms)\n *   SVG with text      .svg asset containing <text> elements\n *   Missing key        t('key') used in code but absent from the en source file(s)\n *   Third-party        SDK / widget initialised with locale 'en' (Stripe, Nutrient, reCAPTCHA...)\n *   Language routing   absolute links in email templates with no locale\n */\nconst EXCLUDE = /(^|\\/)(node_modules|dist|build|\\.next|coverage|__tests__|__mocks__|mocks?|fixtures|storybook|e2e|cypress|playwright|scripts|migrations)(\\/|$)|\\.(test|spec|stories)\\.[jt]sx?$|\\.d\\.ts$/i;\nconst CODE = /\\.(jsx?|tsx?|vue|svelte|html|hbs|mjml|njk|ejs)$/i;\nconst EN_FILE = /(^|\\/)(en|en-US|en_US)(\\.json|\\/[^/]+\\.json)$/;\n\nconst stripComments = s => s\n  .replace(/\\/\\*[\\s\\S]*?\\*\\//g, m => m.replace(/[^\\n]/g, ' '))\n  .replace(/(^|[^:\\\\'\"`])\\/\\/[^\\n]*/g, (m, p) => p + ' '.repeat(m.length - p.length))\n  .replace(/<!--[\\s\\S]*?-->/g, m => m.replace(/[^\\n]/g, ' '))\n  .replace(/\\{\\/\\*[\\s\\S]*?\\*\\/\\}/g, m => m.replace(/[^\\n]/g, ' '));\n\nconst lineOf = (s, i) => s.slice(0, i).split('\\n').length;\nconst words = t => (t.match(/[A-Za-z]{2,}/g) || []);\nconst looksCopy = t => {\n  t = t.trim();\n  if (!t || /^[\\W\\d_]+$/.test(t)) return false;\n  if (/^(https?:|mailto:|tel:|\\/|#|\\.|[a-z]+[A-Z]\\w*$|[A-Z0-9_]+$|[a-z0-9-]+$)/.test(t)) return false; // urls, paths, identifiers, CONSTS, kebab\n  if (/[{}();=<>]|=>|&&|\\|\\|/.test(t)) return false;           // code, not copy\n  const w = words(t);\n  return w.length >= 2 || (w.length === 1 && w[0].length >= 4 && /^[A-Z][a-z]+$/.test(w[0]));\n};\n\nfunction flatten(obj, pre = '', out = new Set()) {\n  if (obj && typeof obj === 'object' && !Array.isArray(obj)) {\n    for (const [k, v] of Object.entries(obj)) {\n      const key = pre ? pre + '.' + k : k;\n      if (v && typeof v === 'object' && !Array.isArray(v) && !('one' in v || 'other' in v)) flatten(v, key, out);\n      else out.add(key);\n    }\n  }\n  return out;\n}\n\nfunction scan(files, dnt = []) {\n  const findings = [];\n  const add = (f, i, check, severity, found, fix, s) =>\n    findings.push({ check, severity, repo: f.repo, file: f.path, line: s ? lineOf(s, i) : null, found: String(found).trim().slice(0, 220), fix });\n  const dntRe = dnt.length ? new RegExp(dnt.map(t => t.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')).join('|'), 'gi') : null;\n  const notDnt = t => !dntRe || looksCopy(t.replace(dntRe, ' '));\n\n  // English source keys\n  const enKeys = new Set();\n  for (const f of files) if (EN_FILE.test(f.path)) {\n    try {\n      const ns = (f.path.match(/(?:^|\\/)en\\/([^/]+)\\.json$/) || [])[1];\n      for (const k of flatten(JSON.parse(f.content))) { enKeys.add(k); if (ns) enKeys.add(ns + '.' + k); }\n    } catch (e) { findings.push({ check: 'Scan note', severity: 'Low', repo: f.repo, file: f.path, line: null, found: 'Could not parse English source file', fix: '' }); }\n  }\n\n  for (const f of files) {\n    if (EXCLUDE.test(f.path)) continue;\n    if (/\\.svg$/i.test(f.path)) {\n      const m = f.content.match(/<text[^>]*>([\\s\\S]*?)<\\/text>/gi);\n      if (m) {\n        const txt = m.map(x => x.replace(/<[^>]+>/g, '')).join(' ').replace(/\\s+/g, ' ');\n        if (words(txt).length >= 2) add(f, 0, 'Unlocalized images', 'High', `SVG contains live text: \"${txt.slice(0, 120)}\"`, 'Move the text out of the SVG into a translatable string, or provide per-locale SVGs');\n      }\n      continue;\n    }\n    if (!CODE.test(f.path)) continue;\n    const s = stripComments(f.content);\n    const isMarkup = /\\.(jsx|tsx|vue|svelte|html|hbs|mjml|njk|ejs)$/i.test(f.path) || /return\\s*\\(\\s*</.test(s);\n    let m;\n\n    if (isMarkup) {\n      // text between tags\n      const reText = />\\s*([^<>{}`]*?[A-Za-z][^<>{}`]*?)\\s*</g;\n      while ((m = reText.exec(s))) {\n        const t = m[1].replace(/&nbsp;|&amp;|&[a-z]+;/g, ' ').trim();\n        const before = s.slice(Math.max(0, m.index - 40), m.index);\n        if (/(\\bstyle|\\bscript|=\\s*$)/i.test(before)) continue;\n        if (looksCopy(t) && notDnt(t)) add(f, m.index, 'Hardcoded string', 'High', t, 'Extract to a key and render with t()', s);\n      }\n      // text inside {'…'} or {\"…\"} in JSX\n      const reBraced = /\\{\\s*(['\"])([^'\"\\n]{3,})\\1\\s*\\}/g;\n      while ((m = reBraced.exec(s))) if (looksCopy(m[2]) && notDnt(m[2])) add(f, m.index, 'Hardcoded string', 'High', m[2], 'Extract to a key and render with t()', s);\n      // user-facing attributes\n      const reAttr = /\\b(placeholder|title|alt|aria-label|label|tooltip|helperText|errorMessage|emptyText|description|heading|buttonText|cta)\\s*=\\s*(['\"])([^'\"\\n]*[A-Za-z]{2,}[^'\"\\n]*)\\2/g;\n      while ((m = reAttr.exec(s))) if (looksCopy(m[3]) && notDnt(m[3]))\n        add(f, m.index, 'Hardcoded string', m[1] === 'alt' || m[1] === 'aria-label' ? 'Medium' : 'High', `${m[1]}=\"${m[3]}\"`, 'Pass t() into the attribute', s);\n    }\n    // messages built in logic\n    const reMsg = /\\b(toast(?:\\.\\w+)?|alert|confirm|notify(?:\\w*)|setError|setMessage|showError|enqueueSnackbar|message\\s*:|error\\s*:|title\\s*:|label\\s*:|placeholder\\s*:|description\\s*:|yup\\.\\w+\\(\\)\\.\\w+\\(|\\.(?:required|min|max|email|matches)\\([^)]*?,?)\\s*\\(?\\s*(['\"`])([^'\"`\\n]*[A-Za-z]{3,}\\s[^'\"`\\n]*)\\2/g;\n    while ((m = reMsg.exec(s))) if (looksCopy(m[3]) && notDnt(m[3]))\n      add(f, m.index, 'Hardcoded string', 'High', `${m[1].trim()} \"${m[3]}\"`, 'User-visible message: move to a key', s);\n    const reThrow = /throw new Error\\(\\s*(['\"`])([^'\"`\\n]*[A-Za-z]{3,}\\s[^'\"`\\n]*)\\1/g;\n    while ((m = reThrow.exec(s))) add(f, m.index, 'Hardcoded string', 'Low', `throw new Error(\"${m[2]}\")`, 'Only a finding if this message reaches the UI', s);\n\n    // concatenation around t()\n    const reCat = /(\\bt\\([^()]*\\)\\s*\\+\\s*(?!\\s*\\d)|\\+\\s*\\bt\\([^()]*\\)|`[^`]*\\$\\{\\s*t\\([^`]*\\}[^`]*[A-Za-z]{2,}[^`]*`|`[^`]*[A-Za-z]{2,}[^`]*\\$\\{\\s*t\\()/g;\n    while ((m = reCat.exec(s))) add(f, m.index, 'Concatenation', 'High', m[0].slice(0, 160), 'Use one key with a placeholder so translators control word order', s);\n    // plurals\n    const rePl = /(===?\\s*1\\s*\\?\\s*['\"`t]|>\\s*1\\s*\\?\\s*['\"`t]|\\(s\\)['\"`]|\\bpluralize\\(|\\+\\s*['\"]s['\"])/g;\n    while ((m = rePl.exec(s))) add(f, m.index, 'Hardcoded plural', 'High', s.split('\\n')[lineOf(s, m.index) - 1].trim(), 'Use an ICU/i18next plural key (one/few/many/other)', s);\n    // locale formatting\n    const reFmt = /(\\.toLocale(?:Date|Time)?String\\(\\s*\\)|\\.toLocale(?:Date|Time)?String\\(\\s*['\"]en(?:-US)?['\"]|Intl\\.(?:NumberFormat|DateTimeFormat|RelativeTimeFormat|PluralRules)\\(\\s*['\"]en(?:-US)?['\"]|['\"`]\\$['\"`]\\s*\\+|\\$\\{[^}]*\\}\\s*(?:USD|EUR)\\b|['\"`](?:MM\\/DD\\/YYYY|MM\\/dd\\/yyyy|MMM D, YYYY|MMM d, yyyy)['\"`]|\\bmoment\\([^)]*\\)\\.format\\(\\s*['\"][^'\"]*['\"]\\s*\\))/g;\n    while ((m = reFmt.exec(s))) add(f, m.index, 'Locale formatting', 'Medium', m[0], 'Format with the active locale (Intl.* with the current locale)', s);\n    // images referenced without a locale segment\n    const reImg = /(['\"`(])([^'\"`()\\s]*\\.(?:png|jpe?g|webp|gif|avif))(['\"`)])/gi;\n    while ((m = reImg.exec(s))) {\n      const pth = m[2];\n      if (/(\\$\\{|\\{locale|\\{lang|\\/(en|de|fr|es|it|pt|nl|pl)\\/|[_-](en|de|fr)\\.|icon|logo|flag|avatar|favicon)/i.test(pth)) continue;\n      if (/(banner|hero|promo|cta|step|how-?it|mock|screen|badge|feature|onboarding|tutorial|illustration)/i.test(pth))\n        add(f, m.index, 'Unlocalized images', 'Medium', pth, 'Candidate: check the image for baked-in text (runtime OCR confirms)', s);\n    }\n    // third-party SDKs initialised in English\n    const reTp = /\\b(locale|lang|language|hl)\\s*[:=]\\s*['\"]en(?:-US|_US|-GB)?['\"]/g;\n    while ((m = reTp.exec(s))) {\n      const ctx = s.slice(Math.max(0, m.index - 200), m.index + 60);\n      if (/defaultLocale|fallbackLng|fallbackLocale|sourceLocale|baseLocale|defaultLanguage/.test(ctx.slice(-120, -40 + 120))) continue;\n      add(f, m.index, 'Third-party widgets', /stripe|elements|paypal|nutrient|pspdfkit|intercom|recaptcha|calendly|google/i.test(ctx) ? 'High' : 'Medium',\n          ctx.split('\\n').find(l => l.includes(m[0])).trim().slice(0, 160), 'Pass the active locale instead of a fixed English one', s);\n    }\n    if (isMarkup) {\n      // numbers, symbols and units glued to expressions: 50%, /month, 4.6 — should be keys or Intl\n      const reSym = /(\\}\\s*(%|\\/\\s*(mo|month|year|yr|week)\\b|(h|m|min|sec|MB|GB|KB)\\b)|>\\s*\\d+(\\.\\d+)?\\s*(%|MB|GB|★)\\s*<|>\\s*(\\/\\s*(month|year|mo)|per (month|year))\\s*<)/g;\n      while ((m = reSym.exec(s))) add(f, m.index, 'Locale formatting', 'Medium', s.split('\\n')[lineOf(s, m.index) - 1].trim().slice(0, 160),\n          'Units, percentages and \"/month\" belong in the key or in Intl.NumberFormat — they move and change by locale', s);\n      // links in email templates without a locale\n      if (/\\.(hbs|mjml|njk|ejs|html)$/i.test(f.path) || /(^|\\/)(emails?|mail|templates?)\\//i.test(f.path)) {\n        const reHref = /href\\s*=\\s*[\"'](https?:\\/\\/[^\"'{}$]+)[\"']/g;\n        while ((m = reHref.exec(s))) if (!/(unsubscribe|facebook|instagram|twitter|linkedin|apple\\.com|google\\.com|x\\.com)/i.test(m[1]))\n          add(f, m.index, 'Language routing', 'Medium', m[1], 'Email link has no locale: localized users land on the English page', s);\n      }\n    }\n    // hardcoded English lists (months, weekdays, countries)\n    const reList = /\\[\\s*(['\"])(January|Jan|Monday|Mon|Afghanistan|Albania|Argentina|Australia|Austria)\\1\\s*,\\s*(['\"])[A-Z][a-z]+\\3/g;\n    while ((m = reList.exec(s))) add(f, m.index, 'Locale formatting', 'High', s.slice(m.index, m.index + 80).replace(/\\s+/g, ' '),\n        'Hardcoded English month/day/country list: use Intl.DateTimeFormat / Intl.DisplayNames', s);\n\n    // keys used in code\n    if (enKeys.size) {\n      const nsM = s.match(/use(?:Translations?|Translation)\\(\\s*['\"]([\\w.-]+)['\"]/);\n      const ns = nsM ? nsM[1] : '';\n      const reKey = /\\bt\\(\\s*['\"]([\\w.-]+(?:[.:][\\w.-]+)+|[\\w-]{3,})['\"]/g;\n      while ((m = reKey.exec(s))) {\n        const k = m[1].replace(':', '.');\n        if (enKeys.has(k) || (ns && enKeys.has(ns + '.' + k))) continue;\n        if ([...enKeys].some(e => e.endsWith('.' + k))) continue;\n        add(f, m.index, 'Missing key', 'High', ns ? `${ns} → ${k}` : k, 'Key is used in code but not in the English source: it will render raw or fall back', s);\n      }\n    }\n  }\n  const counts = {};\n  for (const x of findings) counts[x.check] = (counts[x.check] || 0) + 1;\n  return { en_keys: enKeys.size, files_scanned: files.filter(f => !EXCLUDE.test(f.path) && (CODE.test(f.path) || /\\.svg$/i.test(f.path))).length, counts, findings };\n}\n\n// ---- entry points ----\nif (typeof $input !== 'undefined') {\n  // n8n Code node\n  const items = $input.all().map(i => i.json).filter(j => j && j.path && typeof j.content === 'string');\n  const dnt = (items[0] && items[0].dnt) || [];\n  const r = scan(items, dnt);\n  return [{ json: { en_keys: r.en_keys, files_scanned: r.files_scanned, counts: r.counts, findings: r.findings.slice(0, 3000), truncated: r.findings.length > 3000 } }];\n} else if (typeof require !== 'undefined' && require.main === module) {\n  const fs = require('fs'), path = require('path');\n  const root = process.argv[2], repo = process.argv[3] || path.basename(root);\n  const dnt = (process.argv[4] || '').split(',').filter(Boolean);\n  const files = [];\n  (function walk(d) {\n    for (const e of fs.readdirSync(d, { withFileTypes: true })) {\n      const p = path.join(d, e.name), rel = path.relative(root, p).split(path.sep).join('/');\n      if (e.isDirectory()) { if (!/^(node_modules|\\.git|dist|build|\\.next)$/.test(e.name)) walk(p); }\n      else if (/\\.(jsx?|tsx?|vue|svelte|html|hbs|mjml|njk|ejs|json|svg)$/i.test(e.name) && fs.statSync(p).size < 600000)\n        files.push({ repo, path: rel, content: fs.readFileSync(p, 'utf8') });\n    }\n  })(root);\n  process.stdout.write(JSON.stringify(scan(files, dnt), null, 1));\n}\nif (typeof module !== 'undefined') module.exports = { scan };\n"
+      }
+    },
+    {
+      "id": "3c83df88-6bae-47a8-8868-449e5587f249",
+      "name": "Get File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/QR-CODE-App/{{ $json.repo }}/contents/{{ encodeURI($json.path) }}?ref={{ $json.branch }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.raw"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "data"
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 10,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      }
+    },
+    {
+      "id": "289b5032-7192-48b2-81b1-f32426f357a4",
+      "name": "Emit File",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        272
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const src = $('Loop Files').itemMatching($itemIndex).json;\nconst c = $json.data;\nif (src.skip) return { json: { skip: true } };\nreturn { json: { repo: src.repo, path: src.path, content: typeof c === 'string' ? c : (c == null ? null : JSON.stringify(c)), dnt: $('Config').first().json.dnt } };"
+      }
+    },
+    {
+      "id": "e6f4bf0a-d326-4505-abc0-4713bafa64fe",
+      "name": "Loop Files",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1120,
+        192
+      ],
+      "parameters": {
+        "batchSize": 10
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Get Repo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Repo": {
+      "main": [
+        [
+          {
+            "node": "Get Tree",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Tree": {
+      "main": [
+        [
+          {
+            "node": "Filter Tree",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Tree": {
+      "main": [
+        [
+          {
+            "node": "Loop Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get File": {
+      "main": [
+        [
+          {
+            "node": "Emit File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emit File": {
+      "main": [
+        [
+          {
+            "node": "Loop Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Files": {
+      "main": [
+        [
+          {
+            "node": "Scan",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "P7VLPOjLvuBd83jD",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-16T06:16:02.919Z",
+      "updatedAt": "2026-10-16T06:16:02.919Z"
+    }
+  ],
+  "activeVersion": null
+}
