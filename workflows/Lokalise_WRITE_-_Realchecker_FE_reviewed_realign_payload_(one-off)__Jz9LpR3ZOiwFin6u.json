@@ -1,0 +1,347 @@
+{
+  "id": "Jz9LpR3ZOiwFin6u",
+  "name": "Lokalise WRITE - Realchecker FE reviewed realign payload (one-off)",
+  "description": "RETIRED. Writes a reviewed realign payload to Realchecker FE. Last run 22 Oct 2026: tag 2210, 104 translations written + read back. WRITE node disabled, guard throws.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-16T12:13:48.080Z",
+  "updatedAt": "2026-10-22T13:14:19.478Z",
+  "isArchived": false,
+  "versionId": "7741ae49-8add-4203-b70f-a63317b1e31d",
+  "versionCounter": 10,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "fdcc9a5d-035d-4d3b-900f-0a59668287d9",
+      "name": "Receive Payload",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "authentication": "none",
+        "httpMethod": "POST",
+        "options": {
+          "onlyRunIf": "={{ $json.headers[\"x-write-secret\"] === \"4fb529ab8c916f22eae4dcacd6b6e124\" }}"
+        },
+        "path": "rc-2110-write-7c41e9a2b5d3",
+        "responseData": "firstEntryJson",
+        "responseMode": "lastNode"
+      },
+      "webhookId": "46b5a059-1e72-41b0-82f9-c00c53c0fe2c"
+    },
+    {
+      "id": "984fc59b-4dc5-48db-8384-2bdd35fe4365",
+      "name": "Guard Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Retired 22 Oct 2026 after Realchecker FE tag 2210: 104 reviewed translations written (5 VIN lookup keys x 22 langs minus 6 unchanged; ko hero::check_3 linguist override approved by Maria), all read back (exec 887460 test, 887471 all). Re-arm deliberately for a new run.\nthrow new Error('write path retired');\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "e1ae2320-4d2a-4824-9cc5-0cadee9f97a6",
+      "name": "Live fetch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "GET",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 120000
+        },
+        "url": "=https://api.lokalise.com/api2/projects/964775386a3ce03ecca883.03770715/keys?include_translations=1&disable_references=1&limit=500&filter_key_ids={{ $json.ids }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "e0252cc9-0ac4-4a53-84ec-e201ceedd636",
+      "name": "Build writes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Guards: key live + not archived; live EN hash == reviewed EN hash; live target hash == reviewed previous-target hash; last editor not a linguist unless the item carries ov (approved override). Writes unverified + AI_TO_REVIEW (29175).\nconst g = $('Guard Payload').first().json;\nconst LINGUISTS = 'qrcodelocalization@gmail.com,sabrathan@gmail.com,farahputri@gmail.com,dmluciahorea@gmail.com,roxanamoldovan25@gmail.com,mteres@terestraducciones.com,arandatrad@gmail.com,sara.guinot.trad@gmail.com,daniel@dgmultilingualservices.com,root-translations@outlook.com,austra.muizniece@gmail.com,harald.roald@gmail.com,47natcha@gmail.com,ellen.de.venter@outlook.com,ilaria.roncaglia@gmail.com,silke.luehrmann@gmx.de,boh.vozniuk@gmail.com,vidiasc@gmail.com,ivanaturcin@ymail.com,julius.valkiunas@gmail.com,jaromirvicari@me.com,karahansisman@gmail.com,katri.varvikko@gmail.com,kenneth@phraseit.dk,translation@cornell.hu,ruckova.lucia@gmail.com,marit.teichmann@gmail.com,michal.tosza@translators.org.pl,mteixeira@sacradomus.com,bruno@bsttranslations.com,nerissaneptuno@gmail.com,straus.translations@gmail.com,quentinnguyen.localize@gmail.com,therese.svardsten@gmail.com,mjlocalize@gmail.com,silis.martins@gmail.com'.split(',');\nfunction fnv(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16).padStart(8, '0'); }\nconst b = $input.first().json.body || {};\nif (!Array.isArray(b.keys)) { throw new Error('Live fetch failed: ' + JSON.stringify(b).slice(0, 200)); }\nconst live = {};\nfor (const k of b.keys) { const m = {}, by = {}; for (const t of (k.translations || [])) { m[t.language_iso] = typeof t.translation === 'string' ? t.translation : JSON.stringify(t.translation); by[t.language_iso] = String(t.modified_by_email || '').toLowerCase(); } live[k.key_id] = { m: m, by: by, arch: k.is_archived, plural: k.is_plural }; }\nconst byKey = {}; const skipped = []; let already = 0; let n = 0;\nfor (const it of g.items) {\n  const L = live[it.id];\n  if (!L || L.arch || L.plural) { skipped.push({ id: it.id, iso: it.iso, why: 'missing, archived or plural' }); continue; }\n  if (fnv(String(L.m.en || '')) !== it.eh) { skipped.push({ id: it.id, iso: it.iso, why: 'EN changed since review' }); continue; }\n  const cur = String(L.m[it.iso] || '');\n  if (cur === it.t) { already++; continue; }\n  if (fnv(cur) !== it.ph) { skipped.push({ id: it.id, iso: it.iso, why: 'target changed since review' }); continue; }\n  if (LINGUISTS.indexOf(L.by[it.iso]) !== -1 && !it.ov) { skipped.push({ id: it.id, iso: it.iso, why: 'last edited by linguist ' + L.by[it.iso] }); continue; }\n  if (g.mode === 'test' && n >= 1) { continue; }\n  (byKey[it.id] = byKey[it.id] || []).push({ language_iso: it.iso, translation: it.t, is_unverified: true, is_reviewed: false, custom_translation_status_ids: [29175] });\n  n++;\n}\nconst keys = Object.keys(byKey).map(function (id) { return { key_id: Number(id), translations: byKey[id] }; });\nconst sent = []; for (const k of keys) { for (const t of k.translations) { sent.push({ id: k.key_id, iso: t.language_iso, t: t.translation }); } }\nreturn [{ json: { mode: g.mode, write: g.mode !== 'check' && keys.length > 0, to_write: n, already: already, skipped: skipped, ids: g.ids, sent: sent, body: JSON.stringify({ keys: keys }) } }];\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "adc21bf7-c041-48da-a8e8-bfc73b476015",
+      "name": "Write?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.write }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": true
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ba96cd4a-f9c5-4f7e-81f0-effd215737f5",
+      "name": "WRITE translations",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        -100
+      ],
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "contentType": "json",
+        "genericAuthType": "httpHeaderAuth",
+        "jsonBody": "={{ $json.body }}",
+        "method": "PUT",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 120000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "https://api.lokalise.com/api2/projects/964775386a3ce03ecca883.03770715/keys"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "id": "b828331e-752f-4c91-af11-a6d2cbdf8be1",
+      "name": "Readback fetch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        -100
+      ],
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "GET",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 120000
+        },
+        "url": "=https://api.lokalise.com/api2/projects/964775386a3ce03ecca883.03770715/keys?include_translations=1&disable_references=1&limit=500&filter_key_ids={{ $('Build writes').first().json.ids }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "4703354f-0174-4b44-be3f-b3c3c3cb9cad",
+      "name": "Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "const bw = $('Build writes').first().json; const wr = $('WRITE translations').first().json;\nconst b = $input.first().json.body || {};\nconst live = {};\nfor (const k of (b.keys || [])) { for (const t of (k.translations || [])) { live[k.key_id + '|' + t.language_iso] = { t: t.translation, u: t.is_unverified }; } }\nconst mismatch = [];\nfor (const s of bw.sent) { const L = live[s.id + '|' + s.iso]; if (!L || L.t !== s.t) { mismatch.push({ id: s.id, iso: s.iso, live: L ? String(L.t).slice(0, 80) : null }); } }\nreturn [{ json: { mode: bw.mode, write_status: wr.statusCode, write_errors: (wr.body && wr.body.errors) || null, sent: bw.sent.length, readback_ok: bw.sent.length - mismatch.length, mismatch: mismatch, already: bw.already, skipped: bw.skipped } }];\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "5914d3c6-0bef-422c-9e60-81064d99129a",
+      "name": "Report (no write)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        100
+      ],
+      "parameters": {
+        "jsCode": "const bw = $input.first().json;\nreturn [{ json: { mode: bw.mode, wrote: 0, would_write: bw.to_write, already: bw.already, skipped: bw.skipped } }];\n",
+        "mode": "runOnceForAllItems"
+      }
+    }
+  ],
+  "connections": {
+    "Receive Payload": {
+      "main": [
+        [
+          {
+            "node": "Guard Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard Payload": {
+      "main": [
+        [
+          {
+            "node": "Live fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Live fetch": {
+      "main": [
+        [
+          {
+            "node": "Build writes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build writes": {
+      "main": [
+        [
+          {
+            "node": "Write?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write?": {
+      "main": [
+        [
+          {
+            "node": "WRITE translations",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report (no write)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WRITE translations": {
+      "main": [
+        [
+          {
+            "node": "Readback fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Readback fetch": {
+      "main": [
+        [
+          {
+            "node": "Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "Jz9LpR3ZOiwFin6u",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-16T12:13:48.081Z",
+      "updatedAt": "2026-10-16T12:13:48.081Z"
+    }
+  ],
+  "activeVersion": null
+}
