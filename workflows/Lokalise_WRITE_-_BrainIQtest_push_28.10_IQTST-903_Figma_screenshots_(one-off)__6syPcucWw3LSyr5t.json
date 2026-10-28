@@ -1,0 +1,228 @@
+{
+  "id": "6syPcucWw3LSyr5t",
+  "name": "Lokalise WRITE - BrainIQtest push 28.10 IQTST-903 Figma screenshots (one-off)",
+  "description": "DONE 28.10.26: 2 Figma frames (IQTST-903 Full report final, Processing results) uploaded to BrainIQtest, linked to 110 + 7 keys (screenshots 7191826, 7191827). Webhook unpublished.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-28T10:05:27.807Z",
+  "updatedAt": "2026-10-28T10:05:54.914Z",
+  "isArchived": false,
+  "versionId": "a692d08e-e0a9-4f40-a8b4-0620a1d29681",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "f1ab1192-c077-4ee8-a230-2ebbaf2839ba",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "l10n-brainiq-iqtst903-2810-shots",
+        "responseMode": "lastNode",
+        "responseData": "allEntries",
+        "options": {}
+      },
+      "webhookId": "13f55d4a-e35c-480f-a411-b2363f1eaa5a"
+    },
+    {
+      "id": "fbd8d87c-d109-40d5-8973-55b5e95c44d9",
+      "name": "Params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b = $input.first().json.body || {};\nconst h = $input.first().json.headers || {};\nif (h['x-l10n-secret'] !== '0b188a84e0d6edf3a44f9e664f33a530') throw new Error('bad secret');\nconst S = b.screens || [];\nconst ids = [...new Set(S.flatMap(s => s.key_ids))];\nreturn [{ json: { write: b.write === true, S, ids: ids.join(',') } }];"
+      }
+    },
+    {
+      "id": "423e911a-a0c9-4947-9def-f5b4e574413f",
+      "name": "Get Current",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/185916266aa3d6649ca6f7.57851232/keys?include_screenshots=1&limit=500&filter_key_ids={{ $json.ids }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "72a24ecf-dae6-4d0a-bc1f-d55427233820",
+      "name": "Build",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const cfg = $('Params').first().json;\nconst keys = $('Get Current').first().json.keys || [];\nconst has = {}; for (const k of keys) has[k.key_id] = (k.screenshots || []).length;\nconst out = []; const report = [];\nfor (const s of cfg.S) {\n  const ids = s.key_ids.filter(id => !has[id]);\n  report.push({ title: s.title, wanted: s.key_ids.length, link: ids.length, alreadyHadScreenshot: s.key_ids.length - ids.length });\n  if (cfg.write && ids.length) out.push({ json: { body: { screenshots: [{ data: s.data, title: s.title, description: s.description, key_ids: ids }] }, report } });\n}\nif (!out.length) return [{ json: { report, write: false } }];\nreturn out;"
+      }
+    },
+    {
+      "id": "80f60b14-c86b-410f-9158-47ef7e5fd030",
+      "name": "WRITE Screenshots",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.lokalise.com/api2/projects/185916266aa3d6649ca6f7.57851232/screenshots",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1500
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "105100bf-fc4e-4537-b2c5-7982cf84a092",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const r = $input.all().map(i => (i.json.screenshots || []).map(s => ({ id: s.screenshot_id, title: s.title, keys: (s.key_ids || []).length, url: s.url })));\nreturn [{ json: { report: $('Build').first().json.report, created: r.flat(), errors: $input.all().filter(i => i.json.errors).map(i => i.json.errors) } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Params": {
+      "main": [
+        [
+          {
+            "node": "Get Current",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Current": {
+      "main": [
+        [
+          {
+            "node": "Build",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build": {
+      "main": [
+        [
+          {
+            "node": "WRITE Screenshots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WRITE Screenshots": {
+      "main": [
+        [
+          {
+            "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "6syPcucWw3LSyr5t",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-28T10:05:27.809Z",
+      "updatedAt": "2026-10-28T10:05:27.809Z"
+    }
+  ],
+  "activeVersion": null
+}
