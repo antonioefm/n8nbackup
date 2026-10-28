@@ -1,0 +1,513 @@
+{
+  "id": "YF1u6Rp4Bjdn7GUn",
+  "name": "CS diagnostics - Daily incident pack",
+  "description": "Daily CS diagnostics collector: reads both Slack channels, digests errored executions, looks up tickets, outputs one JSON incident pack for the Claude scheduled task. Read-only.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-22T11:06:01.588Z",
+  "updatedAt": "2026-10-22T11:07:29.216Z",
+  "isArchived": false,
+  "versionId": "daf7936a-ded7-4571-bfe5-a7b8a8356f32",
+  "versionCounter": 4,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "3c9a0117-c4bf-46bc-a048-7e2d00eed4d7",
+      "name": "Run pack",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cs-diagnostics-daily-pack",
+        "responseMode": "onReceived"
+      },
+      "webhookId": "f73a252c-1be3-402d-9d10-fe8206d13619"
+    },
+    {
+      "id": "77b93e1c-190b-4ec9-a78b-14a51b8de876",
+      "name": "Compute window",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const first = $input.first().json || {};\nconst body = first.body || {};\nconst query = first.query || {};\nconst zone = 'Europe/Zagreb';\nconst want = String(body.date || query.date || '');\nlet day;\nif (/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(want)) day = DateTime.fromISO(want, { zone: zone }).startOf('day');\nelse day = DateTime.now().setZone(zone).minus({ days: 1 }).startOf('day');\nconst end = day.plus({ days: 1 });\nconst hist = day.minus({ days: 6 });\nreturn [{ json: {\n  date: day.toISODate(),\n  zone: zone,\n  oldest: String(Math.floor(day.toSeconds())),\n  latest: String(Math.floor(end.toSeconds())),\n  history_oldest: String(Math.floor(hist.toSeconds())),\n  start_iso: day.toUTC().toISO(),\n  end_iso: end.toUTC().toISO(),\n  history_start_iso: hist.toUTC().toISO()\n} }];"
+      }
+    },
+    {
+      "id": "4161f2f2-a962-444b-86c3-c59de42418b0",
+      "name": "Plan threads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const out = [];\nconst add = (ch, items) => {\n  items.forEach(p => {\n    const m = p.json || {};\n    if (m.ts && m.reply_count && m.reply_count > 0) out.push({ json: { channel: ch, ts: m.ts } });\n  });\n};\nadd('C0ABPEER1MF', $('Slack: errors channel').all());\nadd('C0A44SWQVHD', $('Slack: incident channel').all());\nif (!out.length) out.push({ json: { channel: 'C0A44SWQVHD', ts: '0', skip: true } });\nreturn out;"
+      }
+    },
+    {
+      "id": "2280cd03-93f6-477c-96cd-bc086418a8df",
+      "name": "Build incidents",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const w = $('Compute window').first().json;\nconst oldest = Number(w.oldest);\nconst latest = Number(w.latest);\nconst SLACK = 'https://futuremedia-world.enterprise.slack.com/archives/';\nconst ERR = 'C0ABPEER1MF';\nconst INC = 'C0A44SWQVHD';\nconst gaps = [];\nconst dec = s => String(s || '').split('&amp;').join('&').split('&lt;').join('<').split('&gt;').join('>');\nconst errText = e => typeof e === 'string' ? e : (e && e.message ? e.message : JSON.stringify(e));\nconst msgsOf = (nodeName, label) => {\n  const all = [];\n  $(nodeName).all().forEach(p => {\n    const m = p.json || {};\n    if (m.error) gaps.push('Slack read failed for ' + label + ': ' + errText(m.error));\n    else if (m.ts) all.push(m);\n  });\n  return all;\n};\nconst errMsgs = msgsOf('Slack: errors channel', '#cs-n8n-automation-errors');\nconst incMsgs = msgsOf('Slack: incident channel', '#cs-ai-automation-incident');\nconst link = (ch, ts, threadTs) => SLACK + ch + '/p' + String(ts).split('.').join('') + (threadTs && threadTs !== ts ? '?thread_ts=' + threadTs + '&cid=' + ch : '');\nconst zag = ts => DateTime.fromSeconds(Number(ts)).setZone('Europe/Zagreb').toFormat('yyyy-MM-dd HH:mm:ss');\nconst threads = {};\nconst planned = $('Plan threads').all().map(i => i.json).filter(p => !p.skip);\n$('Slack: thread replies').all().forEach(p => {\n  const m = p.json || {};\n  if (m.error) { if (planned.length) gaps.push('Slack thread read failed: ' + errText(m.error)); return; }\n  if (!m.ts || !m.thread_ts || m.ts === m.thread_ts) return;\n  if (!threads[m.thread_ts]) threads[m.thread_ts] = [];\n  threads[m.thread_ts].push(m);\n});\nObject.keys(threads).forEach(k => threads[k].sort((a, b) => Number(a.ts) - Number(b.ts)));\nconst who = m => (m.user_profile && (m.user_profile.real_name || m.user_profile.display_name)) || m.username || (m.bot_profile && m.bot_profile.name) || m.user || 'unknown';\nconst textOf = m => {\n  let t = m.text || '';\n  if (!t && m.attachments && m.attachments.length) t = m.attachments.map(a => a.text || a.fallback || '').join(' ');\n  return dec(t);\n};\nconst inWin = ts => Number(ts) >= oldest && Number(ts) < latest;\nconst parseAlert = m => {\n  const t = textOf(m);\n  if (t.indexOf('CS automation general error') < 0) return null;\n  const lines = t.split(String.fromCharCode(10));\n  const get = p => { const l = lines.filter(x => x.trim().indexOf(p) === 0)[0]; return l ? l.trim().slice(p.length).trim() : ''; };\n  const exm = t.match(/workflow[/]([A-Za-z0-9]+)[/]executions[/]([0-9]+)/);\n  const wfName = get('Workflow:');\n  const node = get('Node errored:');\n  const msg = get('Error message:');\n  const bm = wfName.match(/^(.*?) prod - (.*)$/);\n  return {\n    ts: m.ts,\n    time: zag(m.ts),\n    workflow_name: wfName,\n    brand: bm ? bm[1] : '',\n    workflow_type: bm ? bm[2] : wfName,\n    workflow_id: exm ? exm[1] : '',\n    execution_id: exm ? exm[2] : '',\n    errored_node: node,\n    error_message: msg,\n    is_caller: node.indexOf(\"Call '\") === 0,\n    slack_url: link(ERR, m.ts),\n    notes: (threads[m.ts] || []).map(r => ({ by: who(r), at: zag(r.ts), text: textOf(r).slice(0, 500) }))\n  };\n};\nconst normNode = n => String(n || '').replace(/[0-9]+$/, '').trim();\nconst sig = a => a.workflow_type + ' | ' + normNode(a.errored_node) + ' | ' + a.error_message;\nconst allAlerts = errMsgs.map(parseAlert).filter(Boolean);\nconst winAlerts = allAlerts.filter(a => inWin(a.ts)).sort((x, y) => Number(x.ts) - Number(y.ts));\nconst histAlerts = allAlerts.filter(a => Number(a.ts) < oldest);\nconst hist = {};\nhistAlerts.forEach(a => {\n  const s = sig(a);\n  if (!hist[s]) hist[s] = { prior_6_days_alerts: 0, first_seen_in_last_7_days: a.time, brands: [], notes: [] };\n  const h = hist[s];\n  h.prior_6_days_alerts += 1;\n  if (a.time < h.first_seen_in_last_7_days) h.first_seen_in_last_7_days = a.time;\n  if (a.brand && h.brands.indexOf(a.brand) < 0) h.brands.push(a.brand);\n  a.notes.forEach(n => { if (h.notes.length < 5) h.notes.push(Object.assign({ on_alert: a.slack_url }, n)); });\n});\nconst ZRX = /https?:[/][/]([a-z0-9-]+)[.]zendesk[.]com[/]agent[/]tickets[/]([0-9]+)/gi;\nconst ticketsIn = t => {\n  const res = [];\n  const rx = new RegExp(ZRX.source, 'gi');\n  let m;\n  while ((m = rx.exec(String(t))) !== null) res.push({ subdomain: m[1].toLowerCase(), ticket_id: m[2] });\n  return res;\n};\nconst reports = [];\nincMsgs.forEach(m => {\n  if (m.subtype) return;\n  const reps = threads[m.ts] || [];\n  const newReps = reps.filter(r => inWin(r.ts));\n  const parentNew = inWin(m.ts);\n  if (!parentNew && !newReps.length) return;\n  const text = textOf(m);\n  const tk = {};\n  ticketsIn(text).forEach(x => { tk[x.subdomain + '/' + x.ticket_id] = x; });\n  reps.forEach(r => ticketsIn(textOf(r)).forEach(x => { tk[x.subdomain + '/' + x.ticket_id] = x; }));\n  reports.push({\n    posted_at: zag(m.ts),\n    new_in_window: parentNew,\n    reporter: who(m),\n    slack_url: link(INC, m.ts),\n    text: text.slice(0, 2500),\n    replies: reps.map(r => ({ by: who(r), at: zag(r.ts), new_in_window: inWin(r.ts), text: textOf(r).slice(0, 1200), slack_url: link(INC, r.ts, m.ts) })),\n    tickets: Object.keys(tk).map(k => tk[k])\n  });\n});\nreports.sort((x, y) => String(x.posted_at).localeCompare(String(y.posted_at)));\nif (winAlerts.length > 60) gaps.push('More than 60 error alerts in the window; only the first 60 executions were digested.');\nreturn [{ json: { window: w, win_alerts: winAlerts, hist: hist, reports: reports, gaps: gaps } }];"
+      }
+    },
+    {
+      "id": "342ec23a-3a88-4110-9c76-2ce8b9e939e2",
+      "name": "List executions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b = $('Build incidents').first().json;\nconst items = (b.win_alerts || []).filter(a => a.execution_id).slice(0, 60).map(a => ({ json: { workflow_id: a.workflow_id, execution_id: a.execution_id } }));\nreturn items.length ? items : [{ json: { workflow_id: '', execution_id: '' } }];"
+      }
+    },
+    {
+      "id": "5401a4ff-9aab-4337-af9f-121c1c6c31f8",
+      "name": "Digest executions",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [
+        1920,
+        0
+      ],
+      "parameters": {
+        "mode": "each",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "drqo3oTHf2RmRsv7"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "workflow_id": "={{ $json.workflow_id }}",
+            "execution_id": "={{ $json.execution_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "workflow_id",
+              "displayName": "workflow_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "execution_id",
+              "displayName": "execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "8c09acb2-d682-4a12-93e6-567c9acefa86",
+      "name": "List tickets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b = $('Build incidents').first().json;\nconst digests = $input.all().map(i => i.json).filter(d => d && d.execution_id);\nconst byExec = {};\n(b.win_alerts || []).forEach(a => { byExec[a.execution_id] = a; });\nconst brandSub = {};\ndigests.forEach(d => { const a = byExec[d.execution_id]; if (a && a.brand && d.ticket && d.ticket.subdomain) brandSub[a.brand] = d.ticket.subdomain; });\nconst tk = {};\ndigests.forEach(d => {\n  if (!d.ticket || !d.ticket.ticket_id) return;\n  const a = byExec[d.execution_id];\n  const sub = d.ticket.subdomain || (a ? brandSub[a.brand] : null);\n  if (sub) tk[sub + '/' + d.ticket.ticket_id] = { subdomain: sub, ticket_id: String(d.ticket.ticket_id) };\n});\n(b.reports || []).forEach(r => (r.tickets || []).forEach(t => { tk[t.subdomain + '/' + t.ticket_id] = { subdomain: t.subdomain, ticket_id: String(t.ticket_id) }; }));\nconst list = Object.keys(tk).map(k => tk[k]).slice(0, 80);\nreturn list.length ? list.map(t => ({ json: t })) : [{ json: { subdomain: '', ticket_id: '' } }];"
+      }
+    },
+    {
+      "id": "ac6e557f-d22b-4ef4-9179-0172bde7e8ae",
+      "name": "Lookup tickets",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [
+        2400,
+        0
+      ],
+      "parameters": {
+        "mode": "each",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "EurBYzklkRBaUC0W"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "subdomain": "={{ $json.subdomain }}",
+            "ticket_id": "={{ $json.ticket_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "subdomain",
+              "displayName": "subdomain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "ticket_id",
+              "displayName": "ticket_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "7efa1129-3aa6-4e4f-a178-a8ab8b73b171",
+      "name": "Incident pack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b = $('Build incidents').first().json;\nconst BASE = 'https://efuturemedia.app.n8n.cloud';\nconst gaps = (b.gaps || []).slice();\nconst digests = {};\n$('Digest executions').all().forEach(i => { const d = i.json; if (d && d.execution_id) digests[d.execution_id] = d; });\nconst tickets = {};\n$('Lookup tickets').all().forEach(i => { const t = i.json; if (t && t.ticket_id) tickets[t.subdomain + '/' + t.ticket_id] = t; });\nconst ms = s => { const t = new Date(s).getTime(); return isNaN(t) ? 0 : t; };\nconst alerts = b.win_alerts || [];\nconst byExec = {};\nalerts.forEach(a => { byExec[a.execution_id] = a; a.digest = digests[a.execution_id] || null; });\nalerts.forEach(a => {\n  const d = a.digest;\n  const p = d && d.parent_execution ? d.parent_execution.execution_id : null;\n  if (p && byExec[p] && p !== a.execution_id) a.parent_alert = p;\n});\nalerts.forEach(a => {\n  const d = a.digest;\n  const s = d && d.error && d.error.failed_sub_execution ? d.error.failed_sub_execution.execution_id : null;\n  if (s && byExec[s] && !byExec[s].parent_alert && s !== a.execution_id) byExec[s].parent_alert = a.execution_id;\n});\nalerts.forEach(a => {\n  if (a.parent_alert) return;\n  if (a.digest && a.digest.available) return;\n  const cand = alerts.filter(c => c !== a && c.is_caller && c.error_message === a.error_message && Math.abs(Number(c.ts) - Number(a.ts)) <= 3 && Number(c.execution_id) < Number(a.execution_id) && !alerts.some(x => x.parent_alert === c.execution_id));\n  if (cand.length) a.parent_alert = cand[cand.length - 1].execution_id;\n});\nconst hasChild = {};\nalerts.forEach(a => { if (a.parent_alert) hasChild[a.parent_alert] = true; });\nconst leaves = alerts.filter(a => !hasChild[a.execution_id]);\nconst normNode = n => String(n || '').replace(/[0-9]+$/, '').trim();\nconst sig = a => a.workflow_type + ' | ' + normNode(a.errored_node) + ' | ' + a.error_message;\nconst brandSub = {};\nalerts.forEach(a => { const t = a.digest && a.digest.ticket; if (t && t.subdomain && a.brand) brandSub[a.brand] = t.subdomain; });\nconst ticketFor = chain => {\n  for (const a of chain) {\n    const t = a.digest && a.digest.ticket;\n    if (t && t.ticket_id) return { subdomain: t.subdomain || brandSub[a.brand] || null, ticket_id: String(t.ticket_id) };\n  }\n  return null;\n};\nconst ticketState = (tk, sinceIso) => {\n  if (!tk) return null;\n  const url = tk.subdomain ? 'https://' + tk.subdomain + '.zendesk.com/agent/tickets/' + tk.ticket_id : null;\n  const L = tickets[tk.subdomain + '/' + tk.ticket_id];\n  if (!L) return { ticket_id: tk.ticket_id, ticket_url: url, lookup: 'not available' };\n  const since = ms(sinceIso);\n  const after = (L.timeline || []).filter(e => ms(e.at) >= since - 60000);\n  return {\n    ticket_id: tk.ticket_id,\n    ticket_url: L.ticket_url,\n    status: L.status,\n    subject: L.subject,\n    allow_automation: L.key_fields ? L.key_fields['Allow automation'] : null,\n    category: L.key_fields ? L.key_fields['Category'] : null,\n    tags: L.tags,\n    last_automation_action_at: L.automation ? L.automation.last_action_at : null,\n    events_since_error: after.slice(-8),\n    lookup_errors: L.errors && L.errors.length ? L.errors : undefined\n  };\n};\nconst incidents = leaves.map(leaf => {\n  const chain = [leaf];\n  let cur = leaf;\n  let guard = 0;\n  while (cur.parent_alert && byExec[cur.parent_alert] && guard < 10) { cur = byExec[cur.parent_alert]; chain.push(cur); guard += 1; }\n  return { root: leaf, chain: chain };\n});\nconst groups = {};\nincidents.forEach(inc => { const s = sig(inc.root); if (!groups[s]) groups[s] = []; groups[s].push(inc); });\nconst hist = b.hist || {};\nconst detail = d => ({\n  execution_url: d.execution_url,\n  workflow_name: d.workflow_name,\n  workflow_url: d.workflow_url,\n  available: d.available,\n  note: d.note,\n  status: d.status,\n  started_at: d.started_at,\n  error: d.error,\n  errored_node_parameters_ran: d.errored_node_parameters_ran,\n  errored_node_in_draft: d.errored_node_in_draft,\n  errored_node_parameters_draft: d.errored_node_parameters_draft,\n  has_unpublished_draft: d.has_unpublished_draft,\n  errored_node_input: d.errored_node_input,\n  trigger: d.trigger,\n  path_tail: d.path_tail,\n  zendesk_webhook: d.zendesk_webhook\n});\nconst groupList = Object.keys(groups).map(s => {\n  const incs = groups[s].sort((x, y) => Number(x.root.ts) - Number(y.root.ts));\n  const r0 = incs[0].root;\n  const brands = [];\n  incs.forEach(i => { if (i.root.brand && brands.indexOf(i.root.brand) < 0) brands.push(i.root.brand); });\n  let maxHr = 0;\n  incs.forEach(i => {\n    const t0 = Number(i.root.ts);\n    const n = incs.filter(j => Number(j.root.ts) >= t0 && Number(j.root.ts) < t0 + 3600).length;\n    if (n > maxHr) maxHr = n;\n  });\n  const reps = incs.map(i => i.root.digest).filter(d => d && d.available).slice(0, 2);\n  return {\n    signature: s,\n    workflow_type: r0.workflow_type,\n    errored_node: r0.errored_node,\n    error_message: r0.error_message,\n    brands: brands,\n    incidents_count: incs.length,\n    alerts_count: incs.reduce((n, i) => n + i.chain.length, 0),\n    first_at: r0.time,\n    last_at: incs[incs.length - 1].root.time,\n    max_incidents_within_60_min: maxHr,\n    recurring: hist[s] ? hist[s] : { prior_6_days_alerts: 0 },\n    representative_detail: reps.map(detail),\n    incidents: incs.map(i => {\n      const a = i.root;\n      const d = a.digest || {};\n      return {\n        time: a.time,\n        brand: a.brand,\n        workflow_name: a.workflow_name,\n        workflow_url: BASE + '/workflow/' + a.workflow_id,\n        execution_url: BASE + '/workflow/' + a.workflow_id + '/executions/' + a.execution_id,\n        slack_url: a.slack_url,\n        execution_available: d.available === undefined ? null : d.available,\n        http_code: d.error ? d.error.http_code : null,\n        api_response: d.error && d.error.api_response ? String(d.error.api_response).slice(0, 300) : null,\n        callers: i.chain.slice(1).map(c => ({ workflow_name: c.workflow_name, workflow_url: BASE + '/workflow/' + c.workflow_id, execution_url: BASE + '/workflow/' + c.workflow_id + '/executions/' + c.execution_id, errored_node: c.errored_node, slack_url: c.slack_url })),\n        thread_notes: a.notes && a.notes.length ? a.notes : undefined,\n        ticket: ticketState(ticketFor(i.chain), new Date(Number(a.ts) * 1000).toISOString())\n      };\n    })\n  };\n}).sort((x, y) => y.incidents_count - x.incidents_count);\nalerts.forEach(a => {\n  if (!a.digest) gaps.push('No digest for execution ' + BASE + '/workflow/' + a.workflow_id + '/executions/' + a.execution_id);\n  else if (a.digest.available === false) gaps.push('Execution pruned or unavailable: ' + BASE + '/workflow/' + a.workflow_id + '/executions/' + a.execution_id);\n  else if (!ticketFor([a]) && !a.is_caller) gaps.push('No ticket found in execution ' + BASE + '/workflow/' + a.workflow_id + '/executions/' + a.execution_id);\n});\nObject.keys(tickets).forEach(k => { const t = tickets[k]; if (t.errors && t.errors.length) gaps.push('Ticket lookup issue for ' + t.ticket_url + ': ' + t.errors.join('; ')); });\nconst reports = (b.reports || []).map(r => ({\n  posted_at: r.posted_at,\n  reporter: r.reporter,\n  slack_url: r.slack_url,\n  new_in_window: r.new_in_window,\n  text: r.text,\n  replies: r.replies,\n  tickets: r.tickets.map(t => tickets[t.subdomain + '/' + t.ticket_id] || { ticket_url: 'https://' + t.subdomain + '.zendesk.com/agent/tickets/' + t.ticket_id, lookup: 'not available' })\n}));\nreturn [{ json: {\n  window: { date: b.window.date, zone: b.window.zone, start_utc: b.window.start_iso, end_utc: b.window.end_iso },\n  counts: { error_alerts: alerts.length, incidents: incidents.length, error_groups: groupList.length, cs_reports: reports.length, tickets_looked_up: Object.keys(tickets).length },\n  error_groups: groupList,\n  cs_reports: reports,\n  gaps: gaps,\n  sources: { errors_channel: 'https://futuremedia-world.enterprise.slack.com/archives/C0ABPEER1MF', incidents_channel: 'https://futuremedia-world.enterprise.slack.com/archives/C0A44SWQVHD' },\n  generated_at: new Date().toISOString()\n} }];"
+      }
+    },
+    {
+      "id": "5f7f5be8-fd5f-4442-a715-f66fe2a839d1",
+      "name": "Slack: errors channel",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C0ABPEER1MF"
+        },
+        "filters": {
+          "inclusive": true,
+          "latest": "={{ $(\"Compute window\").first().json.end_iso }}",
+          "oldest": "={{ $(\"Compute window\").first().json.history_start_iso }}"
+        },
+        "operation": "history",
+        "resource": "channel",
+        "returnAll": true
+      },
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "tSpUlRaNhgWKbKN4",
+          "name": "Automations Slack account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "webhookId": "b7dc4b43-aca4-4de3-a7a6-3e98eabed757"
+    },
+    {
+      "id": "634f2c88-2977-4949-b7c8-ccff21827362",
+      "name": "Slack: incident channel",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        720,
+        0
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C0A44SWQVHD"
+        },
+        "filters": {
+          "inclusive": true,
+          "latest": "={{ $(\"Compute window\").first().json.end_iso }}",
+          "oldest": "={{ $(\"Compute window\").first().json.history_start_iso }}"
+        },
+        "operation": "history",
+        "resource": "channel",
+        "returnAll": true
+      },
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "tSpUlRaNhgWKbKN4",
+          "name": "Automations Slack account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "webhookId": "c92532db-c579-485a-a5be-520de0587bf6"
+    },
+    {
+      "id": "98d0bc83-3da1-4ca9-a8c3-3ec499672afe",
+      "name": "Slack: thread replies",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.channel }}"
+        },
+        "filters": {},
+        "operation": "replies",
+        "resource": "channel",
+        "returnAll": true,
+        "ts": "={{ $json.ts }}"
+      },
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "tSpUlRaNhgWKbKN4",
+          "name": "Automations Slack account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "webhookId": "c8611c5d-3d77-4a7b-a805-143d02ba2d8c"
+    }
+  ],
+  "connections": {
+    "Run pack": {
+      "main": [
+        [
+          {
+            "node": "Compute window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build incidents": {
+      "main": [
+        [
+          {
+            "node": "List executions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List executions": {
+      "main": [
+        [
+          {
+            "node": "Digest executions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Digest executions": {
+      "main": [
+        [
+          {
+            "node": "List tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List tickets": {
+      "main": [
+        [
+          {
+            "node": "Lookup tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lookup tickets": {
+      "main": [
+        [
+          {
+            "node": "Incident pack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute window": {
+      "main": [
+        [
+          {
+            "node": "Slack: errors channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: errors channel": {
+      "main": [
+        [
+          {
+            "node": "Slack: incident channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: incident channel": {
+      "main": [
+        [
+          {
+            "node": "Plan threads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan threads": {
+      "main": [
+        [
+          {
+            "node": "Slack: thread replies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: thread replies": {
+      "main": [
+        [
+          {
+            "node": "Build incidents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [
+    {
+      "id": "22457ed6-15a2-4890-8210-642b24f1d3ff",
+      "name": "Enrich and assemble",
+      "nodeIds": [
+        "342ec23a-3a88-4110-9c76-2ce8b9e939e2",
+        "5401a4ff-9aab-4337-af9f-121c1c6c31f8",
+        "8c09acb2-d682-4a12-93e6-567c9acefa86",
+        "ac6e557f-d22b-4ef4-9179-0172bde7e8ae",
+        "7efa1129-3aa6-4e4f-a178-a8ab8b73b171"
+      ],
+      "description": "Digests each errored execution, looks up every ticket, groups incidents by signature and outputs the pack"
+    },
+    {
+      "id": "eb25a021-e860-49ea-8d25-0250c3fa1d8a",
+      "name": "Collect from Slack",
+      "nodeIds": [
+        "77b93e1c-190b-4ec9-a78b-14a51b8de876",
+        "5f7f5be8-fd5f-4442-a715-f66fe2a839d1",
+        "634f2c88-2977-4949-b7c8-ccff21827362",
+        "4161f2f2-a962-444b-86c3-c59de42418b0",
+        "98d0bc83-3da1-4ca9-a8c3-3ec499672afe",
+        "2280cd03-93f6-477c-96cd-bc086418a8df"
+      ],
+      "description": "Reads both channels for the day plus 6 prior days, thread replies, parses error alerts and CS reports (read-only)"
+    }
+  ],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "saveManualExecutions": true,
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 1200
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "YF1u6Rp4Bjdn7GUn",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "updatedAt": "2025-09-16T08:57:49.000Z"
+      },
+      "createdAt": "2026-10-22T11:06:01.590Z",
+      "updatedAt": "2026-10-22T11:06:01.590Z"
+    }
+  ],
+  "activeVersion": null
+}
