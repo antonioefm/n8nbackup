@@ -1,0 +1,265 @@
+{
+  "id": "5NcC3UOB9lcZiWzt",
+  "name": "Lokalise WRITE - guarded translation fixes (reusable webhook)",
+  "description": "Reusable: applies reviewed fixes [key_id, iso, old, new] only where the live translation still equals old; unverified; reads back. Keep unpublished when not in use.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-28T10:28:11.349Z",
+  "updatedAt": "2026-10-28T10:28:11.349Z",
+  "isArchived": false,
+  "versionId": "c67257bc-82e0-4b54-b736-f1e8c0cbeeda",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "25814f5f-579b-46f9-8f36-b8aaaeb013f5",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "l10n-push-fixes",
+        "responseMode": "lastNode",
+        "responseData": "allEntries",
+        "options": {}
+      },
+      "webhookId": "965eb304-c2d1-414a-8656-9ed20f2bf762"
+    },
+    {
+      "id": "ebf3dd57-12fb-4bff-8840-ea7a48b905e5",
+      "name": "Params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b = $input.first().json.body || {};\nconst h = $input.first().json.headers || {};\nif (h['x-l10n-secret'] !== 'f41b7c2e9d0a83561e2b4c7d9a0f13e8') throw new Error('bad secret');\nif (!['one','all'].includes(b.mode)) throw new Error('bad mode');\nif (!/^[0-9a-f]+\\.[0-9]+$/.test(b.pid || '')) throw new Error('bad pid');\nconst F = b.F || [];\nreturn [{ json: { mode: b.mode, pid: b.pid, F, ids: [...new Set(F.map(f => f[0]))].join(',') } }];"
+      }
+    },
+    {
+      "id": "7f4ab8fe-fbd8-44be-b3b0-6cf7dc94bba1",
+      "name": "Get Current",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.pid }}/keys?include_translations=1&limit=500&filter_key_ids={{ $json.ids }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "6177a19f-e102-47df-978c-a753d3f54d27",
+      "name": "Build",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const cfg = $('Params').first().json;\nconst live = {}; for (const k of ($('Get Current').first().json.keys || [])) { if (k.is_archived) continue; for (const t of (k.translations||[])) live[k.key_id + '|' + t.language_iso] = t.translation; }\nconst per = {}; const held = [];\nfor (const [id, iso, oldT, newT] of cfg.F) { const l = live[id + '|' + iso]; if (l !== oldT) { held.push([id, iso, 'changed since read']); continue; } (per[id] = per[id] || []).push({ language_iso: iso, translation: newT, is_unverified: true }); }\nlet keys = Object.keys(per).map(id => ({ key_id: Number(id), translations: per[id] }));\nif (cfg.mode === 'one') keys = keys.slice(0, 1);\nconst out = []; for (let i = 0; i < keys.length; i += 40) out.push({ json: { body: { keys: keys.slice(i, i + 40) }, n: keys.slice(i, i + 40).reduce((a, k) => a + k.translations.length, 0), held } });\nif (!out.length) throw new Error('nothing to write: ' + JSON.stringify(held.slice(0, 20)));\nreturn out;"
+      }
+    },
+    {
+      "id": "0c783e63-af94-4974-8f2d-05a82c801701",
+      "name": "WRITE Fixes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $('Params').first().json.pid }}/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1500
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "5582a4a9-90ba-4c85-ada5-d0e7c184f6b3",
+      "name": "Read Back",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $('Params').first().json.pid }}/keys?include_translations=1&limit=500&filter_key_ids={{ $('Params').first().json.ids }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "9321e760-1477-40cb-a39b-c88db80b1214",
+      "name": "Compare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const cfg = $('Params').first().json;\nconst live = {}; for (const k of ($('Read Back').first().json.keys || [])) for (const t of (k.translations||[])) live[k.key_id + '|' + t.language_iso] = t;\nlet fixed = 0, unver = 0; const notFixed = [];\nfor (const [id, iso, oldT, newT] of cfg.F) { const t = live[id + '|' + iso] || {}; if (t.translation === newT) { fixed++; if (t.is_unverified) unver++; } else notFixed.push([id, iso]); }\nconst b = $('Build').all();\nreturn [{ json: { sent: b.reduce((a, i) => a + i.json.n, 0), held: b[0].json.held, fixedNow: fixed, unverified: unver, notFixed: notFixed.length } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Params": {
+      "main": [
+        [
+          {
+            "node": "Get Current",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Current": {
+      "main": [
+        [
+          {
+            "node": "Build",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build": {
+      "main": [
+        [
+          {
+            "node": "WRITE Fixes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WRITE Fixes": {
+      "main": [
+        [
+          {
+            "node": "Read Back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Back": {
+      "main": [
+        [
+          {
+            "node": "Compare",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "5NcC3UOB9lcZiWzt",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-28T10:28:11.350Z",
+      "updatedAt": "2026-10-28T10:28:11.350Z"
+    }
+  ],
+  "activeVersion": null
+}
