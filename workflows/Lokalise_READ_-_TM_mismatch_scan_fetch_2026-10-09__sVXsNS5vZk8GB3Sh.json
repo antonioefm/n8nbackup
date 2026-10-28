@@ -1,0 +1,185 @@
+{
+  "id": "sVXsNS5vZk8GB3Sh",
+  "name": "Lokalise READ - TM mismatch scan fetch 2026-10-09",
+  "description": "READ ONLY (read-only token). Multi-project fetch for TM mismatch scan: Config jobs [{pid, ids}]; Shape keeps EN <=300 chars with per-locale [text, editor, modified, reviewed].",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-07T14:41:59.248Z",
+  "updatedAt": "2026-10-28T09:17:33.709Z",
+  "isArchived": false,
+  "versionId": "da6e044a-ada6-4fda-abb2-6c2a6b7a2636",
+  "versionCounter": 95,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "e4a826bd-2127-4f8c-8da3-37c1fe433dd6",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "1e304eb2-d61e-4ac3-ab74-1fb3bc69b775",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// READ ONLY. Cross-project scan for audit notes 2026-10-28: EN 'Reset' -> nl, EN with 'blur' -> de. Archived excluded.\nconst pids = ['225008626a33e62b328c63.04676982','8241074569a69e614ce094.27318095','14240418673f52ae29a007.74392007','9274956467e3e224807498.79791832','901014606819db6d0bc999.26230201','46552447679363c70f7ef8.58193285','3070657967b5854be32cb1.65162854','50011170688b3050b0a7f8.40995136','60625870676151e1da46d0.81913446','18564477693fc9bba4cec8.54789459','1286096867dbf31146afc5.54950617','46919453689d5d729a1e70.59972091','6744586768821f2c3fe845.13636914','479073796a6095e8c10e35.09051894','9933660066825e9a8005c8.58526829','31393214664f295f94dd86.76792605','491848986923fad6dc2f85.42477363','852017176a3ce11141ecd5.60405885','964775386a3ce03ecca883.03770715','899698826a7340184c6a03.84153135','4780438967fe077b4e6484.83742970','1274536968b58980dc56a0.78363786','410385576a9fb240ac4f42.73305789'];\nreturn pids.map(pid => ({ json: { pid, url: 'https://api.lokalise.com/api2/projects/' + pid + '/keys?include_translations=1&disable_references=1&filter_archived=exclude&filter_translation_lang_ids=640,737,666&limit=500&pagination=cursor' } }));\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "e848c6bb-3271-4206-b6c1-5c88c8b7eb62",
+      "name": "Fetch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 60,
+              "requestInterval": 700
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "50b44e2e-0eee-4f50-aac5-4b2830f53f8f",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const out = []; const errors = []; let keys = 0;\nfor (const it of $input.all()) { const j = it.json; if (j.statusCode && j.statusCode >= 400) { errors.push(j.statusCode); continue; }\n  const b = j.body || {}; const pid = b.project_id || '';\n  for (const k of (b.keys || [])) { keys++; const name = (k.key_name && (k.key_name.web || k.key_name.other)) || '';\n    const tr = k.translations || []; const en = (tr.find(t => t.language_iso === 'en') || {}).translation || '';\n    if (typeof en !== 'string') continue;\n    const isReset = /^\\s*reset\\b/i.test(en) && en.length <= 40;\n    const isBlur = /\\bblur/i.test(en) && en.length <= 200;\n    if (!isReset && !isBlur) continue;\n    const lang = isReset ? 'nl' : 'de'; const t = tr.find(x => x.language_iso === lang) || {};\n    out.push({ pid, key: name, check: isReset ? 'reset-nl' : 'blur-de', en, tr: t.translation, by: t.modified_by_email, mod: t.modified_at, reviewed: t.is_reviewed }); } }\nreturn [{ json: { keys, errors, rows: out } }];\n",
+        "mode": "runOnceForAllItems"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "sVXsNS5vZk8GB3Sh",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-07T14:41:59.251Z",
+      "updatedAt": "2026-10-07T14:41:59.251Z"
+    }
+  ],
+  "activeVersion": null
+}
