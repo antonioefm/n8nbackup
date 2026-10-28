@@ -1,0 +1,303 @@
+{
+  "id": "Tr4CEGD8Sl0UdKqu",
+  "name": "Lokalise WRITE - DE linguist-version restore (TM sheet) 2026-10-13",
+  "description": "WRITE (disabled by default): applies Approved rows of the DE TM-mismatch linguist-restore sheet. Guards: live==sheet current, not linguist edit. MODE plan/test/all in Config. Retire after use.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-13T08:27:24.838Z",
+  "updatedAt": "2026-10-13T09:25:48.479Z",
+  "isArchived": false,
+  "versionId": "2953119d-8adf-4fcf-8091-becb037f3f5c",
+  "versionCounter": 27,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "ea83c9c3-0cfb-4cbf-8a66-5ad69f22959b",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "c90c4e11-198d-4007-8a5e-b92ca1f26611",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "throw new Error('write path retired 2026-10-13 (all sheets + style-guide reverts + Mobitrace BE done)');"
+      }
+    },
+    {
+      "id": "4e2d5532-3e02-478f-b0ef-c1ea557c7e95",
+      "name": "Read Sheet",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://sheets.googleapis.com/v4/spreadsheets/' + $json.SHEET + '/values/' + encodeURIComponent(\"'\" + $json.TAB + \"'!A1:O2000\") }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Gt1NY0PXKDxBUQGy",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "1351de41-873b-47cc-87c3-e3c28f664c76",
+      "name": "Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const C = $('Config').first().json; const CI = $('Config').all(); const ins = $input.all();\nconst strip = s => { s = String(s == null ? '' : s); return s.charAt(0) === \"'\" ? s.slice(1) : s; };\nconst byP = {}; const other = [];\nfor (let i = 0; i < ins.length; i++) { const tab = CI[i].json.TAB; const isos = CI[i].json.ISOS; const v = ins[i].json.values || []; const H = v[0] || [];\n  const col = n => H.indexOf(n); const ci = { p: col('Project'), k: col('Key'), cur: col('Current translation'), prop: col('Proposed (linguist version)') };\n  if (ci.p < 0 || ci.k < 0 || ci.cur < 0 || ci.prop < 0) { other.push({ tab: tab, a: 'bad header', H: H.join('|').slice(0, 200) }); continue; }\n  for (let r = 1; r < v.length; r++) { const row = v[r] || []; const p = String(row[ci.p] || '').trim(); const k = String(row[ci.k] || '').trim(); if (!p || !k) continue;\n    const o = { tab: tab, isos: isos, r: r + 1, p: p, k: k, cur: strip(row[ci.cur]), prop: strip(row[ci.prop]) };\n    const pid = C.PIDS[p]; if (!pid) { other.push({ tab: tab, r: o.r, p: p, k: k, a: 'NO PID' }); continue; }\n    (byP[pid] = byP[pid] || []).push(o); } }\n$getWorkflowStaticData('global').other = other;\nconst out = [];\nfor (const pid of Object.keys(byP)) { const keys = Array.from(new Set(byP[pid].map(x => x.k)));\n  for (let j = 0; j < keys.length; j += 60) { const ch = keys.slice(j, j + 60); const set = new Set(ch);\n    out.push({ json: { pid: pid, rows: byP[pid].filter(x => set.has(x.k)), url: 'https://api.lokalise.com/api2/projects/' + pid + '/keys?include_translations=1&disable_references=1&filter_archived=exclude&limit=500&filter_keys=' + encodeURIComponent(ch.join(',')) } }); } }\nreturn out;"
+      }
+    },
+    {
+      "id": "ad6e9220-4226-4e42-ade0-666701cbf698",
+      "name": "Fetch Live",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 600
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "46821448-eaf5-4e7e-a57b-141406c780de",
+      "name": "Build",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const C = $('Config').first().json; const P = $('Plan').all(); const F = $input.all();\nconst kn = k => { const n = k.key_name || {}; return typeof n === 'string' ? n : (n.web || n.other || n.ios || n.android || ''); };\nconst out = []; const report = [];\nfor (let i = 0; i < P.length; i++) { const pid = P[i].json.pid; const b = (F[i] && F[i].json.body) || {}; if (!Array.isArray(b.keys)) continue;\n  for (const o of P[i].json.rows) { const id = o.tab + '|' + o.p + '|' + o.k; const rv = C.REVERT[id]; if (!rv) continue;\n    const k = b.keys.find(x => kn(x) === o.k); if (!k) { report.push({ id, a: 'key not found' }); continue; }\n    const t = (k.translations || []).find(x => o.isos.includes(x.language_iso)); if (!t) { report.push({ id, a: 'no slot' }); continue; }\n    if (t.translation !== rv.from) { report.push({ id, a: 'live differs', live: t.translation }); continue; }\n    out.push({ json: { pid: pid, tid: t.translation_id, k: o.k, p: o.p, tab: o.tab, want: rv.to, plural: false, body: { translation: rv.to } } }); report.push({ id, a: 'revert' }); } }\n$getWorkflowStaticData('global').sum = report;\nif (!out.length) return [{ json: { none: true, report } }];\nreturn out;"
+      }
+    },
+    {
+      "id": "bf3a3e2c-b643-4b72-966e-6589ff800525",
+      "name": "WRITE Translation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ 'https://api.lokalise.com/api2/projects/' + $json.pid + '/translations/' + $json.tid }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "disabled": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "3bd18a6d-0bc6-47d8-a06d-b510547c7a97",
+      "name": "Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const res = $input.all(); const req = $('Build').all();\nif (req.length && req[0].json.none) return [req[0].json];\nlet ok = 0; const bad = []; const byTab = {};\nfor (let i = 0; i < res.length; i++) { const r = res[i].json; const q = req[i].json;\n  const got = r.body && r.body.translation ? r.body.translation.translation : undefined;\n  let same = false; if (q.plural) { try { same = JSON.stringify(typeof got === 'string' ? JSON.parse(got) : got) === JSON.stringify(JSON.parse(q.want)); } catch (e) {} } else same = got === q.want;\n  if (r.statusCode === 200 && same) { ok++; byTab[q.tab] = (byTab[q.tab] || 0) + 1; } else bad.push({ tab: q.tab, p: q.p, k: q.k, status: r.statusCode, got: String(got).slice(0, 200), err: JSON.stringify((r.body && r.body.error) || r.error || '').slice(0, 200) }); }\nconst sd = $getWorkflowStaticData('global');\nreturn [{ json: { written_ok: ok, byTab: byTab, bad: bad, sum: sd.sum } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Read Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Sheet": {
+      "main": [
+        [
+          {
+            "node": "Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan": {
+      "main": [
+        [
+          {
+            "node": "Fetch Live",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Live": {
+      "main": [
+        [
+          {
+            "node": "Build",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build": {
+      "main": [
+        [
+          {
+            "node": "WRITE Translation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WRITE Translation": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "Tr4CEGD8Sl0UdKqu",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-13T08:27:24.841Z",
+      "updatedAt": "2026-10-13T08:27:24.841Z"
+    }
+  ],
+  "activeVersion": null
+}
