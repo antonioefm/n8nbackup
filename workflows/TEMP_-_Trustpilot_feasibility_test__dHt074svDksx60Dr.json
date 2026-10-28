@@ -1,0 +1,254 @@
+{
+  "id": "dHt074svDksx60Dr",
+  "name": "TEMP - Trustpilot feasibility test",
+  "description": "Temporary feasibility test: fetches public Trustpilot pages for all 13 brands from n8n and records status, presence of embedded page data, pagination depth and review field names into a temporary data table.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-20T12:39:42.655Z",
+  "updatedAt": "2026-10-20T12:39:42.655Z",
+  "isArchived": false,
+  "versionId": "d1824b3e-97c6-452c-89ca-65f8fc4ebabc",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "6e46bf84-2cda-4d55-8962-404be36dcdd5",
+      "name": "Run Trustpilot test",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -600,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "ec786b2e-8b6a-4476-a904-95e3c93167f5",
+      "name": "Build URLs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -380,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const D = [['personality','personality.co'],['lovestyle','lovestyle.co'],['mindspree','mindspree.io'],\n  ['myimage','myimage.io'],['resumewise','resumewise.com'],['pdfhelp','pdfhelp.com'],['unicopy','unicopy.ai'],\n  ['realchecker','realchecker.com'],['aichat','chatbotonline.ai'],['myqrcode','myqrcode.com'],\n  ['brainiq','brainiqtest.com'],['qrcreate','qrcreate.com'],['vinready','vinready.com']];\nconst base = 'https://www.trustpilot.com/review/';\nconst out = D.map(([b, d]) => ({ json: { brand: b, check: 'p1', url: base + d } }));\nout.push({ json: { brand: 'personality', check: 'p1_languages_all', url: base + 'personality.co?languages=all' } });\nfor (const p of [2, 50, 130]) out.push({ json: { brand: 'personality', check: 'p' + p, url: base + 'personality.co?page=' + p } });\nreturn out;"
+      }
+    },
+    {
+      "id": "96b979f9-124e-4f9e-981b-d4c25b201865",
+      "name": "Fetch page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -160,
+        300
+      ],
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "text/html"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "en-US,en;q=0.9"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2500
+            }
+          }
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "def9c88e-a780-4f98-b230-7bd8064d7a14",
+      "name": "Analyse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const reqs = $('Build URLs').all().map(i => i.json);\nconst out = [];\n$input.all().forEach((it, i) => {\n  const r = reqs[i] || {};\n  const j = it.json || {};\n  const body = typeof j.body === 'string' ? j.body : (typeof j.data === 'string' ? j.data : '');\n  const res = { status: j.statusCode || (j.error ? 'error' : '?'), bytes: body.length };\n  if (j.error) res.error = String((j.error && j.error.message) || JSON.stringify(j.error)).slice(0, 200);\n  const m = body.match(/<script id=\"__NEXT_DATA__\" type=\"application\\/json\"[^>]*>([\\s\\S]*?)<\\/script>/);\n  res.has_next_data = !!m;\n  res.challenge_hint = !m && /end-of-the-line|are you human|captcha|access denied|cf-chl|just a moment/i.test(body);\n  if (!m && body) res.body_head = body.replace(/\\s+/g, ' ').slice(0, 300);\n  if (m) {\n    try {\n      const nd = JSON.parse(m[1]);\n      const pp = (nd.props && nd.props.pageProps) || {};\n      res.pageProps_keys = Object.keys(pp).slice(0, 40);\n      const bu = pp.businessUnit || {};\n      res.business = { name: bu.displayName, reviews: bu.numberOfReviews, trustScore: bu.trustScore, stars: bu.stars };\n      const rv = Array.isArray(pp.reviews) ? pp.reviews : [];\n      res.reviews_on_page = rv.length;\n      if (rv.length) {\n        res.review_keys = Object.keys(rv[0]).slice(0, 30);\n        res.dates_keys = rv[0].dates ? Object.keys(rv[0].dates) : null;\n        const pub = rv.map(x => x.dates && x.dates.publishedDate).filter(Boolean).sort();\n        res.newest_published = pub[pub.length - 1];\n        res.oldest_published = pub[0];\n        res.ratings = rv.map(x => x.rating);\n        res.languages = Array.from(new Set(rv.map(x => x.language)));\n        res.sample_id = rv[0].id;\n      }\n      const fl = pp.filters || {};\n      res.pagination = fl.pagination || null;\n      res.filters_keys = Object.keys(fl).slice(0, 20);\n    } catch (e) { res.parse_error = String(e.message).slice(0, 200); }\n  }\n  out.push({ json: { brand: r.brand, check_name: r.check, result: JSON.stringify(res).slice(0, 6000) } });\n});\nreturn out;"
+      }
+    },
+    {
+      "id": "65eb0fa7-84d3-47d6-b299-c5bf8cd52b0d",
+      "name": "Write results",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        280,
+        300
+      ],
+      "parameters": {
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "amkqIwxKGabrrybx"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "brand",
+              "displayName": "brand",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "check_name",
+              "displayName": "check_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "result",
+              "displayName": "result",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "d74e6f24-6a85-4763-9d6b-13f094bf8fc0",
+      "name": "Sticky Note f0107135",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -624,
+        208
+      ],
+      "parameters": {
+        "content": "## TEMPORARY - Trustpilot feasibility test\n\nFetches page 1 for all 13 brands from n8n, plus an all-languages variant and pages 2, 50 and 130 for Personality, with standard headers. Records status, whether the page data is present, pagination and review fields into tmp_trustpilot_feasibility.\n\nDelete once the collector is built.",
+        "color": 3,
+        "width": 160,
+        "height": 224
+      }
+    }
+  ],
+  "connections": {
+    "Run Trustpilot test": {
+      "main": [
+        [
+          {
+            "node": "Build URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build URLs": {
+      "main": [
+        [
+          {
+            "node": "Fetch page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch page": {
+      "main": [
+        [
+          {
+            "node": "Analyse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyse": {
+      "main": [
+        [
+          {
+            "node": "Write results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "dHt074svDksx60Dr",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "updatedAt": "2025-09-16T08:57:49.000Z"
+      },
+      "createdAt": "2026-10-20T12:39:42.658Z",
+      "updatedAt": "2026-10-20T12:39:42.658Z"
+    }
+  ],
+  "activeVersion": null
+}
