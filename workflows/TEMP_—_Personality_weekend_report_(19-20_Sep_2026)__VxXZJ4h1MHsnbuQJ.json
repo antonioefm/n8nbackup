@@ -1,0 +1,201 @@
+{
+  "id": "VxXZJ4h1MHsnbuQJ",
+  "name": "TEMP — Personality weekend report (19-20 Sep 2026)",
+  "description": "Temporary diagnostic. Personality tickets created Sat 19 - Sun 20 Sep 2026 (UTC): high-risk flag counts and automated vs manual split by current assignee.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-21T09:28:09.213Z",
+  "updatedAt": "2026-09-24T07:19:31.206Z",
+  "isArchived": false,
+  "versionId": "97692d33-2402-4dab-9020-ae76e8f7f09b",
+  "versionCounter": 4,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "efa17eed-2349-476c-bc4a-94afe781f6bc",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -320,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "72b8ec3d-e99c-4b10-bcf7-118e3aa38b0f",
+      "name": "Get Project Config",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -96,
+        0
+      ],
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "IRxwFN8iBhHLFQxQ",
+          "cachedResultName": "cs_project_config"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "project_key",
+              "keyValue": "personality_prod"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "71ad5e8f-357c-4ca9-994f-121f95076eba",
+      "name": "Build window",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        128,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const cfg = $input.first().json;\n\n// Absolute UTC boundaries, deliberately hardcoded so the instance clock cannot shift the window.\n// Wed 2026-09-23 00:00:00Z .. Thu 2026-09-24 00:00:00Z (exclusive)\nconst START_UNIX = 1790121600;\nconst END_UNIX = 1790208000;\n\nreturn [{ json: {\n  zendesk_domain: cfg.zendesk_domain,\n  automation_agent_id: cfg.automation_agent_id == null ? null : String(cfg.automation_agent_id),\n  start_unix: START_UNIX,\n  end_unix: END_UNIX,\n  start_iso: new Date(START_UNIX * 1000).toISOString(),\n  end_iso: new Date(END_UNIX * 1000).toISOString(),\n  instance_clock_now: new Date().toISOString()\n} }];"
+      }
+    },
+    {
+      "id": "a89d0999-7c55-4516-92d5-0a7214d29c2c",
+      "name": "Zendesk: Incremental tickets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        352,
+        0
+      ],
+      "parameters": {
+        "url": "={{ \"https://\" + $json.zendesk_domain + \".zendesk.com/api/v2/incremental/tickets/cursor.json?start_time=\" + $json.start_unix }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {
+          "pagination": {
+            "pagination": {
+              "paginationMode": "responseContainsNextURL",
+              "nextURL": "={{ $response.body.after_url }}",
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ $response.body.end_of_stream === true }}",
+              "limitPagesFetched": true,
+              "maxRequests": 30,
+              "requestInterval": 7000
+            }
+          }
+        }
+      },
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      },
+      "notes": "Incremental export (cursor), start_time = Sat 00:00 UTC. Export is by updated_at, so weekend tickets touched later are still returned; the Code node filters on created_at.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "b10e774f-fe73-4578-a6de-8465e8753438",
+      "name": "Build report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        576,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const w = $('Build window').first().json;\nconst agent = w.automation_agent_id;\n\nconst TAG_TIER = {\n  'high-risk-legal-financial': 'A',\n  'high-risk-conduct': 'B',\n  'high-risk-safety-critical': 'C'\n};\n\nconst byId = new Map();\nfor (const item of $input.all()) {\n  const arr = (item.json && Array.isArray(item.json.tickets)) ? item.json.tickets : [];\n  for (const t of arr) byId.set(String(t.id), t);\n}\nconst all = Array.from(byId.values());\n\nconst startMs = w.start_unix * 1000;\nconst endMs = w.end_unix * 1000;\n\nlet maxCreated = null;\nfor (const t of all) {\n  if (maxCreated === null || t.created_at > maxCreated) maxCreated = t.created_at;\n}\n\nconst inWindow = all.filter(t => {\n  const c = Date.parse(t.created_at);\n  return c >= startMs && c < endMs;\n});\n\nfunction hrTags(t) {\n  const tags = Array.isArray(t.tags) ? t.tags : [];\n  return tags.filter(tag => TAG_TIER[tag]);\n}\n\nfunction isSolved(t) { return t.status === 'solved' || t.status === 'closed'; }\n\nfunction bucket(t) {\n  if (!isSolved(t)) return 'not_yet_solved';\n  const a = t.assignee_id == null ? null : String(t.assignee_id);\n  if (agent && a === agent) return 'automated';\n  if (a) return 'manual';\n  return 'solved_unassigned';\n}\n\nfunction tally(list, fn) {\n  const m = {};\n  for (const x of list) {\n    const k = fn(x);\n    if (k === null || k === undefined) continue;\n    m[k] = (m[k] || 0) + 1;\n  }\n  return m;\n}\n\nfunction pct(n, d) { return d ? Math.round((n / d) * 1000) / 10 : 0; }\n\nfunction stats(list) {\n  const flagged = list.filter(t => hrTags(t).length > 0);\n  const buckets = tally(list, bucket);\n  const automated = buckets.automated || 0;\n  const manual = buckets.manual || 0;\n  const solvedUnassigned = buckets.solved_unassigned || 0;\n  const notSolved = buckets.not_yet_solved || 0;\n  const solved = automated + manual + solvedUnassigned;\n\n  const perTier = { A: 0, B: 0, C: 0 };\n  for (const t of flagged) {\n    for (const tag of hrTags(t)) perTier[TAG_TIER[tag]]++;\n  }\n\n  const nonFlagged = list.filter(t => hrTags(t).length === 0);\n  const nfBuckets = tally(nonFlagged, bucket);\n  const nfAutomated = nfBuckets.automated || 0;\n  const nfManual = nfBuckets.manual || 0;\n  const nfSolved = nfAutomated + nfManual + (nfBuckets.solved_unassigned || 0);\n\n  return {\n    received: list.length,\n    high_risk: {\n      flagged: flagged.length,\n      pct_of_received: pct(flagged.length, list.length),\n      tier_A_legal_financial: perTier.A,\n      tier_B_conduct: perTier.B,\n      tier_C_safety_critical: perTier.C\n    },\n    automation: {\n      solved: solved,\n      pct_solved_of_received: pct(solved, list.length),\n      automated: automated,\n      manual: manual,\n      solved_unassigned: solvedUnassigned,\n      not_yet_solved: notSolved,\n      automated_pct_of_solved: pct(automated, solved),\n      automated_pct_of_received: pct(automated, list.length)\n    },\n    excluding_high_risk: {\n      solved: nfSolved,\n      automated: nfAutomated,\n      manual: nfManual,\n      automated_pct_of_solved: pct(nfAutomated, nfSolved)\n    },\n    status_breakdown: tally(list, t => t.status),\n    high_risk_by_bucket: tally(flagged, bucket),\n    non_high_risk_by_bucket: nfBuckets\n  };\n}\n\n// Group by UTC calendar day, derived from the window rather than hardcoded\nconst days = {};\nfor (const t of inWindow) {\n  const d = String(t.created_at).slice(0, 10);\n  if (!days[d]) days[d] = [];\n  days[d].push(t);\n}\nconst byDay = {};\nfor (const d of Object.keys(days).sort()) byDay[d] = stats(days[d]);\n\nreturn [{ json: {\n  meta: {\n    project_key: 'personality_prod',\n    zendesk_domain: w.zendesk_domain,\n    automation_agent_id: agent,\n    window_start_utc: w.start_iso,\n    window_end_utc: w.end_iso,\n    definition: 'Automated = ticket is solved/closed AND the current assignee is the automation account (John). Manual = solved with a different assignee. Not-yet-solved tickets are reported separately and excluded from the automated/manual split.',\n    tickets_pulled_total: all.length,\n    latest_created_at_seen: maxCreated,\n    instance_clock_now: w.instance_clock_now\n  },\n  by_day: byDay,\n  total: stats(inWindow)\n} }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Get Project Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Project Config": {
+      "main": [
+        [
+          {
+            "node": "Build window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build window": {
+      "main": [
+        [
+          {
+            "node": "Zendesk: Incremental tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk: Incremental tickets": {
+      "main": [
+        [
+          {
+            "node": "Build report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "VxXZJ4h1MHsnbuQJ",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "updatedAt": "2025-09-16T08:57:49.000Z"
+      },
+      "createdAt": "2026-09-21T09:28:09.223Z",
+      "updatedAt": "2026-09-21T09:28:09.223Z"
+    }
+  ],
+  "activeVersion": null
+}
