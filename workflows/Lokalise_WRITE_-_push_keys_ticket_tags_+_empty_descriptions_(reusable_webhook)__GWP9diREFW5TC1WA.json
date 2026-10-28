@@ -1,0 +1,327 @@
+{
+  "id": "GWP9diREFW5TC1WA",
+  "name": "Lokalise WRITE - push keys: ticket tags + empty descriptions (reusable webhook)",
+  "description": "Reusable: for keys of one push, adds ticket tags (merge) and writes descriptions only where empty; check mode reports filled targets per language. Payload via secret webhook. Keep unpublished when not in use.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-28T10:19:40.860Z",
+  "updatedAt": "2026-10-28T10:19:40.860Z",
+  "isArchived": false,
+  "versionId": "b2b5a110-b7d1-4b8c-9304-c974b68ba5fe",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "ed9e46c6-910a-40d2-8e71-bfbeebcadf40",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        96
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "l10n-push-tags-desc",
+        "responseMode": "lastNode",
+        "responseData": "allEntries",
+        "options": {}
+      },
+      "webhookId": "f97968c0-2446-4e9e-84d2-681f629c2df4"
+    },
+    {
+      "id": "476da928-ca15-4152-b28c-efaee68f5a42",
+      "name": "Params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b = $input.first().json.body || {};\nconst h = $input.first().json.headers || {};\nif (h['x-l10n-secret'] !== 'f41b7c2e9d0a83561e2b4c7d9a0f13e8') throw new Error('bad secret');\nif (!['check','one','all'].includes(b.mode)) throw new Error('bad mode');\nif (!/^[0-9a-f]+\\.[0-9]+$/.test(b.pid || '')) throw new Error('bad pid');\nconst D = b.D || [];\nreturn [{ json: { mode: b.mode, pid: b.pid, TAGS: b.tags || [], D, ids: D.map(d => d[0]).join(',') } }];"
+      }
+    },
+    {
+      "id": "707b8a03-9eac-446a-ae4e-3df1ba7fa8f3",
+      "name": "Get Current",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.pid }}/keys?include_translations=1&include_screenshots=1&limit=500&filter_key_ids={{ $json.ids }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "1c31fd64-4d37-4f89-83d2-ace42854590b",
+      "name": "Build",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const cfg = $('Params').first().json;\nconst want = {}; for (const d of cfg.D) want[d[0]] = d[1];\nconst keys = ($('Get Current').first().json.keys) || [];\nconst ups = []; let nTag=0, nDesc=0, hadDesc=0, archived=0, shots=0;\nconst filled = {}; const editors = {};\nfor (const k of keys) {\n  if (!(k.key_id in want)) continue;\n  if ((k.screenshots||[]).length) shots++;\n  for (const t of (k.translations||[])) { if (t.language_iso === 'en') continue; const s = typeof t.translation === 'string' ? t.translation : JSON.stringify(t.translation); if (s.trim()) { filled[t.language_iso] = (filled[t.language_iso]||0) + 1; const e = t.modified_by_email || '?'; editors[e] = (editors[e]||0)+1; } else { filled[t.language_iso] = filled[t.language_iso] || 0; } }\n  if (k.is_archived) { archived++; continue; }\n  const u = { key_id: k.key_id };\n  const missing = cfg.TAGS.filter(t => !(k.tags || []).includes(t));\n  if (missing.length) { u.tags = missing; u.merge_tags = true; nTag++; }\n  if (!(k.description || '').trim()) { u.description = want[k.key_id]; nDesc++; } else hadDesc++;\n  if (Object.keys(u).length > 1) ups.push(u);\n}\nconst summary = { mode: cfg.mode, found: keys.length, expected: cfg.D.length, archived, tag: nTag, desc: nDesc, descAlreadySet: hadDesc, keysWithScreenshot: shots, filledPerLang: filled, editors };\nif (cfg.mode === 'check') return [{ json: { summary, write: false } }];\nconst list = cfg.mode === 'one' ? ups.slice(0,1) : ups;\nconst out = []; for (let i = 0; i < list.length; i += 40) out.push({ json: { body: { keys: list.slice(i, i + 40) }, summary, write: true } });\nif (!out.length) return [{ json: { summary, write: false } }];\nreturn out;"
+      }
+    },
+    {
+      "id": "dfd04a4f-eb70-49b2-a328-f87e1a98353e",
+      "name": "Write?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        896,
+        96
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.write }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "0e7e9ab9-910c-4876-8c55-53784c9e98f6",
+      "name": "WRITE Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $('Params').first().json.pid }}/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "c12b88b9-18a4-4c11-9004-366620516e6a",
+      "name": "Read Back",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $('Params').first().json.pid }}/keys?limit=500&filter_key_ids={{ $('Params').first().json.ids }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "e48d7c83-4242-4501-9608-0a23bb0eb64e",
+      "name": "Compare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const cfg = $('Params').first().json;\nconst want = {}; for (const d of cfg.D) want[d[0]] = d[1];\nconst keys = ($('Read Back').first().json.keys) || [];\nlet tagsOk=0, descMine=0, descAny=0;\nfor (const k of keys) { if (!(k.key_id in want)) continue; if (cfg.TAGS.every(t => (k.tags||[]).includes(t))) tagsOk++; if ((k.description||'') === want[k.key_id]) descMine++; if ((k.description||'').trim()) descAny++; }\nreturn [{ json: { build: $('Build').first().json.summary, writeCalls: $('WRITE Keys').all().length, checked: keys.length, tagsOk, descMine, descAny, tagsSample: keys.slice(0,2).map(k => k.tags) } }];"
+      }
+    },
+    {
+      "id": "8f9942bc-0bcd-48ee-9f05-270b468908d1",
+      "name": "Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: $input.first().json.summary }];"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Params": {
+      "main": [
+        [
+          {
+            "node": "Get Current",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Current": {
+      "main": [
+        [
+          {
+            "node": "Build",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build": {
+      "main": [
+        [
+          {
+            "node": "Write?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write?": {
+      "main": [
+        [
+          {
+            "node": "WRITE Keys",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WRITE Keys": {
+      "main": [
+        [
+          {
+            "node": "Read Back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Back": {
+      "main": [
+        [
+          {
+            "node": "Compare",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "GWP9diREFW5TC1WA",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-28T10:19:40.892Z",
+      "updatedAt": "2026-10-28T10:19:40.892Z"
+    }
+  ],
+  "activeVersion": null
+}
