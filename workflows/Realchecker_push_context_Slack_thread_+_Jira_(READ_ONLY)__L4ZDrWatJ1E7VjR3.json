@@ -1,0 +1,239 @@
+{
+  "id": "L4ZDrWatJ1E7VjR3",
+  "name": "Realchecker push context: Slack thread + Jira (READ ONLY)",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-22T14:25:28.568Z",
+  "updatedAt": "2026-10-22T14:25:28.568Z",
+  "isArchived": false,
+  "versionId": "d0bb167d-7cfd-480e-9b78-a79af19bc0a4",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "ad0ebca3-eddd-4183-90e6-ce9d01dde34c",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "889bc905-073f-4a1b-b7b1-61a7b046f2f1",
+      "name": "Slack thread",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://slack.com/api/conversations.replies?channel=C0BFQ8FH9BM&ts=1792583744.885749&limit=50",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "86de6f3d-204d-4642-b137-46ba3e440681",
+      "name": "Jira items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return ['REALCHECK-557','REALCHECK-382'].map(k => ({ json: { key: k } }));"
+      }
+    },
+    {
+      "id": "5b209d8d-bb07-43a6-9b20-60eee7774b69",
+      "name": "Jira",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://futuremedia.atlassian.net/rest/api/3/issue/{{ $json.key }}?fields=summary,status,issuelinks,description,parent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "QJte7dJbX10mIzJI",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "id": "bfbaf92f-e8ac-4376-ab16-d21761ef7418",
+      "name": "Password key commit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.github.com/search/commits?q=repo:QR-CODE-App/realchecker-frontend+password_letters_and_numbers",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "8cf245bf-c7b5-4dfe-bf41-af7ff747112f",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const adf = (n) => { if (!n) { return ''; } if (typeof n === 'string') { return n; } let s = n.text || ''; if (n.attrs && n.attrs.url) { s += ' ' + n.attrs.url; } if (n.marks) { for (const m of n.marks) { if (m.attrs && m.attrs.href) { s += ' <' + m.attrs.href + '>'; } } } if (Array.isArray(n.content)) { s += ' ' + n.content.map(adf).join(' '); } return s; };\nconst th = $('Slack thread').first().json || {};\nconst msgs = (th.messages || []).map(m => ({ ts: m.ts, user: m.user || m.bot_id, text: String(m.text || '').slice(0, 600) }));\nconst jira = $('Jira').all().map(it => { const b = it.json.body || {}; const f = b.fields || {}; return { key: b.key, status: it.json.statusCode, summary: f.summary, state: f.status && f.status.name, parent: f.parent ? f.parent.key + ' ' + (f.parent.fields && f.parent.fields.summary) : '', links: (f.issuelinks || []).map(l => ({ type: l.type && l.type.name, key: (l.outwardIssue || l.inwardIssue || {}).key, status: ((l.outwardIssue || l.inwardIssue || {}).fields || {}).status ? (l.outwardIssue || l.inwardIssue).fields.status.name : '', summary: ((l.outwardIssue || l.inwardIssue || {}).fields || {}).summary })), description: adf(f.description).replace(/\\s+/g, ' ').slice(0, 3000) }; });\nconst c = $('Password key commit').first().json || {};\nreturn [{ json: { slack_ok: th.ok, slack_error: th.error || null, thread: msgs, jira: jira, pw_commit: { status: c.statusCode, items: ((c.body || {}).items || []).map(i => ({ sha: i.sha.slice(0,9), date: i.commit.committer.date, msg: i.commit.message.slice(0, 160) })) } } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Slack thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack thread": {
+      "main": [
+        [
+          {
+            "node": "Jira items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira items": {
+      "main": [
+        [
+          {
+            "node": "Jira",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira": {
+      "main": [
+        [
+          {
+            "node": "Password key commit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Password key commit": {
+      "main": [
+        [
+          {
+            "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "L4ZDrWatJ1E7VjR3",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-22T14:25:28.574Z",
+      "updatedAt": "2026-10-22T14:25:28.574Z"
+    }
+  ],
+  "activeVersion": null
+}
