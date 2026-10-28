@@ -1,0 +1,196 @@
+{
+  "id": "eouYGJlDGGkRBL49",
+  "name": "Lokalise WRITE - glossary Bokmal to Norwegian 2026-10-13",
+  "description": "WRITE: moves glossary Norwegian Bokmål (759) slots to Norwegian (760). Test mode limited to term 'refund'.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-13T06:57:05.542Z",
+  "updatedAt": "2026-10-13T06:58:01.826Z",
+  "isArchived": false,
+  "versionId": "3ab6fca5-8666-41d5-9a74-4351cb9a816c",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "89d7be6f-ef14-412f-a577-17c09af73300",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "bc5c9ac9-3d15-4052-9dd9-20bf8154bf54",
+      "name": "Fetch Terms",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "name": "cursor",
+                    "type": "qs",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20,
+              "requestInterval": 700
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "56b27d4f-39ad-4781-b4c0-20474d2e5d1f",
+      "name": "Build Fix",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ONLY = []; // TEST: set to ['term'] to limit\nconst terms = [];\nfor (const it of $input.all()) {\n  const b = it.json.body || {};\n  for (const t of (b.data || [])) terms.push(t);\n}\nconst fix = []; const backup = [];\nfor (const t of terms) {\n  const nb = (t.translations || []).filter(function (x) { return x.langId === 759; });\n  if (nb.length === 0) continue;\n  if (ONLY.length && ONLY.indexOf(t.term) < 0) continue;\n  const no = (t.translations || []).filter(function (x) { return x.langId === 760; })[0];\n  const src = nb[0];\n  const tr = (no && no.translation) ? no.translation : (src.translation || '');\n  const ds = (no && no.description) ? no.description : (src.description || '');\n  backup.push({ id: t.id, term: t.term, translations: t.translations });\n  fix.push({ id: t.id, translations: [{ langId: 760, translation: tr, description: ds }] });\n}\nreturn [{ json: { count: fix.length, body: { terms: fix }, backup: backup, total_terms: terms.length } }];\n"
+      }
+    },
+    {
+      "id": "c46fddcd-b126-4c27-856b-09925008ae96",
+      "name": "PUT Terms",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Terms",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Terms": {
+      "main": [
+        [
+          {
+            "node": "Build Fix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Fix": {
+      "main": [
+        [
+          {
+            "node": "PUT Terms",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "eouYGJlDGGkRBL49",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-13T06:57:05.560Z",
+      "updatedAt": "2026-10-13T06:57:05.560Z"
+    }
+  ],
+  "activeVersion": null
+}
