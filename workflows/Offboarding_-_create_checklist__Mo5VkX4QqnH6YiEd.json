@@ -1,14 +1,14 @@
 {
   "id": "Mo5VkX4QqnH6YiEd",
   "name": "Offboarding - create checklist",
-  "description": "Two-page n8n form that reads the live General tools Confluence page, builds a per-person offboarding tool checklist xlsx in the OneDrive Offboardings folder, registers it, and DMs each access owner on Slack.",
+  "description": "Two-page n8n form that reads the internal General tools Confluence page (2076311575), builds a per-person offboarding tool checklist xlsx in the OneDrive Offboardings folder, registers it, and DMs each access owner on Slack.",
   "active": true,
-  "activeVersionId": "cfca51ce-320b-4326-8e9a-48d3404664ec",
+  "activeVersionId": "bd6eee6a-5289-4df5-bec9-cb43023921fe",
   "createdAt": "2026-08-28T12:24:54.927Z",
-  "updatedAt": "2026-09-25T12:51:48.019Z",
+  "updatedAt": "2026-10-23T11:48:32.376Z",
   "isArchived": false,
-  "versionId": "cfca51ce-320b-4326-8e9a-48d3404664ec",
-  "versionCounter": 21,
+  "versionId": "bd6eee6a-5289-4df5-bec9-cb43023921fe",
+  "versionCounter": 24,
   "sourceWorkflowId": null,
   "triggerCount": 1,
   "nodes": [
@@ -71,7 +71,7 @@
     },
     {
       "parameters": {
-        "url": "https://futuremedia.atlassian.net/wiki/api/v2/pages/1540030465?body-format=atlas_doc_format",
+        "url": "https://futuremedia.atlassian.net/wiki/api/v2/pages/2076311575?body-format=atlas_doc_format",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpBasicAuth",
         "options": {}
@@ -93,14 +93,14 @@
     },
     {
       "parameters": {
-        "jsCode": "const page = $input.first().json;\nconst adfRaw = page.body && page.body.atlas_doc_format ? page.body.atlas_doc_format.value : null;\nif (!adfRaw) { throw new Error('Confluence page 1540030465 returned no atlas_doc_format body. Offboarding aborted.'); }\nconst doc = typeof adfRaw === 'string' ? JSON.parse(adfRaw) : adfRaw;\n\nfunction textOf(n) {\n  if (!n) { return ''; }\n  if (n.type === 'text') { return n.text || ''; }\n  if (n.type === 'status') { return (n.attrs && n.attrs.text) ? n.attrs.text : ''; }\n  if (n.type === 'inlineCard' || n.type === 'blockCard') { return (n.attrs && n.attrs.url) ? n.attrs.url : ''; }\n  let out = '';\n  const kids = n.content || [];\n  for (let i = 0; i < kids.length; i++) { out += textOf(kids[i]); }\n  return out;\n}\n\n// Pulls hyperlinks out of a cell: link marks on text nodes, plus bare url cards.\nfunction collectLinks(n, acc) {\n  if (!n || typeof n !== 'object') { return acc; }\n  if (n.type === 'text' && Array.isArray(n.marks)) {\n    for (let m = 0; m < n.marks.length; m++) {\n      const mark = n.marks[m];\n      if (mark && mark.type === 'link' && mark.attrs && mark.attrs.href) {\n        acc.push({ text: n.text || '', href: mark.attrs.href });\n      }\n    }\n  }\n  if ((n.type === 'inlineCard' || n.type === 'blockCard') && n.attrs && n.attrs.url) {\n    acc.push({ text: n.attrs.url, href: n.attrs.url });\n  }\n  const kids = n.content || [];\n  for (let i = 0; i < kids.length; i++) { collectLinks(kids[i], acc); }\n  return acc;\n}\n\nfunction collectTables(n, acc) {\n  if (!n || typeof n !== 'object') { return acc; }\n  if (n.type === 'table') { acc.push(n); }\n  const kids = n.content || [];\n  for (let i = 0; i < kids.length; i++) { collectTables(kids[i], acc); }\n  return acc;\n}\n\n// --- locate the tools table: the one whose first header cell is \"Tool name\" ---\nconst tables = collectTables(doc, []);\nlet target = null;\nlet header = [];\nfor (let t = 0; t < tables.length; t++) {\n  const firstRow = (tables[t].content || [])[0];\n  if (!firstRow) { continue; }\n  const cells = firstRow.content || [];\n  const texts = [];\n  for (let c = 0; c < cells.length; c++) { texts.push(textOf(cells[c]).replace(/\\s+/g, ' ').trim().toLowerCase()); }\n  if (texts.length > 0 && texts[0] === 'tool name') { target = tables[t]; header = texts; break; }\n}\nif (!target) { throw new Error('Could not find the tools table on the General tools page (no table whose first column header is \"Tool name\"). Offboarding aborted.'); }\n\n// --- map columns by header name, so added or reordered columns do not break the parse ---\nfunction colIndex(name) { return header.indexOf(name); }\nconst REQUIRED = ['tool name', 'access owner', 'note'];\nconst missing = [];\nfor (let i = 0; i < REQUIRED.length; i++) { if (colIndex(REQUIRED[i]) === -1) { missing.push(REQUIRED[i]); } }\nif (missing.length > 0) {\n  throw new Error('General tools table is missing required column(s): ' + missing.join(', ') + '. Columns found: ' + header.join(' | ') + '. Offboarding aborted.');\n}\nconst COL_TOOL = colIndex('tool name');\nconst COL_OWNER = colIndex('access owner');\nconst COL_NOTE = colIndex('note');\nconst COL_SCOPE = colIndex('scope');   // optional; -1 if absent\n\nfunction primaryOwner(raw) {\n  let s = (raw || '').replace(/\\([^)]*\\)/g, ' ');\n  s = s.replace(/\\s+/g, ' ').trim();\n  if (!s) { return ''; }\n  const parts = s.split(/[\\/+,&]/);\n  return parts[0].trim();\n}\n\nconst allRows = target.content || [];\nconst rows = [];\nconst owners = [];\nlet category = '';\nlet categoryCount = 0;\nlet linkedNoteCount = 0;\nlet scopedCount = 0;\nfor (let r = 1; r < allRows.length; r++) {\n  const cells = allRows[r].content || [];\n  const texts = [];\n  for (let c = 0; c < cells.length; c++) { texts.push(textOf(cells[c]).replace(/\\s+/g, ' ').trim()); }\n  const baseTool = (texts[COL_TOOL] || '').trim();\n  if (!baseTool) { continue; }\n  let rest = '';\n  for (let c = 0; c < texts.length; c++) { if (c !== COL_TOOL) { rest += (texts[c] || ''); } }\n  if (rest.trim() === '') { category = baseTool; categoryCount++; continue; }\n\n  const scope = COL_SCOPE >= 0 ? (texts[COL_SCOPE] || '').trim() : '';\n  if (scope) { scopedCount++; }\n  const tool = scope ? baseTool + ' (' + scope + ')' : baseTool;\n  const ownerRaw = (texts[COL_OWNER] || '').trim();\n  const noteLinks = cells.length > COL_NOTE ? collectLinks(cells[COL_NOTE], []) : [];\n  if (noteLinks.length > 0) { linkedNoteCount++; }\n\n  const key = primaryOwner(ownerRaw);\n  rows.push({ category: category, tool: tool, scope: scope, note: (texts[COL_NOTE] || '').trim(), noteLinks: noteLinks, owner_confluence: ownerRaw, owner_key: key });\n  if (key && owners.indexOf(key) === -1) { owners.push(key); }\n}\n\nif (rows.length < 60) { throw new Error('Only ' + rows.length + ' tool rows parsed from the General tools page (expected at least 60). Columns found: ' + header.join(' | ') + '. Offboarding aborted.'); }\n\nreturn [{ json: { pageVersion: page.version ? page.version.number : null, columns: header, toolCount: rows.length, categoryCount: categoryCount, scopedCount: scopedCount, linkedNoteCount: linkedNoteCount, owners: owners, rows: rows } }];\n"
+        "jsCode": "// Parses two live Confluence pages on every run:\n//   General tools (internal)     (2076311575)  - the tool checklist (internal source page, includes [internal] columns)\n//   Offboarding additional steps (2003894274) - extra steps appended at the bottom\nconst mainPage = $('Fetch General tools page').first().json;\nconst extraPage = $input.first().json;\n\nfunction textOf(n) {\n  if (!n) { return ''; }\n  if (n.type === 'text') { return n.text || ''; }\n  if (n.type === 'status') { return (n.attrs && n.attrs.text) ? n.attrs.text : ''; }\n  if (n.type === 'inlineCard' || n.type === 'blockCard') { return (n.attrs && n.attrs.url) ? n.attrs.url : ''; }\n  let out = '';\n  const kids = n.content || [];\n  for (let i = 0; i < kids.length; i++) { out += textOf(kids[i]); }\n  return out;\n}\n\n// Pulls hyperlinks out of a cell: link marks on text nodes, plus bare url cards.\nfunction collectLinks(n, acc) {\n  if (!n || typeof n !== 'object') { return acc; }\n  if (n.type === 'text' && Array.isArray(n.marks)) {\n    for (let m = 0; m < n.marks.length; m++) {\n      const mark = n.marks[m];\n      if (mark && mark.type === 'link' && mark.attrs && mark.attrs.href) {\n        acc.push({ text: n.text || '', href: mark.attrs.href });\n      }\n    }\n  }\n  if ((n.type === 'inlineCard' || n.type === 'blockCard') && n.attrs && n.attrs.url) {\n    acc.push({ text: n.attrs.url, href: n.attrs.url });\n  }\n  const kids = n.content || [];\n  for (let i = 0; i < kids.length; i++) { collectLinks(kids[i], acc); }\n  return acc;\n}\n\nfunction collectTables(n, acc) {\n  if (!n || typeof n !== 'object') { return acc; }\n  if (n.type === 'table') { acc.push(n); }\n  const kids = n.content || [];\n  for (let i = 0; i < kids.length; i++) { collectTables(kids[i], acc); }\n  return acc;\n}\n\nfunction primaryOwner(raw) {\n  let s = (raw || '').replace(/\\([^)]*\\)/g, ' ');\n  s = s.replace(/\\s+/g, ' ').trim();\n  if (!s) { return ''; }\n  const parts = s.split(/[\\/+,&]/);\n  return parts[0].trim();\n}\n\n// opts: label, pageId, nameHeaders (accepted first-column headers), minRows, defaultCategory\nfunction parsePage(page, opts) {\n  const adfRaw = page && page.body && page.body.atlas_doc_format ? page.body.atlas_doc_format.value : null;\n  if (!adfRaw) { throw new Error(opts.label + ' page ' + opts.pageId + ' returned no atlas_doc_format body. Offboarding aborted.'); }\n  const doc = typeof adfRaw === 'string' ? JSON.parse(adfRaw) : adfRaw;\n\n  // locate the table whose first header cell is one of the accepted name headers\n  const tables = collectTables(doc, []);\n  let target = null;\n  let header = [];\n  for (let t = 0; t < tables.length; t++) {\n    const firstRow = (tables[t].content || [])[0];\n    if (!firstRow) { continue; }\n    const cells = firstRow.content || [];\n    const texts = [];\n    for (let c = 0; c < cells.length; c++) { texts.push(textOf(cells[c]).replace(/\\s+/g, ' ').trim().toLowerCase()); }\n    if (texts.length > 0 && opts.nameHeaders.indexOf(texts[0]) !== -1) { target = tables[t]; header = texts; break; }\n  }\n  if (!target) {\n    throw new Error('Could not find the table on the ' + opts.label + ' page (' + opts.pageId + '): no table whose first column header is ' + opts.nameHeaders.map(function (h) { return '\"' + h + '\"'; }).join(' or ') + '. Offboarding aborted.');\n  }\n\n  // map columns by header name so added or reordered columns do not break the parse.\n  // The first name found wins: the internal Note column is preferred over the public one.\n  function findCol(names) {\n    for (let n = 0; n < names.length; n++) { const i = header.indexOf(names[n]); if (i !== -1) { return i; } }\n    return -1;\n  }\n  const COL_TOOL = 0;\n  const COL_OWNER = findCol(['access owner', 'access owner [internal]']);\n  const COL_NOTE = findCol(['note [internal]', 'note']);\n  const COL_SCOPE = findCol(['scope', 'scope [internal]']);   // optional; -1 if absent\n  const missing = [];\n  if (COL_OWNER === -1) { missing.push('access owner'); }\n  if (COL_NOTE === -1) { missing.push('note'); }\n  if (missing.length > 0) {\n    throw new Error(opts.label + ' table is missing required column(s): ' + missing.join(', ') + '. Columns found: ' + header.join(' | ') + '. Offboarding aborted.');\n  }\n\n  const allRows = target.content || [];\n  const rows = [];\n  let category = opts.defaultCategory || '';\n  let categoryCount = 0;\n  let linkedNoteCount = 0;\n  let scopedCount = 0;\n  for (let r = 1; r < allRows.length; r++) {\n    const cells = allRows[r].content || [];\n    const texts = [];\n    for (let c = 0; c < cells.length; c++) { texts.push(textOf(cells[c]).replace(/\\s+/g, ' ').trim()); }\n    const baseTool = (texts[COL_TOOL] || '').trim();\n    if (!baseTool) { continue; }\n    let rest = '';\n    for (let c = 0; c < texts.length; c++) { if (c !== COL_TOOL) { rest += (texts[c] || ''); } }\n    if (rest.trim() === '') { category = baseTool; categoryCount++; continue; }\n\n    const scope = COL_SCOPE >= 0 ? (texts[COL_SCOPE] || '').trim() : '';\n    if (scope) { scopedCount++; }\n    const tool = scope ? baseTool + ' (' + scope + ')' : baseTool;\n    const ownerRaw = (texts[COL_OWNER] || '').trim();\n    const noteLinks = cells.length > COL_NOTE ? collectLinks(cells[COL_NOTE], []) : [];\n    if (noteLinks.length > 0) { linkedNoteCount++; }\n    rows.push({ source: opts.label, category: category, tool: tool, scope: scope, note: (texts[COL_NOTE] || '').trim(), noteLinks: noteLinks, owner_confluence: ownerRaw, owner_key: primaryOwner(ownerRaw) });\n  }\n\n  if (rows.length < opts.minRows) {\n    throw new Error('Only ' + rows.length + ' row(s) parsed from the ' + opts.label + ' page (expected at least ' + opts.minRows + '). Columns found: ' + header.join(' | ') + '. Offboarding aborted.');\n  }\n  return { header: header, rows: rows, categoryCount: categoryCount, linkedNoteCount: linkedNoteCount, scopedCount: scopedCount, version: page.version ? page.version.number : null };\n}\n\nconst main = parsePage(mainPage, { label: 'General tools', pageId: '2076311575', nameHeaders: ['tool name'], minRows: 60, defaultCategory: '' });\nconst extra = parsePage(extraPage, { label: 'Offboarding additional steps', pageId: '2003894274', nameHeaders: ['section name', 'tool name', 'step', 'step name'], minRows: 0, defaultCategory: 'Additional steps' });\n\n// The additional steps always sit at the very bottom. If one of its categories happens to share a name with\n// the last General tools category, prefix it so the sheet still shows a separate heading.\nconst lastMainCategory = main.rows.length ? main.rows[main.rows.length - 1].category : '';\nfor (let i = 0; i < extra.rows.length; i++) {\n  if (extra.rows[i].category === lastMainCategory) { extra.rows[i].category = 'Additional steps - ' + extra.rows[i].category; }\n}\n\nconst rows = main.rows.concat(extra.rows);\nconst owners = [];\nfor (let i = 0; i < rows.length; i++) {\n  const key = rows[i].owner_key;\n  if (key && owners.indexOf(key) === -1) { owners.push(key); }\n}\n\nreturn [{ json: {\n  pageVersion: main.version,\n  additionalStepsPageVersion: extra.version,\n  columns: main.header,\n  additionalStepsColumns: extra.header,\n  toolCount: rows.length,\n  generalToolCount: main.rows.length,\n  additionalStepCount: extra.rows.length,\n  categoryCount: main.categoryCount + extra.categoryCount,\n  scopedCount: main.scopedCount + extra.scopedCount,\n  linkedNoteCount: main.linkedNoteCount + extra.linkedNoteCount,\n  owners: owners,\n  rows: rows\n} }];\n"
       },
       "id": "b5d78f3b-b87d-4c9e-bf0f-f79d7e09b92d",
       "name": "Parse tools table",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -176,
+        48,
         0
       ]
     },
@@ -123,7 +123,7 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        48,
+        272,
         0
       ],
       "executeOnce": true
@@ -137,7 +137,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        272,
+        496,
         0
       ]
     },
@@ -156,7 +156,7 @@
       "type": "n8n-nodes-base.form",
       "typeVersion": 2.5,
       "position": [
-        496,
+        720,
         0
       ],
       "webhookId": "3eca9dd6-2915-49da-a111-45b519d8ea6f"
@@ -170,7 +170,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        720,
+        944,
         0
       ]
     },
@@ -185,7 +185,7 @@
       "type": "n8n-nodes-base.microsoftOneDrive",
       "typeVersion": 1.1,
       "position": [
-        1168,
+        1392,
         0
       ],
       "credentials": {
@@ -358,7 +358,7 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        2736,
+        2960,
         0
       ]
     },
@@ -371,7 +371,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2960,
+        3184,
         0
       ]
     },
@@ -387,7 +387,7 @@
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.7,
       "position": [
-        3184,
+        3408,
         0
       ],
       "webhookId": "f184b1b9-8c5a-4844-8b39-b6deb868e9a9",
@@ -419,7 +419,7 @@
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.7,
       "position": [
-        3408,
+        3632,
         0
       ],
       "webhookId": "26de89ed-31a5-45ea-bb51-62f19f6539b0",
@@ -442,7 +442,7 @@
       "type": "n8n-nodes-base.form",
       "typeVersion": 2.5,
       "position": [
-        3632,
+        3856,
         0
       ],
       "executeOnce": true,
@@ -457,7 +457,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2064,
+        2288,
         0
       ]
     },
@@ -477,7 +477,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2288,
+        2512,
         0
       ],
       "executeOnce": true,
@@ -504,7 +504,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2512,
+        2736,
         0
       ],
       "executeOnce": true,
@@ -533,7 +533,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        944,
+        1168,
         0
       ],
       "credentials": {
@@ -559,7 +559,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1392,
+        1616,
         0
       ],
       "credentials": {
@@ -578,7 +578,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1616,
+        1840,
         0
       ]
     },
@@ -598,7 +598,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1840,
+        2064,
         0
       ],
       "credentials": {
@@ -608,6 +608,28 @@
         }
       },
       "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://futuremedia.atlassian.net/wiki/api/v2/pages/2003894274?body-format=atlas_doc_format",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "options": {}
+      },
+      "id": "c6891b61-d403-49cf-b84f-5e93a03bcb56",
+      "name": "Fetch additional steps page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -176,
+        0
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "C9vZX5ia4sY9xHfI",
+          "name": "Jira API Antonio token"
+        }
+      }
     }
   ],
   "connections": {
@@ -616,17 +638,6 @@
         [
           {
             "node": "Fetch General tools page",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Fetch General tools page": {
-      "main": [
-        [
-          {
-            "node": "Parse tools table",
             "type": "main",
             "index": 0
           }
@@ -819,6 +830,28 @@
           }
         ]
       ]
+    },
+    "Fetch General tools page": {
+      "main": [
+        [
+          {
+            "node": "Fetch additional steps page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch additional steps page": {
+      "main": [
+        [
+          {
+            "node": "Parse tools table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "nodeGroups": [],
@@ -874,7 +907,7 @@
     }
   ],
   "activeVersion": {
-    "versionId": "cfca51ce-320b-4326-8e9a-48d3404664ec",
+    "versionId": "bd6eee6a-5289-4df5-bec9-cb43023921fe",
     "workflowId": "Mo5VkX4QqnH6YiEd",
     "nodes": [
       {
@@ -936,7 +969,7 @@
       },
       {
         "parameters": {
-          "url": "https://futuremedia.atlassian.net/wiki/api/v2/pages/1540030465?body-format=atlas_doc_format",
+          "url": "https://futuremedia.atlassian.net/wiki/api/v2/pages/2076311575?body-format=atlas_doc_format",
           "authentication": "genericCredentialType",
           "genericAuthType": "httpBasicAuth",
           "options": {}
@@ -958,14 +991,14 @@
       },
       {
         "parameters": {
-          "jsCode": "const page = $input.first().json;\nconst adfRaw = page.body && page.body.atlas_doc_format ? page.body.atlas_doc_format.value : null;\nif (!adfRaw) { throw new Error('Confluence page 1540030465 returned no atlas_doc_format body. Offboarding aborted.'); }\nconst doc = typeof adfRaw === 'string' ? JSON.parse(adfRaw) : adfRaw;\n\nfunction textOf(n) {\n  if (!n) { return ''; }\n  if (n.type === 'text') { return n.text || ''; }\n  if (n.type === 'status') { return (n.attrs && n.attrs.text) ? n.attrs.text : ''; }\n  if (n.type === 'inlineCard' || n.type === 'blockCard') { return (n.attrs && n.attrs.url) ? n.attrs.url : ''; }\n  let out = '';\n  const kids = n.content || [];\n  for (let i = 0; i < kids.length; i++) { out += textOf(kids[i]); }\n  return out;\n}\n\n// Pulls hyperlinks out of a cell: link marks on text nodes, plus bare url cards.\nfunction collectLinks(n, acc) {\n  if (!n || typeof n !== 'object') { return acc; }\n  if (n.type === 'text' && Array.isArray(n.marks)) {\n    for (let m = 0; m < n.marks.length; m++) {\n      const mark = n.marks[m];\n      if (mark && mark.type === 'link' && mark.attrs && mark.attrs.href) {\n        acc.push({ text: n.text || '', href: mark.attrs.href });\n      }\n    }\n  }\n  if ((n.type === 'inlineCard' || n.type === 'blockCard') && n.attrs && n.attrs.url) {\n    acc.push({ text: n.attrs.url, href: n.attrs.url });\n  }\n  const kids = n.content || [];\n  for (let i = 0; i < kids.length; i++) { collectLinks(kids[i], acc); }\n  return acc;\n}\n\nfunction collectTables(n, acc) {\n  if (!n || typeof n !== 'object') { return acc; }\n  if (n.type === 'table') { acc.push(n); }\n  const kids = n.content || [];\n  for (let i = 0; i < kids.length; i++) { collectTables(kids[i], acc); }\n  return acc;\n}\n\n// --- locate the tools table: the one whose first header cell is \"Tool name\" ---\nconst tables = collectTables(doc, []);\nlet target = null;\nlet header = [];\nfor (let t = 0; t < tables.length; t++) {\n  const firstRow = (tables[t].content || [])[0];\n  if (!firstRow) { continue; }\n  const cells = firstRow.content || [];\n  const texts = [];\n  for (let c = 0; c < cells.length; c++) { texts.push(textOf(cells[c]).replace(/\\s+/g, ' ').trim().toLowerCase()); }\n  if (texts.length > 0 && texts[0] === 'tool name') { target = tables[t]; header = texts; break; }\n}\nif (!target) { throw new Error('Could not find the tools table on the General tools page (no table whose first column header is \"Tool name\"). Offboarding aborted.'); }\n\n// --- map columns by header name, so added or reordered columns do not break the parse ---\nfunction colIndex(name) { return header.indexOf(name); }\nconst REQUIRED = ['tool name', 'access owner', 'note'];\nconst missing = [];\nfor (let i = 0; i < REQUIRED.length; i++) { if (colIndex(REQUIRED[i]) === -1) { missing.push(REQUIRED[i]); } }\nif (missing.length > 0) {\n  throw new Error('General tools table is missing required column(s): ' + missing.join(', ') + '. Columns found: ' + header.join(' | ') + '. Offboarding aborted.');\n}\nconst COL_TOOL = colIndex('tool name');\nconst COL_OWNER = colIndex('access owner');\nconst COL_NOTE = colIndex('note');\nconst COL_SCOPE = colIndex('scope');   // optional; -1 if absent\n\nfunction primaryOwner(raw) {\n  let s = (raw || '').replace(/\\([^)]*\\)/g, ' ');\n  s = s.replace(/\\s+/g, ' ').trim();\n  if (!s) { return ''; }\n  const parts = s.split(/[\\/+,&]/);\n  return parts[0].trim();\n}\n\nconst allRows = target.content || [];\nconst rows = [];\nconst owners = [];\nlet category = '';\nlet categoryCount = 0;\nlet linkedNoteCount = 0;\nlet scopedCount = 0;\nfor (let r = 1; r < allRows.length; r++) {\n  const cells = allRows[r].content || [];\n  const texts = [];\n  for (let c = 0; c < cells.length; c++) { texts.push(textOf(cells[c]).replace(/\\s+/g, ' ').trim()); }\n  const baseTool = (texts[COL_TOOL] || '').trim();\n  if (!baseTool) { continue; }\n  let rest = '';\n  for (let c = 0; c < texts.length; c++) { if (c !== COL_TOOL) { rest += (texts[c] || ''); } }\n  if (rest.trim() === '') { category = baseTool; categoryCount++; continue; }\n\n  const scope = COL_SCOPE >= 0 ? (texts[COL_SCOPE] || '').trim() : '';\n  if (scope) { scopedCount++; }\n  const tool = scope ? baseTool + ' (' + scope + ')' : baseTool;\n  const ownerRaw = (texts[COL_OWNER] || '').trim();\n  const noteLinks = cells.length > COL_NOTE ? collectLinks(cells[COL_NOTE], []) : [];\n  if (noteLinks.length > 0) { linkedNoteCount++; }\n\n  const key = primaryOwner(ownerRaw);\n  rows.push({ category: category, tool: tool, scope: scope, note: (texts[COL_NOTE] || '').trim(), noteLinks: noteLinks, owner_confluence: ownerRaw, owner_key: key });\n  if (key && owners.indexOf(key) === -1) { owners.push(key); }\n}\n\nif (rows.length < 60) { throw new Error('Only ' + rows.length + ' tool rows parsed from the General tools page (expected at least 60). Columns found: ' + header.join(' | ') + '. Offboarding aborted.'); }\n\nreturn [{ json: { pageVersion: page.version ? page.version.number : null, columns: header, toolCount: rows.length, categoryCount: categoryCount, scopedCount: scopedCount, linkedNoteCount: linkedNoteCount, owners: owners, rows: rows } }];\n"
+          "jsCode": "// Parses two live Confluence pages on every run:\n//   General tools (internal)     (2076311575)  - the tool checklist (internal source page, includes [internal] columns)\n//   Offboarding additional steps (2003894274) - extra steps appended at the bottom\nconst mainPage = $('Fetch General tools page').first().json;\nconst extraPage = $input.first().json;\n\nfunction textOf(n) {\n  if (!n) { return ''; }\n  if (n.type === 'text') { return n.text || ''; }\n  if (n.type === 'status') { return (n.attrs && n.attrs.text) ? n.attrs.text : ''; }\n  if (n.type === 'inlineCard' || n.type === 'blockCard') { return (n.attrs && n.attrs.url) ? n.attrs.url : ''; }\n  let out = '';\n  const kids = n.content || [];\n  for (let i = 0; i < kids.length; i++) { out += textOf(kids[i]); }\n  return out;\n}\n\n// Pulls hyperlinks out of a cell: link marks on text nodes, plus bare url cards.\nfunction collectLinks(n, acc) {\n  if (!n || typeof n !== 'object') { return acc; }\n  if (n.type === 'text' && Array.isArray(n.marks)) {\n    for (let m = 0; m < n.marks.length; m++) {\n      const mark = n.marks[m];\n      if (mark && mark.type === 'link' && mark.attrs && mark.attrs.href) {\n        acc.push({ text: n.text || '', href: mark.attrs.href });\n      }\n    }\n  }\n  if ((n.type === 'inlineCard' || n.type === 'blockCard') && n.attrs && n.attrs.url) {\n    acc.push({ text: n.attrs.url, href: n.attrs.url });\n  }\n  const kids = n.content || [];\n  for (let i = 0; i < kids.length; i++) { collectLinks(kids[i], acc); }\n  return acc;\n}\n\nfunction collectTables(n, acc) {\n  if (!n || typeof n !== 'object') { return acc; }\n  if (n.type === 'table') { acc.push(n); }\n  const kids = n.content || [];\n  for (let i = 0; i < kids.length; i++) { collectTables(kids[i], acc); }\n  return acc;\n}\n\nfunction primaryOwner(raw) {\n  let s = (raw || '').replace(/\\([^)]*\\)/g, ' ');\n  s = s.replace(/\\s+/g, ' ').trim();\n  if (!s) { return ''; }\n  const parts = s.split(/[\\/+,&]/);\n  return parts[0].trim();\n}\n\n// opts: label, pageId, nameHeaders (accepted first-column headers), minRows, defaultCategory\nfunction parsePage(page, opts) {\n  const adfRaw = page && page.body && page.body.atlas_doc_format ? page.body.atlas_doc_format.value : null;\n  if (!adfRaw) { throw new Error(opts.label + ' page ' + opts.pageId + ' returned no atlas_doc_format body. Offboarding aborted.'); }\n  const doc = typeof adfRaw === 'string' ? JSON.parse(adfRaw) : adfRaw;\n\n  // locate the table whose first header cell is one of the accepted name headers\n  const tables = collectTables(doc, []);\n  let target = null;\n  let header = [];\n  for (let t = 0; t < tables.length; t++) {\n    const firstRow = (tables[t].content || [])[0];\n    if (!firstRow) { continue; }\n    const cells = firstRow.content || [];\n    const texts = [];\n    for (let c = 0; c < cells.length; c++) { texts.push(textOf(cells[c]).replace(/\\s+/g, ' ').trim().toLowerCase()); }\n    if (texts.length > 0 && opts.nameHeaders.indexOf(texts[0]) !== -1) { target = tables[t]; header = texts; break; }\n  }\n  if (!target) {\n    throw new Error('Could not find the table on the ' + opts.label + ' page (' + opts.pageId + '): no table whose first column header is ' + opts.nameHeaders.map(function (h) { return '\"' + h + '\"'; }).join(' or ') + '. Offboarding aborted.');\n  }\n\n  // map columns by header name so added or reordered columns do not break the parse.\n  // The first name found wins: the internal Note column is preferred over the public one.\n  function findCol(names) {\n    for (let n = 0; n < names.length; n++) { const i = header.indexOf(names[n]); if (i !== -1) { return i; } }\n    return -1;\n  }\n  const COL_TOOL = 0;\n  const COL_OWNER = findCol(['access owner', 'access owner [internal]']);\n  const COL_NOTE = findCol(['note [internal]', 'note']);\n  const COL_SCOPE = findCol(['scope', 'scope [internal]']);   // optional; -1 if absent\n  const missing = [];\n  if (COL_OWNER === -1) { missing.push('access owner'); }\n  if (COL_NOTE === -1) { missing.push('note'); }\n  if (missing.length > 0) {\n    throw new Error(opts.label + ' table is missing required column(s): ' + missing.join(', ') + '. Columns found: ' + header.join(' | ') + '. Offboarding aborted.');\n  }\n\n  const allRows = target.content || [];\n  const rows = [];\n  let category = opts.defaultCategory || '';\n  let categoryCount = 0;\n  let linkedNoteCount = 0;\n  let scopedCount = 0;\n  for (let r = 1; r < allRows.length; r++) {\n    const cells = allRows[r].content || [];\n    const texts = [];\n    for (let c = 0; c < cells.length; c++) { texts.push(textOf(cells[c]).replace(/\\s+/g, ' ').trim()); }\n    const baseTool = (texts[COL_TOOL] || '').trim();\n    if (!baseTool) { continue; }\n    let rest = '';\n    for (let c = 0; c < texts.length; c++) { if (c !== COL_TOOL) { rest += (texts[c] || ''); } }\n    if (rest.trim() === '') { category = baseTool; categoryCount++; continue; }\n\n    const scope = COL_SCOPE >= 0 ? (texts[COL_SCOPE] || '').trim() : '';\n    if (scope) { scopedCount++; }\n    const tool = scope ? baseTool + ' (' + scope + ')' : baseTool;\n    const ownerRaw = (texts[COL_OWNER] || '').trim();\n    const noteLinks = cells.length > COL_NOTE ? collectLinks(cells[COL_NOTE], []) : [];\n    if (noteLinks.length > 0) { linkedNoteCount++; }\n    rows.push({ source: opts.label, category: category, tool: tool, scope: scope, note: (texts[COL_NOTE] || '').trim(), noteLinks: noteLinks, owner_confluence: ownerRaw, owner_key: primaryOwner(ownerRaw) });\n  }\n\n  if (rows.length < opts.minRows) {\n    throw new Error('Only ' + rows.length + ' row(s) parsed from the ' + opts.label + ' page (expected at least ' + opts.minRows + '). Columns found: ' + header.join(' | ') + '. Offboarding aborted.');\n  }\n  return { header: header, rows: rows, categoryCount: categoryCount, linkedNoteCount: linkedNoteCount, scopedCount: scopedCount, version: page.version ? page.version.number : null };\n}\n\nconst main = parsePage(mainPage, { label: 'General tools', pageId: '2076311575', nameHeaders: ['tool name'], minRows: 60, defaultCategory: '' });\nconst extra = parsePage(extraPage, { label: 'Offboarding additional steps', pageId: '2003894274', nameHeaders: ['section name', 'tool name', 'step', 'step name'], minRows: 0, defaultCategory: 'Additional steps' });\n\n// The additional steps always sit at the very bottom. If one of its categories happens to share a name with\n// the last General tools category, prefix it so the sheet still shows a separate heading.\nconst lastMainCategory = main.rows.length ? main.rows[main.rows.length - 1].category : '';\nfor (let i = 0; i < extra.rows.length; i++) {\n  if (extra.rows[i].category === lastMainCategory) { extra.rows[i].category = 'Additional steps - ' + extra.rows[i].category; }\n}\n\nconst rows = main.rows.concat(extra.rows);\nconst owners = [];\nfor (let i = 0; i < rows.length; i++) {\n  const key = rows[i].owner_key;\n  if (key && owners.indexOf(key) === -1) { owners.push(key); }\n}\n\nreturn [{ json: {\n  pageVersion: main.version,\n  additionalStepsPageVersion: extra.version,\n  columns: main.header,\n  additionalStepsColumns: extra.header,\n  toolCount: rows.length,\n  generalToolCount: main.rows.length,\n  additionalStepCount: extra.rows.length,\n  categoryCount: main.categoryCount + extra.categoryCount,\n  scopedCount: main.scopedCount + extra.scopedCount,\n  linkedNoteCount: main.linkedNoteCount + extra.linkedNoteCount,\n  owners: owners,\n  rows: rows\n} }];\n"
         },
         "id": "b5d78f3b-b87d-4c9e-bf0f-f79d7e09b92d",
         "name": "Parse tools table",
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
-          -176,
+          48,
           0
         ]
       },
@@ -988,7 +1021,7 @@
         "type": "n8n-nodes-base.dataTable",
         "typeVersion": 1.1,
         "position": [
-          48,
+          272,
           0
         ],
         "executeOnce": true
@@ -1002,7 +1035,7 @@
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
-          272,
+          496,
           0
         ]
       },
@@ -1021,7 +1054,7 @@
         "type": "n8n-nodes-base.form",
         "typeVersion": 2.5,
         "position": [
-          496,
+          720,
           0
         ],
         "webhookId": "3eca9dd6-2915-49da-a111-45b519d8ea6f"
@@ -1035,7 +1068,7 @@
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
-          720,
+          944,
           0
         ]
       },
@@ -1050,7 +1083,7 @@
         "type": "n8n-nodes-base.microsoftOneDrive",
         "typeVersion": 1.1,
         "position": [
-          1168,
+          1392,
           0
         ],
         "credentials": {
@@ -1223,7 +1256,7 @@
         "type": "n8n-nodes-base.dataTable",
         "typeVersion": 1.1,
         "position": [
-          2736,
+          2960,
           0
         ]
       },
@@ -1236,7 +1269,7 @@
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
-          2960,
+          3184,
           0
         ]
       },
@@ -1252,7 +1285,7 @@
         "type": "n8n-nodes-base.slack",
         "typeVersion": 2.7,
         "position": [
-          3184,
+          3408,
           0
         ],
         "webhookId": "f184b1b9-8c5a-4844-8b39-b6deb868e9a9",
@@ -1284,7 +1317,7 @@
         "type": "n8n-nodes-base.slack",
         "typeVersion": 2.7,
         "position": [
-          3408,
+          3632,
           0
         ],
         "webhookId": "26de89ed-31a5-45ea-bb51-62f19f6539b0",
@@ -1307,7 +1340,7 @@
         "type": "n8n-nodes-base.form",
         "typeVersion": 2.5,
         "position": [
-          3632,
+          3856,
           0
         ],
         "executeOnce": true,
@@ -1322,7 +1355,7 @@
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
-          2064,
+          2288,
           0
         ]
       },
@@ -1342,7 +1375,7 @@
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.2,
         "position": [
-          2288,
+          2512,
           0
         ],
         "executeOnce": true,
@@ -1369,7 +1402,7 @@
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.2,
         "position": [
-          2512,
+          2736,
           0
         ],
         "executeOnce": true,
@@ -1398,7 +1431,7 @@
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.2,
         "position": [
-          944,
+          1168,
           0
         ],
         "credentials": {
@@ -1424,7 +1457,7 @@
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.2,
         "position": [
-          1392,
+          1616,
           0
         ],
         "credentials": {
@@ -1443,7 +1476,7 @@
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
-          1616,
+          1840,
           0
         ]
       },
@@ -1463,7 +1496,7 @@
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.2,
         "position": [
-          1840,
+          2064,
           0
         ],
         "credentials": {
@@ -1473,6 +1506,28 @@
           }
         },
         "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "url": "https://futuremedia.atlassian.net/wiki/api/v2/pages/2003894274?body-format=atlas_doc_format",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBasicAuth",
+          "options": {}
+        },
+        "id": "c6891b61-d403-49cf-b84f-5e93a03bcb56",
+        "name": "Fetch additional steps page",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -176,
+          0
+        ],
+        "credentials": {
+          "httpBasicAuth": {
+            "id": "C9vZX5ia4sY9xHfI",
+            "name": "Jira API Antonio token"
+          }
+        }
       }
     ],
     "connections": {
@@ -1481,17 +1536,6 @@
           [
             {
               "node": "Fetch General tools page",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Fetch General tools page": {
-        "main": [
-          [
-            {
-              "node": "Parse tools table",
               "type": "main",
               "index": 0
             }
@@ -1684,23 +1728,45 @@
             }
           ]
         ]
+      },
+      "Fetch General tools page": {
+        "main": [
+          [
+            {
+              "node": "Fetch additional steps page",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch additional steps page": {
+        "main": [
+          [
+            {
+              "node": "Parse tools table",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     },
     "nodeGroups": [],
     "authors": "Antonio antonio.marusic@efuturemedia.com (via MCP)",
-    "name": "Header-driven Confluence parse, Scope carried into tool name",
-    "description": "A Scope column was added to the General tools table, shifting Note one column right and tripping the fixed 10-column check. Parser now locates columns by header name: Tool name, Access owner and Note are required, Scope is optional and appended to the tool name, any other columns are ignored. Tested against the live page and simulated column additions, removals and renames.",
+    "name": "Read General tools (internal) and Note [internal]",
+    "description": "Fetches the internal General tools page (2076311575). Note comes from the Note [internal] column (falls back to Note); Scope and Access owner also match their [internal] headers. Checked locally: same 124 rows, owners and note links as the old public-page parse.",
     "autosaved": false,
-    "createdAt": "2026-09-25T12:51:48.028Z",
-    "updatedAt": "2026-09-25T12:55:12.000Z",
+    "createdAt": "2026-10-23T11:48:32.384Z",
+    "updatedAt": "2026-10-23T11:48:32.384Z",
     "workflowPublishHistory": [
       {
-        "id": 2052,
+        "id": 3094,
         "workflowId": "Mo5VkX4QqnH6YiEd",
-        "versionId": "cfca51ce-320b-4326-8e9a-48d3404664ec",
+        "versionId": "bd6eee6a-5289-4df5-bec9-cb43023921fe",
         "event": "activated",
         "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e",
-        "createdAt": "2026-09-25T12:55:12.409Z"
+        "createdAt": "2026-10-23T11:48:39.109Z"
       }
     ]
   }
