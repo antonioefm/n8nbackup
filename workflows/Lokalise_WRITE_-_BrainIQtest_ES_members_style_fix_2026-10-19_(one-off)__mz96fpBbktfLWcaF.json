@@ -1,0 +1,427 @@
+{
+  "id": "mz96fpBbktfLWcaF",
+  "name": "Lokalise WRITE - BrainIQtest ES members style fix 2026-10-19 (one-off)",
+  "description": "WRITE one-off: BrainIQtest ES members-content - lowercase after colon, reto->desafío, «» quotes, lag->retraso, no gerund titles. Only strings last edited by the automation account; guard live==old. MODE check/write.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-19T08:21:12.330Z",
+  "updatedAt": "2026-10-19T09:44:34.348Z",
+  "isArchived": false,
+  "versionId": "17bf42f3-b239-4979-bd7d-ba58bb782356",
+  "versionCounter": 7,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "02983541-9f40-46c5-8fcf-fa66f6462fcd",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "3052d241-fb53-4dff-af57-3019f5e0cb52",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// MODE 'check' = report only; 'write' = write approved fixes to Lokalise\n// Applied 19.10.26: exec 870884 (363), 870914 (11), 870960 (96). Back to 'check'; switch to 'write' deliberately for a new run.\nconst MODE = 'check';\nconst PID = '185916266aa3d6649ca6f7.57851232';   // BrainIQtest\nconst AUTO = 'maria@efuturemedia.com';            // automation account: only strings last edited by it are changed\nconst BATCH_CHARS = 14000;\nconst EXCLUDE = /^members-content::challenges::(2035|2041)::answers/;\nconst ONLY = null;                                // e.g. /^members-content::lessons::1646::/ to limit a run\nreturn [{ json: { mode: MODE, pid: PID, auto: AUTO, batch_chars: BATCH_CHARS, exclude: EXCLUDE.source, only: ONLY ? ONLY.source : '', segments: true } }];\n"
+      }
+    },
+    {
+      "id": "70643bcf-ea12-424f-8439-6b6d99e12d36",
+      "name": "Fetch Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/185916266aa3d6649ca6f7.57851232/keys?include_translations=1&filter_langs=en,es&disable_references=1&filter_archived=exclude&limit=500&pagination=cursor",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 50,
+              "requestInterval": 250
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "d7f5e19c-07a9-41ad-9430-759b83140373",
+      "name": "Candidates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const cfg = $('Config').first().json;\nconst NL = String.fromCharCode(10);\nconst ONLY = cfg.only ? new RegExp(cfg.only) : null;\nconst rows = []; const errors = [];\nfor (const it of $('Fetch Keys').all()) {\n  const b = it.json.body || {};\n  if (it.json.statusCode && it.json.statusCode !== 200) { errors.push('keys ' + it.json.statusCode); }\n  for (const k of (b.keys || [])) {\n    if (k.is_archived || k.is_plural) { continue; }\n    const kn = (typeof k.key_name === 'object') ? (k.key_name.web || k.key_name.other || '') : k.key_name;\n    if (kn.indexOf('members-content::') !== 0) { continue; }\n    if (ONLY && !ONLY.test(kn)) { continue; }\n    let en = '', es = '', by = '';\n    for (const tr of (k.translations || [])) {\n      const v = typeof tr.translation === 'string' ? tr.translation : JSON.stringify(tr.translation);\n      if (tr.language_iso === 'en') { en = v; }\n      if (tr.language_iso === 'es') { es = v; by = tr.modified_by_email || ''; }\n    }\n    if (!es.trim()) { continue; }\n    rows.push({ id: k.key_id, k: kn, en: en, es: es, by: by, ns: kn.split('::').slice(0, 3).join('::') });\n  }\n}\nif (errors.length) { throw new Error('Fetch failed: ' + errors.join(', ')); }\nconst GER = /^\\s*(?:\\d+\\.\\s*)?[A-Za-z\\u00C0-\\u017F]+(?:ando|iendo|yendo)\\b/i;\nfunction issues(r) {\n  const out = [];\n  const txt = r.es.replace(/<[^>]+>/g, '');\n  if (/:[ \\t\\u00a0]*[\\u00ab\"\\u201c(]?[A-Z\\u00c1\\u00c9\\u00cd\\u00d3\\u00da\\u00d1\\u00dc]/.test(txt)) { out.push('uppercase after colon'); }\n  if (/(^|[^\\p{L}])retos?([^\\p{L}]|$)/iu.test(txt)) { out.push('reto -> desaf\\u00edo'); }\n  if (/[\"\\u201c\\u201d]/.test(txt)) { out.push('quotes -> \\u00ab\\u00bb'); }\n  if (/(^|[^\\p{L}])lag([^\\p{L}]|$)/iu.test(txt)) { out.push('lag -> retraso'); }\n  const heads = [];\n  if (/::title$/.test(r.k)) { heads.push(txt); }\n  const re = /<h[1-6][^>]*>([\\s\\S]*?)<\\/h[1-6]>/gi; let m;\n  while ((m = re.exec(r.es)) !== null) { heads.push(m[1].replace(/<[^>]+>/g, '')); }\n  if (heads.some(function (h) { return GER.test(h); })) { out.push('gerund in title/heading'); }\n  return out;\n}\nfunction segs(s) { return s.split(/(<[^>]+>)/).filter(function (p, i) { return i % 2 === 0 && p.trim(); }).map(function (p) { return p.trim(); }); }\nconst byNs = {};\nfor (const r of rows) { (byNs[r.ns] = byNs[r.ns] || []).push(r); }\nconst cand = {}; const skippedLinguist = [];\nfor (const r of rows) {\n  const is = issues(r);\n  if (!is.length) { continue; }\n  if (r.by !== cfg.auto) { skippedLinguist.push({ k: r.k, by: r.by, issues: is }); continue; }\n  cand[r.id] = { r: r, is: is };\n}\nfor (const id in Object.assign({}, cand)) {\n  const c = cand[id];\n  if (c.is.indexOf('gerund in title/heading') === -1) { continue; }\n  for (const s of (byNs[c.r.ns] || [])) {\n    if ((/::title$/.test(s.k) || /::steps:::0$/.test(s.k)) && !cand[s.id] && s.by === cfg.auto) { cand[s.id] = { r: s, is: ['keep identical to the lesson title / opening <h2>'] }; }\n  }\n}\nconst SYS = [\n'You are a senior Spanish (Spain) copy editor for the BrainIQ members area (brain-training lessons and knowledge tests).',\n'You receive Spanish strings together with the issues detected in each. Apply ONLY the corrections below and change nothing else: no rewording, no other punctuation, spacing or capitalization changes.',\n'1. Lowercase after a colon: the word right after \\':\\' starts in lowercase (\\'Beneficio: entrena\\u2026\\', \\'es superior: el pensamiento\\u2026\\'), also when the colon ends one piece and the word starts the next piece. Keep the capital for proper nouns, acronyms (IA, IQ, TDAH), titles of works and direct quotations.',\n'2. \\'reto\\' / \\'retos\\' used as a noun meaning challenge \\u2192 \\'desaf\\u00edo\\' / \\'desaf\\u00edos\\', adjusting agreeing articles, determiners and adjectives. Leave verbs (retar, r\\u00e9tate) unchanged.',\n'3. Quotation marks: first-level quotes become Spanish angular quotes \\u00ab\\u2026\\u00bb; quotes inside them become \\u201c\\u2026\\u201d.',\n'4. The English word \\'lag\\' \\u2192 \\'retraso\\' (\\'lag cognitivo\\' \\u2192 \\'retraso cognitivo\\').',\n'5. Titles and headings must not start with a gerund: rephrase with a noun or an infinitive keeping the meaning.',\n(cfg.segments ? 'Each string is given as \"segments\": the text pieces between its HTML tags, in order. For every string you change, return a JSON ARRAY of the corrected pieces with exactly the same number of items in the same order; every piece must stay non-empty. Return ONLY a JSON object {\"<key_id>\": [\"<piece>\", …]} with the strings you changed.' : 'Keep every HTML tag, line break, tab and space exactly as in the input. Return ONLY a JSON object {\"<key_id>\": \"<corrected string>\"} with the strings you changed; omit strings that need no change.')\n].join(NL);\nconst list = Object.values(cand).sort(function (a, b) { return a.r.k.localeCompare(b.r.k, 'en', { numeric: true }); });\nconst out = []; let cur = []; let size = 0;\nfunction flush() {\n  if (!cur.length) { return; }\n  const items = cur.map(function (c) { const o = { key_id: String(c.r.id), key: c.r.k, issues: c.is }; if (cfg.segments) { o.segments = segs(c.r.es); } else { o.es = c.r.es; } return o; });\n  out.push({ json: { n: cur.length, old: cur.map(function (c) { return { id: c.r.id, k: c.r.k, es: c.r.es, is: c.is }; }),\n    body: JSON.stringify({ model: 'gpt-4.1', temperature: 0, max_tokens: 32768, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: SYS }, { role: 'user', content: JSON.stringify(items) }] }) } });\n  cur = []; size = 0;\n}\nlet lastNs = '';\nfor (const c of list) {\n  if (size > cfg.batch_chars && c.r.ns !== lastNs) { flush(); }\n  cur.push(c); size += c.r.es.length; lastNs = c.r.ns;\n}\nflush();\nconst counts = {}; for (const c of list) { for (const i of c.is) { counts[i] = (counts[i] || 0) + 1; } }\nfor (const o of out) { o.json.meta = { members_es: rows.length, candidates: list.length, by_issue: counts, skipped_linguist: skippedLinguist, batches: out.length }; }\nreturn out;\n"
+      }
+    },
+    {
+      "id": "0a89c784-d217-4e00-a7f8-131bcc47bf1b",
+      "name": "Fix (OpenAI)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.body }}",
+        "options": {
+          "timeout": 300000,
+          "batching": {
+            "batch": {
+              "batchSize": 4,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "yra2iG8pnmCKhZIc",
+          "name": "Futuremedia - n8n project"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 8000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "ef94ee8f-af63-4de1-a9fa-578c14784284",
+      "name": "Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const batches = $('Candidates').all().map(function (i) { return i.json; });\nconst res = $input.all().map(function (i) { return i.json || {}; });\nconst TAGRE = /<[^>]+>/g;\nconst SPLIT = /(<[^>]+>)/;\nconst PH = /%\\d*\\$?[sd]|\\{\\{[^}]+\\}\\}|\\{[^{}]+\\}|\\[%[^\\]]*\\]/g;\nfunction tags(s) { return JSON.stringify((s.match(TAGRE) || []).map(function (t) { return t.toLowerCase(); })); }\nfunction plain(s) { return s.replace(TAGRE, ''); }\n// lowercase letter starting a new sentence (after . ? ! … optionally followed by closing quote/paren) = forbidden\nconst SENT = /[.?!\\u2026][\\u00bb\\u201d)]?[\\s\\u00a0]+[a-z\\u00e1\\u00e9\\u00ed\\u00f3\\u00fa\\u00f1\\u00fc]/g;\nfunction sentCount(s) { return (plain(s).match(SENT) || []).length; }\nfunction rebuildSeg(old, pieces) {\n  const ep = old.split(SPLIT); const out = []; let j = 0;\n  for (let i = 0; i < ep.length; i++) {\n    const p = ep[i];\n    if (i % 2 === 1 || !p.trim()) { out.push(p); continue; }\n    const t = pieces[j++];\n    if (typeof t !== 'string' || !t.trim()) { return null; }\n    out.push(p.match(/^\\s*/)[0] + t.trim() + p.match(/\\s*$/)[0]);\n  }\n  return j === pieces.length ? out.join('') : null;\n}\nconst changes = []; const rejected = []; const callErr = [];\nfor (let i = 0; i < batches.length; i++) {\n  const b = batches[i]; const r = res[i] || {};\n  let map = null;\n  try { const raw = String(r.choices[0].message.content); map = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)); }\n  catch (e) { callErr.push({ batch: i, err: r.error ? JSON.stringify(r.error).slice(0, 200) : String(e.message || e) }); continue; }\n  if (map && map.t && typeof map.t === 'object') { map = map.t; }\n  for (const o of b.old) {\n    let nv = map[String(o.id)];\n    if (Array.isArray(nv)) { nv = rebuildSeg(o.es, nv); if (nv === null) { rejected.push({ k: o.k, why: 'segment count/empty piece' }); continue; } }\n    if (typeof nv !== 'string' || nv === o.es) { continue; }\n    let why = '';\n    if (!nv.trim()) { why = 'empty'; }\n    else if (tags(nv) !== tags(o.es)) { why = 'HTML tags changed'; }\n    else if ((o.es.match(PH) || []).sort().join('|') !== (nv.match(PH) || []).sort().join('|')) { why = 'placeholders changed'; }\n    else if (sentCount(nv) > sentCount(o.es)) { why = 'lowercased a sentence start (after . ? !)'; }\n    else { const ratio = nv.length / o.es.length; if (ratio < 0.85 || ratio > 1.2) { why = 'length changed too much (' + ratio.toFixed(2) + ')'; } }\n    if (why) { rejected.push({ k: o.k, why: why }); continue; }\n    changes.push({ id: o.id, k: o.k, is: o.is, old: o.es, new: nv });\n  }\n}\nconst meta = (batches[0] || {}).meta || {};\nreturn [{ json: { meta: meta, n_changes: changes.length, rejected: rejected, call_errors: callErr, changes: changes } }];\n"
+      }
+    },
+    {
+      "id": "80c8c76a-66ad-4fa5-a8ae-f93da69e5255",
+      "name": "Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// nothing passes in MODE 'check'; excluded keys never pass\nconst cfg = $('Config').first().json;\nif (cfg.mode !== 'write') { return []; }\nconst ex = new RegExp(cfg.exclude);\nconst ch = ($input.first().json.changes || []).filter(function (c) { return !ex.test(c.k); });\nconst out = [];\nfor (let i = 0; i < ch.length; i += 100) { const part = ch.slice(i, i + 100); out.push({ json: { ids: part.map(function (c) { return c.id; }).join(','), changes: part } }); }\nreturn out;\n"
+      }
+    },
+    {
+      "id": "8113a9b2-d198-4904-b50d-44eb9b98090e",
+      "name": "Guard fetch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1568,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/185916266aa3d6649ca6f7.57851232/keys?include_translations=1&filter_langs=es&disable_references=1&limit=500&filter_key_ids={{ $json.ids }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 500
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "27b9ed6e-629d-42d6-bd1c-e16ecab16775",
+      "name": "Build PUT",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// guard: write only if live ES still equals the text we fixed and the last editor is still the automation account\nconst cfg = $('Config').first().json;\nconst ch = $('Gate').item.json.changes;\nconst b = $json.body || {};\nif (!Array.isArray(b.keys)) { throw new Error('Guard fetch failed: ' + JSON.stringify(b).slice(0, 200)); }\nconst live = {};\nfor (const k of b.keys) { for (const t of (k.translations || [])) { if (t.language_iso === 'es') { live[k.key_id] = { t: typeof t.translation === 'string' ? t.translation : '', by: t.modified_by_email || '', arch: k.is_archived }; } } }\nconst keys = []; const skipped = [];\nfor (const c of ch) {\n  const L = live[c.id];\n  if (!L || L.arch || L.t !== c.old || L.by !== cfg.auto) { skipped.push(c.k); continue; }\n  keys.push({ key_id: c.id, translations: [{ language_iso: 'es', translation: c.new, is_unverified: true }] });\n}\nreturn { json: { n: keys.length, skipped: skipped, body: JSON.stringify({ keys: keys }) } };\n"
+      }
+    },
+    {
+      "id": "b011c300-e61a-4c74-ab00-e67e58de9733",
+      "name": "WRITE fixes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2016,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "https://api.lokalise.com/api2/projects/185916266aa3d6649ca6f7.57851232/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.body }}",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1500
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "982e9d26-aeff-4463-b6f6-b35c76ffe3aa",
+      "name": "Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const p = $('Build PUT').all().map(function (i) { return i.json; });\nreturn [{ json: { results: $input.all().map(function (r, i) { const b = r.json.body || {}; return { sent: (p[i] || {}).n, skipped: (p[i] || {}).skipped, status: r.json.statusCode, written: (b.keys || []).length, errors: b.errors || b.error || null }; }) } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Keys": {
+      "main": [
+        [
+          {
+            "node": "Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Candidates": {
+      "main": [
+        [
+          {
+            "node": "Fix (OpenAI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fix (OpenAI)": {
+      "main": [
+        [
+          {
+            "node": "Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate": {
+      "main": [
+        [
+          {
+            "node": "Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gate": {
+      "main": [
+        [
+          {
+            "node": "Guard fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard fetch": {
+      "main": [
+        [
+          {
+            "node": "Build PUT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build PUT": {
+      "main": [
+        [
+          {
+            "node": "WRITE fixes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WRITE fixes": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "mz96fpBbktfLWcaF",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-19T08:21:12.333Z",
+      "updatedAt": "2026-10-19T08:21:12.333Z"
+    }
+  ],
+  "activeVersion": null
+}
