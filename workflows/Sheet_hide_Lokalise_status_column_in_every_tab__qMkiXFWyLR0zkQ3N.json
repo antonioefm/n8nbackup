@@ -1,0 +1,215 @@
+{
+  "id": "qMkiXFWyLR0zkQ3N",
+  "name": "Sheet: hide Lokalise status column in every tab",
+  "description": "One-off: hides the \"Lokalise status\" column in each tab of sheet 1j6Zh4Fc886J65XVjSnf7sSsaFe6FbkUu0CykbBNOcxY via the Sheets API. Finds the column by header name.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-07T10:32:14.776Z",
+  "updatedAt": "2026-10-07T10:38:14.326Z",
+  "isArchived": false,
+  "versionId": "d2b0bfb3-b9a7-4d50-a375-27fa6734cfe7",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "17a69406-cca9-4b31-80df-02626300aa79",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "cc027266-8b55-4c1b-ba71-2d6e96bce29f",
+      "name": "Get Tabs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/1j6Zh4Fc886J65XVjSnf7sSsaFe6FbkUu0CykbBNOcxY?fields=sheets.properties(sheetId,title,gridProperties.columnCount)",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api"
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Gt1NY0PXKDxBUQGy",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "b489069d-7164-41b9-9e72-a59367b74db9",
+      "name": "Build Header Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const sheets = $input.first().json.sheets || [];\nconst ranges = sheets.map(s => \"ranges=\" + encodeURIComponent(\"'\" + s.properties.title.replace(/'/g, \"''\") + \"'!1:3\")).join('&');\nreturn [{ json: { url: 'https://sheets.googleapis.com/v4/spreadsheets/1j6Zh4Fc886J65XVjSnf7sSsaFe6FbkUu0CykbBNOcxY/values:batchGet?' + ranges, sheets } }];"
+      }
+    },
+    {
+      "id": "852ce2d2-cde9-47bc-b659-a518252510d0",
+      "name": "Get Header Rows",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api"
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Gt1NY0PXKDxBUQGy",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "fbe77237-3ecc-49c4-abc4-f11375f03e5d",
+      "name": "Build Hide Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const sheets = $('Build Header Request').first().json.sheets;\nconst valueRanges = $input.first().json.valueRanges || [];\nconst norm = h => String(h).toLowerCase().replace(/[^a-z]/g, '');\nconst targets = ['lokalisestatus', 'localisestatus', 'localizestatus'];\nconst HIDDEN = false;\nconst requests = [];\nconst report = [];\nsheets.forEach((s, i) => {\n  const p = s.properties;\n  const rows = ((valueRanges[i] || {}).values) || [];\n  let col = -1, row = -1;\n  for (let r = 0; r < rows.length && col === -1; r++) {\n    const idx = (rows[r] || []).findIndex(h => targets.indexOf(norm(h)) !== -1);\n    if (idx !== -1) { col = idx; row = r; }\n  }\n  if (col === -1) { report.push({ tab: p.title, status: 'skipped: no Lokalise status header' }); return; }\n  requests.push({ updateDimensionProperties: {\n    range: { sheetId: p.sheetId, dimension: 'COLUMNS', startIndex: col, endIndex: col + 1 },\n    properties: { hiddenByUser: HIDDEN }, fields: 'hiddenByUser' } });\n  report.push({ tab: p.title, status: (HIDDEN ? 'hid' : 'unhid') + ' column ' + (col + 1) });\n});\nif (!requests.length) { throw new Error('No Lokalise status column found in any tab'); }\nreturn [{ json: { body: { requests }, report, requestCount: requests.length } }];"
+      }
+    },
+    {
+      "id": "18cff2eb-4f69-4d94-9a38-63997ff062dd",
+      "name": "Hide Columns",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/1j6Zh4Fc886J65XVjSnf7sSsaFe6FbkUu0CykbBNOcxY:batchUpdate",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}"
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Gt1NY0PXKDxBUQGy",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Get Tabs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Tabs": {
+      "main": [
+        [
+          {
+            "node": "Build Header Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Header Request": {
+      "main": [
+        [
+          {
+            "node": "Get Header Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Header Rows": {
+      "main": [
+        [
+          {
+            "node": "Build Hide Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Hide Requests": {
+      "main": [
+        [
+          {
+            "node": "Hide Columns",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "qMkiXFWyLR0zkQ3N",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-07T10:32:14.780Z",
+      "updatedAt": "2026-10-07T10:32:14.780Z"
+    }
+  ],
+  "activeVersion": null
+}
