@@ -1,0 +1,300 @@
+{
+  "id": "zmumEaDYqKnwvgzr",
+  "name": "Lokalise WRITE - VIN Checker key descriptions (keep short) 2026-10-07",
+  "description": "WRITE (reused 2026-10-07): VIN Checker key descriptions — append keep-short note to 4 report heading/TOC keys. Guard re-checks description + archived. Disable PUT after use.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-28T08:54:42.053Z",
+  "updatedAt": "2026-10-08T05:46:20.805Z",
+  "isArchived": false,
+  "versionId": "3c5bd7a3-af13-4ee5-ab21-e7ed29f1b8f1",
+  "versionCounter": 58,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "7fd7ded9-8320-48b3-a2d2-e4a60a0fdf41",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vin-shot-5c1e",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "webhookId": "c7be27c7-5a9e-4ef5-aabd-8181ef294415"
+    },
+    {
+      "id": "43a7bf2c-8112-48e3-8977-73698664c7fe",
+      "name": "Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "throw new Error('write path retired 2026-10-08 (VIN Checker keep-short descriptions applied)');\n"
+      }
+    },
+    {
+      "id": "cf9834c9-e912-467a-9579-8cb14ecc846a",
+      "name": "Fetch current",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "4376d291-ab0b-4c1b-aa00-13eaae46d307",
+      "name": "Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Description-only guard: key must exist, not archived, description unchanged since the fetch.\nconst plan = $('Payload').all().map(i => i.json);\nconst got = $input.all().map(i => i.json);\nconst out = []; const skipped = [];\nfor (let i = 0; i < plan.length; i++) {\n  const p = plan[i]; const k = (got[i] && got[i].key) || null;\n  if (!k || String(k.key_id) !== p.kid) { skipped.push({ k: p.k, reason: 'not found' }); continue; }\n  if (k.is_archived) { skipped.push({ k: p.k, reason: 'archived' }); continue; }\n  const d = k.description || '';\n  if (d === p.newv) { skipped.push({ k: p.k, reason: 'already applied' }); continue; }\n  if (d !== p.expected) { skipped.push({ k: p.k, reason: 'description changed', now: d.slice(0, 200) }); continue; }\n  out.push({ json: { k: p.k, newv: p.newv, url: p.url.split('?')[0], body: { description: p.newv } } });\n}\nlet sel = out; if (plan[0].mode === 'test') sel = out.slice(0, 1);\nif (!sel.length) return [{ json: { skip: true, skipped } }];\nsel[0].json.skipped = skipped; sel[0].json.eligible = out.length; return sel;"
+      }
+    },
+    {
+      "id": "64f9b889-d0be-46b5-b9d3-1706ed80ab17",
+      "name": "PUT translation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 400
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "id": "a7c72808-c004-4da1-a364-c47ef1456ed4",
+      "name": "Verify",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const sent = $('Guard').all().map(i => i.json);\nif (sent[0] && sent[0].skip) { return [{ json: { written: [], skipped: sent[0].skipped } }]; }\nconst res = $input.all().map(i => i.json); const ok = [], bad = [];\nres.forEach((r, i) => { const s = sent[i]; const k = r.key || {}; if ((k.description || '') === s.newv) ok.push(s.k); else bad.push({ k: s.k, got: JSON.stringify(r).slice(0, 300) }); });\nif (bad.length) throw new Error('VERIFY failed: ' + JSON.stringify(bad).slice(0, 1500));\nreturn [{ json: { written: ok, count: ok.length, skipped: sent[0].skipped || [] } }];"
+      }
+    },
+    {
+      "id": "aa58db10-cf92-4e2f-9a70-bb8eba45d8b6",
+      "name": "Key limits",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "jsCode": "throw new Error('key-update path retired 2026-10-07');\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "d03cee8f-f628-4cdb-a555-4b57c11e258f",
+      "name": "PUT key",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1568,
+        0
+      ],
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "method": "={{ $json.method }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchInterval": 400,
+              "batchSize": 1
+            }
+          },
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "={{ $json.url }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "disabled": true
+    }
+  ],
+  "connections": {
+    "Payload": {
+      "main": [
+        [
+          {
+            "node": "Fetch current",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch current": {
+      "main": [
+        [
+          {
+            "node": "Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard": {
+      "main": [
+        [
+          {
+            "node": "PUT translation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PUT translation": {
+      "main": [
+        [
+          {
+            "node": "Verify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Key limits": {
+      "main": [
+        [
+          {
+            "node": "PUT key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "zmumEaDYqKnwvgzr",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-28T08:54:42.056Z",
+      "updatedAt": "2026-09-28T08:54:42.056Z"
+    }
+  ],
+  "activeVersion": null
+}
