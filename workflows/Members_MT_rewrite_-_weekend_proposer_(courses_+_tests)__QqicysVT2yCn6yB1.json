@@ -1,0 +1,1554 @@
+{
+  "id": "QqicysVT2yCn6yB1",
+  "name": "Members MT rewrite - weekend proposer (courses + tests)",
+  "description": "Weekend, every 2h: one locale, ~120 keys/run, grouped by course/lesson/chapter/test. Applies AI rewrites of courses/lessons/chapters to Lokalise if no linguist edited the key; tests stay pending. Posts to #i18n-team per language.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-25T13:53:49.322Z",
+  "updatedAt": "2026-10-13T09:50:44.888Z",
+  "isArchived": false,
+  "versionId": "0ed0a760-7abf-4f18-bcbd-b8720875d52a",
+  "versionCounter": 8,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "eea4f24a-9bd2-44e2-8957-22a2422918fd",
+      "name": "Weekend every 2h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 */2 * * 6,0"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "8040483b-85f8-4a82-91c3-21f8f8e94298",
+      "name": "Get state",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "yVcTvuZDRiFqFjJU"
+        },
+        "returnAll": true
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "73418a5c-01e1-4720-b08b-cb248c197a84",
+      "name": "Manual test",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "2bf2ae69-57d8-4a39-bb81-90b29233931d",
+      "name": "Plan run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const rows = $input.all().map(i => i.json).filter(r => r && r.iso);\nlet r = rows.find(x => x.status === 'in_progress');\nif (!r) r = rows.filter(x => x.status === 'pending').sort((a,b) => (a.rank||99) - (b.rank||99))[0];\nif (!r) return [];\nreturn [{ json: { row_id: r.id, iso: r.iso, lang_id: r.lang_id, offset: r.offset_n || 0, runs: r.runs || 0, run_id: r.iso + '-' + new Date().toISOString().slice(0,16), cap: 120 } }];"
+      }
+    },
+    {
+      "id": "a88f0cde-8d86-479e-8998-b437a034dbaa",
+      "name": "Key list p1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/9933660066825e9a8005c8.58526829/keys?limit=5000&page=1&disable_references=1&include_translations=0",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "5198cd90-5cf8-40c7-b309-e9f007319c9a",
+      "name": "Key list p2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/9933660066825e9a8005c8.58526829/keys?limit=5000&page=2&disable_references=1&include_translations=0",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "710f8e78-7d54-4c28-a9a3-bb4fdb69e23c",
+      "name": "Scope",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const p1 = $('Key list p1').first().json, p2 = $input.first().json;\nif (!Array.isArray(p1.keys)) throw new Error('Key list p1 failed: ' + JSON.stringify(p1).slice(0,200));\nconst ks = [...p1.keys, ...(Array.isArray(p2.keys) ? p2.keys : [])];\nconst ORDER = ['courses','lessons','chapters','tests','test_thresholds'];\nconst rows = [];\nfor (const k of ks) { const n = (k.key_name||{}).web||''; const p = n.split('.')[0]; if (!ORDER.includes(p)) continue; const tg = k.tags||[];\n  if (tg.includes('z_human') || tg.some(t => t==='questions' || t.startsWith('test_questions'))) continue;\n  rows.push({ id: k.key_id, n, o: ORDER.indexOf(p), idx: parseInt(n.split('.')[1]) || 0 }); }\nrows.sort((a,b) => a.o-b.o || a.idx-b.idx || a.n.localeCompare(b.n));\n// Batches never split a group (e.g. chapters.12.title + chapters.12.content, tests.4.*), so related keys are rewritten together.\nconst gid = n => n.split('.').slice(0,2).join('.');\nconst P = $('Plan run').first().json; const total = rows.length;\nlet start = Math.min(P.offset, total);\nwhile (start > 0 && start < total && gid(rows[start-1].n) === gid(rows[start].n)) start--;\nlet end = Math.min(start + P.cap, total);\nwhile (end > start && end < total && gid(rows[end-1].n) === gid(rows[end].n)) end++;\nconst slice = rows.slice(start, end).map(r => r.id);\nconst next = end; const done = next >= total;\nreturn [{ json: { ...P, total, ids: slice.length ? slice.join(',') : '0', n: slice.length, next, status: done ? 'done' : 'in_progress' } }];"
+      }
+    },
+    {
+      "id": "57c33aa8-7b03-4646-8049-312eec5d20eb",
+      "name": "Advance state",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1344,
+        96
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "yVcTvuZDRiFqFjJU"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.row_id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "offset_n": "={{ $json.next }}",
+            "status": "={{ $json.status }}",
+            "total": "={{ $json.total }}",
+            "runs": "={{ $json.runs + 1 }}",
+            "last_run": "={{ $now.toISO() }}"
+          },
+          "schema": [
+            {
+              "id": "offset_n",
+              "displayName": "offset_n",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "total",
+              "displayName": "total",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "runs",
+              "displayName": "runs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_run",
+              "displayName": "last_run",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "455340a0-b328-4898-aab6-c4ee0171a1f9",
+      "name": "Get guide",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1568,
+        96
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "0i7tPvIKyMt7bFb5"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "iso",
+              "condition": "eq",
+              "keyValue": "={{ $('Scope').first().json.iso }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "b646a53b-f42f-4aa8-a174-f84571fe6284",
+      "name": "Contributors Members",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1792,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/9933660066825e9a8005c8.58526829/contributors?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "c73e41e0-abb3-4565-8d5c-1c143ecb25df",
+      "name": "Contributors PCO",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2016,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/31393214664f295f94dd86.76792605/contributors?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "f482ff0c-141b-4fbe-8e02-550a758418ec",
+      "name": "Contributors QR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/60625870676151e1da46d0.81913446/contributors?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "33df77ac-e36b-4aa5-928b-6810871cdf88",
+      "name": "Plan audit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2464,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const L = {de:['silke.luehrmann@gmx.de'],fr:['root-translations@outlook.com'],pt:['mteixeira@sacradomus.com','bruno@bsttranslations.com'],it:['ilaria.roncaglia@gmail.com'],nl:['ellen.de.venter@outlook.com'],pl:['michal.tosza@translators.org.pl'],ms:['farahputri@gmail.com'],sv:['therese.svardsten@gmail.com'],id:['vidiasc@gmail.com'],no:['harald.roald@gmail.com'],da:['kenneth@phraseit.dk'],ro:['dmluciahorea@gmail.com','roxanamoldovan25@gmail.com'],es:['mteres@terestraducciones.com','arandatrad@gmail.com','sara.guinot.trad@gmail.com','daniel@dgmultilingualservices.com'],lt:['julius.valkiunas@gmail.com'],lv:['austra.muizniece@gmail.com'],et:['marit.teichmann@gmail.com'],th:['47natcha@gmail.com'],ko:[]};\nconst GLOBAL = ['qrcodelocalization@gmail.com','mjlocalize@gmail.com'];\nconst S = $('Scope').first().json;\nconst cs = [...($('Contributors Members').first().json.contributors||[]), ...($('Contributors PCO').first().json.contributors||[]), ...($input.first().json.contributors||[])];\nconst byEmail = {}; for (const c of cs) byEmail[(c.email||'').toLowerCase()] = c.user_id;\nconst emails = [...new Set([...(L[S.iso]||[]), ...GLOBAL])];\nconst users = emails.filter(e => byEmail[e]).map(e => ({ email: e, uid: byEmail[e] }));\nconst missing = emails.filter(e => !byEmail[e]);\nconst out = []; const end = new Date(Date.now() + 86400000);\nfor (const u of users) { let d = new Date('2025-09-01T00:00:00Z');\n  while (d < end) { const e = new Date(d); e.setUTCMonth(e.getUTCMonth()+1); const to = e > end ? end : e;\n    const f = d.toISOString().slice(0,10), tt = new Date(to.getTime()-86400000).toISOString().slice(0,10);\n    out.push({ json: { email: u.email, from: f, missing, url: 'https://api.lokalise.com/v1/audit-logs?limit=1000&user_id=' + u.uid + '&event_type=translation.updated&date_from=' + f + '&date_to=' + tt } });\n    d = to; } }\nif (!out.length) out.push({ json: { skip: true, missing, url: 'https://api.lokalise.com/v1/audit-logs?limit=1&date_from=2026-09-25&date_to=2026-09-25' } });\nreturn out;"
+      }
+    },
+    {
+      "id": "3ddc30bd-bf93-481f-afe5-2fd2d6a861fc",
+      "name": "Fetch audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2688,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "bc25d803-309d-4c99-a90c-fc8d0a29461c",
+      "name": "Collect audit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2912,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const reqs = $('Plan audit').all(); const res = $input.all(); const iso = $('Scope').first().json.iso;\nconst keys = new Set(); const capped = []; const errs = [];\nres.forEach((it, i) => { const r = reqs[i] ? reqs[i].json : {}; if (r.skip) return; const b = it.json;\n  if (!Array.isArray(b.data)) { errs.push(r.email + ' ' + r.from); return; } if (b.has_more) capped.push(r.email + ' ' + r.from);\n  for (const e of b.data) { const en = (e.enrichments||[]).find(x => x.name === 'project'); const pn = en && en.data ? en.data.name : '';\n    const d = (e.unmapped||{}).data || {}; if (d.lang_iso !== iso) continue; if (!/member/i.test(pn)) continue; if (d.key) keys.add(d.key); } });\nreturn [{ json: { protected_keys: [...keys], n: keys.size, capped, errs, missing: (reqs[0]||{json:{}}).json.missing || [] } }];"
+      }
+    },
+    {
+      "id": "b5f55a3d-a2bb-44ec-9fdf-aab02df5d1a9",
+      "name": "Fetch batch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3136,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.lokalise.com/api2/projects/9933660066825e9a8005c8.58526829/keys?include_translations=1&disable_references=1&limit=500&filter_translation_lang_ids=640,' + $('Scope').first().json.lang_id + '&filter_key_ids=' + $('Scope').first().json.ids }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "8ac7801e-0380-42a9-9ba3-d2adb84c3a77",
+      "name": "Glossary p1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3360,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "ca0577bd-b4b2-4d15-a094-87d69edd7f13",
+      "name": "Glossary p2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3584,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500&cursor=' + encodeURIComponent(($json.meta||{}).nextCursor || '') }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "0b849d66-0a9a-4eb5-b0cb-ef2361c88114",
+      "name": "Build prompts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3808,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const NL = String.fromCharCode(10);\nconst S = $('Scope').first().json; const iso = S.iso;\nconst kb = $('Fetch batch').first().json; if (!Array.isArray(kb.keys)) throw new Error('Fetch batch failed: ' + JSON.stringify(kb).slice(0,200));\nconst guideRow = $('Get guide').first().json || {}; const rules = guideRow.rules || '';\nif (!rules) throw new Error('No style guide row for ' + iso);\nconst prot = new Set($('Collect audit').first().json.protected_keys || []);\nconst gp1 = $('Glossary p1').first().json; const gp2 = $('Glossary p2').first().json;\nconst gall = [...(gp1.data||[]), ...((gp1.meta||{}).nextCursor ? (gp2.data||[]) : [])];\nconst ISO = {640:'en',1056:'es',793:'hr',765:'cs',767:'da',737:'nl',10154:'et',818:'fil',768:'fi',673:'fr',666:'de',761:'el',773:'hu',757:'id',734:'it',733:'ko',10153:'lv',10152:'lt',749:'ms',760:'no',748:'pl',708:'pt',770:'ro',799:'sk',10159:'sl',754:'sv',753:'th',744:'tr',769:'uk',774:'vi'};\nconst gl = gall.map(t => { let tr = ''; for (const x of (t.translations||[])) if (ISO[x.langId] === iso && x.translation) tr = x.translation; return { term: String(t.term||'').toLowerCase(), tr, tl: t.translatable, fb: t.forbidden }; }).filter(t => t.term.length > 2);\nfunction hasTerm(text, term) { let i = text.indexOf(term); while (i !== -1) { const b = i > 0 ? text[i-1] : ''; const a = text[i + term.length] || ''; if (!/[a-z]/.test(b) && !/[a-z]/.test(a)) return true; i = text.indexOf(term, i + 1); } return false; }\nconst INTERNAL = new Set(['maria@efuturemedia.com','maria+devs@efuturemedia.com','kseniya.krasovskaya@efuturemedia.com','raul@efuturemedia.com','support@lokalise.com','']);\nconst NAMES = {da:'Danish',nl:'Dutch',et:'Estonian',fr:'French',de:'German',id:'Indonesian',it:'Italian',ko:'Korean',lv:'Latvian',lt:'Lithuanian',ms:'Malay',no:'Norwegian Bokmål',pl:'Polish',pt:'Brazilian Portuguese',ro:'Romanian',es:'European Spanish',sv:'Swedish',th:'Thai'};\nconst BLOCK = new Set(['account','accounts','support','pipeline','report','reports','dashboard','settings','profile','plan','plans','subscription','membership','billing','payment','customer','customers','client','clients','sales','lead','leads','campaign','contact','feedback','target','conversion','analytics','brand','marketing','team','manager','project','projects','task','tasks','goal','goals','service','services','user','users','order','orders','key','resources','budget','strategy','performance','tool','tools','account management','customer support','sign up','upload','download','share','save','price','pricing','trial','and','other','about','date','provide','address','success','information','skills','skill','active','engage','job','functional','relationship','relationships']);\nconst APPLY = /^(courses|lessons|chapters)[.]/;\nconst gid = n => String(n).split('.').slice(0,2).join('.');\nconst cut = (s, n) => { s = String(s || ''); return s.length > n ? s.slice(0, n) + '...' : s; };\nconst memRows = $('Get terms').all().map(i => i.json || {}).filter(r => r.en_term && r.target && r.iso === iso);\nconst memMap = {}; for (const m of memRows) { const k = String(m.en_term).toLowerCase().trim(); if (k && !memMap[k]) memMap[k] = String(m.target); }\nconst memTerms = Object.keys(memMap);\nconst groups = {}; const order = []; let skH = 0, skA = 0, skE = 0, nc = 0;\nfor (const k of kb.keys) { const name = (k.key_name||{}).web || ''; const tr = k.translations || [];\n  const en = tr.find(x => x.language_iso === 'en'); const t = tr.find(x => x.language_iso === iso);\n  if (!en || !t || typeof en.translation !== 'string' || typeof t.translation !== 'string' || !en.translation.trim() || !t.translation.trim()) { skE++; continue; }\n  const g = gid(name); if (!groups[g]) { groups[g] = { cand: [], locked: [] }; order.push(g); }\n  const ctx = cut([k.description, k.context].filter(x => x && String(x).trim()).join(' | '), 300);\n  const base = { id: k.key_id, k: name, g, en: en.translation, cur: t.translation, ctx };\n  if (!INTERNAL.has((t.modified_by_email||'').toLowerCase())) { skH++; groups[g].locked.push(base); continue; }\n  if (prot.has(name)) { skA++; groups[g].locked.push(base); continue; }\n  const enL = en.translation.toLowerCase(); const isCourse = APPLY.test(name);\n  base.terms = gl.filter(x => !(isCourse && BLOCK.has(x.term)) && hasTerm(enL, x.term)).slice(0, 30);\n  groups[g].cand.push(base); nc++; }\norder.sort((a, b) => { const pa = a.split('.'), pb = b.split('.'); return pa[0] === pb[0] ? (parseInt(pa[1])||0) - (parseInt(pb[1])||0) : pa[0].localeCompare(pb[0]); });\nfor (const g of order) groups[g].cand.sort((a, b) => a.k.localeCompare(b.k));\nconst isLong = c => c.en.length > 700 || /<(p|h[0-9]|li|ul|ol|br)[ >/]/i.test(c.en);\nconst chunks = []; let cur = [], size = 0;\nconst flush = () => { if (cur.length) chunks.push(cur); cur = []; size = 0; };\nfor (const g of order) { const cand = groups[g].cand; if (!cand.length) continue;\n  const gsize = cand.reduce((s, c) => s + c.en.length + c.cur.length, 0);\n  if (gsize > 6000 || cand.length > 10 || cand.some(isLong)) { flush();\n    let part = [], ps = 0;\n    for (const c of cand) { const cs = c.en.length + c.cur.length; if (part.length && (part.length >= 6 || ps + cs > 9000)) { chunks.push(part); part = []; ps = 0; } part.push(c); ps += cs; }\n    if (part.length) chunks.push(part); continue; }\n  if (cur.length && (cur.length + cand.length > 10 || size + gsize > 5000)) flush();\n  cur.push(...cand); size += gsize; }\nflush();\nconst stats = { cands: nc, skH, skA, skE, chunks: chunks.length };\nif (!chunks.length) return [{ json: { skip: true, items: [], stats, body: JSON.stringify({ model: 'gpt-4.1-mini', max_tokens: 1, messages: [{ role: 'user', content: 'ok' }] }) } }];\nconst sys = [\n'You are a senior ' + NAMES[iso] + ' localization reviewer for Personality, a personality-test website. This is its Members area: course, lesson and chapter content, personality test names and descriptions, and test result descriptions. Most target strings are old machine translations.',\n'',\n'For each item compare the target with the English source and rewrite it ONLY if there is a real problem: mistranslation, omission or addition, glossary violation, style-guide violation, grammar or spelling error, inconsistency with related keys, or clearly unnatural machine-translation phrasing. If the target is already correct and natural, set change=false. Do not make preferential or cosmetic edits. Each rewrite must translate ITS OWN English source only, never text from another item.',\n'',\n'Context and consistency: read the key name, the group and the context note of every item before translating. Keys in the same group belong together: chapters.12.title and chapters.12.content are one chapter; all tests.4.* keys belong to one test, so its name, questions, answer options and result texts must fit each other. Within a group and across the batch, translate the same English term the same way in titles and in body text, and keep answer options grammatically consistent with their question (gender, number, case, form of address). LOCKED keys were edited by human linguists: never rewrite them, and align your terminology and form of address with them. ESTABLISHED TERMS were chosen earlier for this language: reuse them unless one is clearly wrong in this context.',\n'',\n'Hard rules: keep every HTML tag and attribute exactly as in the target, in the same order, and translate only the text between tags. Keep every placeholder exactly ({...}, {{...}}, [%...], %s, %1$s). Keep line breaks. Never add content that is not in the source. Glossary terms are binding when the English word is used in the same sense as in the product UI: use the given translation (inflected as grammar requires); terms marked KEEP stay untranslated; FORBIDDEN translations must not appear. The glossary is written for product and UI terminology: when course content uses a word with a different meaning (account in key-account management, success in customer success, provide in provide information), use the correct term for that subject and do not force the glossary translation. Remove stray leading or trailing spaces.',\n'',\n'STYLE GUIDE:', rules, '',\n'Return JSON only: {\"items\":[{\"id\":<id>,\"src\":\"<first 6 words of this item English source, copied exactly>\",\"change\":true|false,\"text\":\"<full rewritten target, only when change=true>\",\"reason\":\"<English, max 15 words>\"}],\"terms\":[{\"en\":\"<recurring subject term in English, lower case>\",\"target\":\"<translation used>\"}]}. In terms, list up to 10 recurring subject-matter terms used in this batch (for example account management, customer success, root cause analysis), not UI words.'\n].join(NL);\nconst fmtTerms = ts => ts.length ? ts.map(g => '- ' + g.term + (g.tl === false ? ' = KEEP (do not translate)' : (g.tr ? ' = ' + g.tr : ' (no approved translation)')) + (g.fb ? ' [FORBIDDEN]' : '')).join(NL) : '(none)';\nreturn chunks.map((ch, i) => {\n  const ids = new Set(ch.map(c => c.id)); const gs = [...new Set(ch.map(c => c.g))];\n  const terms = []; const seen = new Set(); for (const c of ch) for (const x of c.terms) if (!seen.has(x.term)) { seen.add(x.term); terms.push(x); }\n  const ctxItems = [];\n  for (const g of gs) { for (const l of groups[g].locked) ctxItems.push({ key: l.k, en: cut(l.en, 500), target: cut(l.cur, 500), note: 'LOCKED, human-edited' });\n    for (const c of groups[g].cand) if (!ids.has(c.id)) ctxItems.push({ key: c.k, en: cut(c.en, 500), target: cut(c.cur, 500), note: 'same group, handled in another batch' }); }\n  const enAll = ch.map(c => c.en.toLowerCase()).join(' ');\n  const est = memTerms.filter(t => hasTerm(enAll, t)).slice(0, 40).map(t => '- ' + t + ' = ' + memMap[t]);\n  const items = ch.map(c => ({ id: c.id, key: c.k, group: c.g, context: c.ctx || undefined, en: c.en, target: c.cur }));\n  const user = ['GLOSSARY TERMS PRESENT:', fmtTerms(terms), '', 'ESTABLISHED TERMS (' + iso + '):', est.length ? est.join(NL) : '(none)', '', 'LOCKED AND RELATED KEYS (read only, do not return them):', ctxItems.length ? JSON.stringify(ctxItems.slice(0, 12)) : '(none)', '', 'ITEMS:', JSON.stringify(items)].join(NL);\n  const body = { model: 'gpt-4.1', temperature: 0.2, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: sys }, { role: 'user', content: user }] };\n  return { json: { chunk: i, items: ch.map(c => ({ id: c.id, k: c.k, en: c.en, cur: c.cur, terms: c.terms.map(x => x.term + (x.tr ? '=' + x.tr : '')).join('; ') })), body: JSON.stringify(body), stats } };\n});"
+      }
+    },
+    {
+      "id": "9ff3e155-c302-4ec6-8928-66e920c46267",
+      "name": "OpenAI rewrite",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4032,
+        96
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.body }}",
+        "options": {
+          "timeout": 240000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "openAiApi": {
+          "id": "yra2iG8pnmCKhZIc",
+          "name": "Futuremedia - n8n project"
+        }
+      }
+    },
+    {
+      "id": "753e40b0-9260-4cbc-aef6-2e9c82749d41",
+      "name": "Parse and guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4256,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const S = $('Scope').first().json; const reqs = $('Build prompts').all(); const res = $input.all();\nconst APPLY = /^(courses|lessons|chapters)[.]/;\nconst gid = n => String(n).split('.').slice(0,2).join('.');\nconst tags = s => (String(s).match(/<\\/?[a-zA-Z][a-zA-Z0-9]*\\b[^>]*>/g) || []).map(t => t.replace(/\\s+/g,' ').toLowerCase()).join('|');\nconst phs = s => (String(s).match(/\\{\\{[^}]*\\}\\}|\\{[^{}]*\\}|\\[%[^\\]]*\\]|%\\d*\\$?[sd]/g) || []).sort().join('|');\nconst nz = s => String(s||'').replace(/<[^>]+>/g,' ').replace(/&[a-z]+;/g,' ').toLowerCase().replace(/[^\\p{L}\\p{N}]+/gu,'');\nconst memKeys = new Set($('Get terms').all().map(i => String((i.json||{}).en_term||'').toLowerCase().trim()).filter(Boolean));\nconst rows = []; const terms = []; const seenT = new Set();\nconst row = (x, extra) => Object.assign({ run_id: S.run_id, iso: S.iso, key_id: x.id, key_name: x.k, en_source: x.en, current_text: x.cur, proposed_text: '', reason: '', glossary_terms: x.terms, status: 'proposed', group: gid(x.k) }, extra);\nres.forEach((it, i) => { const req = reqs[i] ? reqs[i].json : null; if (!req || req.skip || !Array.isArray(req.items) || !req.items.length) return;\n  const byId = {}; for (const x of req.items) byId[x.id] = x; const single = req.items.length === 1;\n  let parsed = null; try { parsed = JSON.parse(it.json.choices[0].message.content); } catch (e) {}\n  const items = parsed && Array.isArray(parsed.items) ? parsed.items : null;\n  if (!items) { for (const x of req.items) rows.push(row(x, { reason: 'model error: ' + JSON.stringify(it.json.error || it.json).slice(0,150), status: 'error' })); return; }\n  for (const t of (Array.isArray(parsed.terms) ? parsed.terms : [])) { const en = String((t||{}).en||'').toLowerCase().trim(); const tg = String((t||{}).target||'').trim();\n    if (en.length < 3 || en.length > 60 || !tg || tg.length > 80 || memKeys.has(en) || seenT.has(en)) continue; seenT.add(en);\n    terms.push({ iso: S.iso, en_term: en, target: tg, key_name: req.items[0].k, run_id: S.run_id }); }\n  for (const r of items) { const x = single ? req.items[0] : byId[r.id]; if (!x || !r.change || typeof r.text !== 'string') continue; const nt = r.text.trim(); if (!nt || nt === x.cur.trim()) continue;\n    let st = APPLY.test(x.k) ? 'to_apply' : 'proposed', why = r.reason || '';\n    if (!single) { const src = nz(r.src), enx = nz(x.en); const aligned = src.length >= 3 && enx.startsWith(src.slice(0, Math.min(src.length, 25))); if (!aligned) { st = 'guard_failed'; why = 'misaligned: echo does not match key source | ' + why; } }\n    if (st !== 'guard_failed') { if (tags(nt) !== tags(x.cur)) { st = 'guard_failed'; why = 'HTML tags changed | ' + why; }\n      else if (phs(nt) !== phs(x.cur) && phs(nt) !== phs(x.en)) { st = 'guard_failed'; why = 'placeholders changed | ' + why; }\n      else { const ratio = nt.length / Math.max(1, x.cur.length); if (ratio < 0.5 || ratio > 2) { st = 'guard_failed'; why = 'length ratio ' + ratio.toFixed(2) + ' | ' + why; } } }\n    rows.push(row(x, { proposed_text: nt, reason: String(why).slice(0,300), status: st })); } });\n// One failed key holds its whole group, so related keys never go live half-changed. Held keys wait for human review.\nconst bad = new Set(rows.filter(r => r.status === 'guard_failed' || r.status === 'error').map(r => r.group));\nfor (const r of rows) if (r.status === 'to_apply' && bad.has(r.group)) { r.status = 'held'; r.reason = 'held: another key in ' + r.group + ' failed checks | ' + r.reason; }\nconst ids = rows.filter(r => r.status === 'to_apply').map(r => r.key_id);\nreturn [{ json: { rows, terms, apply_ids: ids.length ? ids.join(',') : '0' } }];"
+      }
+    },
+    {
+      "id": "63848718-57a9-448a-a78e-24de5624fc6e",
+      "name": "Save proposals",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        5824,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "p8ryr5LxWpLuZUzA"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "run_id": "={{ $json.run_id }}",
+            "iso": "={{ $json.iso }}",
+            "key_id": "={{ $json.key_id }}",
+            "key_name": "={{ $json.key_name }}",
+            "en_source": "={{ $json.en_source }}",
+            "current_text": "={{ $json.current_text }}",
+            "proposed_text": "={{ $json.proposed_text }}",
+            "reason": "={{ $json.reason }}",
+            "glossary_terms": "={{ $json.glossary_terms }}",
+            "status": "={{ $json.status }}"
+          },
+          "schema": [
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "iso",
+              "displayName": "iso",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "key_id",
+              "displayName": "key_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "key_name",
+              "displayName": "key_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "en_source",
+              "displayName": "en_source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "current_text",
+              "displayName": "current_text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "proposed_text",
+              "displayName": "proposed_text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reason",
+              "displayName": "reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "glossary_terms",
+              "displayName": "glossary_terms",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "b36139ef-e50c-4475-83df-572224abf133",
+      "name": "Get terms",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3700,
+        -150
+      ],
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "7PvOYOTwwqWXpXoT"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "condition": "eq",
+              "keyName": "iso",
+              "keyValue": "={{ $('Scope').first().json.iso }}"
+            }
+          ]
+        },
+        "matchType": "allConditions",
+        "operation": "get",
+        "resource": "row",
+        "returnAll": true
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "id": "d56f4861-307f-49ab-837d-603954617aa8",
+      "name": "Live re-check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4480,
+        320
+      ],
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "GET",
+        "options": {
+          "timeout": 120000
+        },
+        "url": "={{ 'https://api.lokalise.com/api2/projects/9933660066825e9a8005c8.58526829/keys?include_translations=1&disable_references=1&limit=500&filter_translation_lang_ids=' + $('Scope').first().json.lang_id + '&filter_key_ids=' + $json.apply_ids }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "executeOnce": true
+    },
+    {
+      "id": "91e791ac-59e0-4195-8f15-e36525cae70d",
+      "name": "Decide writes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4704,
+        320
+      ],
+      "parameters": {
+        "jsCode": "const P = $('Parse and guard').first().json; const live = $input.first().json; const iso = $('Scope').first().json.iso;\nconst INTERNAL = new Set(['maria@efuturemedia.com','maria+devs@efuturemedia.com','kseniya.krasovskaya@efuturemedia.com','raul@efuturemedia.com','support@lokalise.com','']);\nconst ok = Array.isArray(live.keys);\nconst byId = {}; if (ok) for (const k of live.keys) { const t = (k.translations||[]).find(x => x.language_iso === iso); if (t) byId[k.key_id] = t; }\nconst rows = P.rows.map(r => Object.assign({}, r)); const demoted = new Set();\nfor (const r of rows) { if (r.status !== 'to_apply') continue;\n  if (!ok) { r.status = 'held'; r.reason = 'live re-check failed, not applied | ' + r.reason; continue; }\n  const t = byId[r.key_id];\n  if (!t) { r.status = 'held'; r.reason = 'live re-check: translation not found | ' + r.reason; demoted.add(r.group); continue; }\n  const ed = String(t.modified_by_email||'').toLowerCase();\n  if (!INTERNAL.has(ed)) { r.status = 'skipped_linguist'; r.reason = 'edited by ' + ed + ' since the scan | ' + r.reason; demoted.add(r.group); continue; }\n  if (t.translation !== r.current_text) { r.status = 'skipped_changed'; r.reason = 'text changed since the scan | ' + r.reason; demoted.add(r.group); continue; } }\nfor (const r of rows) if (r.status === 'to_apply' && demoted.has(r.group)) { r.status = 'held'; r.reason = 'held: another key in ' + r.group + ' changed since the scan | ' + r.reason; }\nconst writes = rows.filter(r => r.status === 'to_apply');\nconst body = { keys: writes.map(r => ({ key_id: r.key_id, translations: [{ language_iso: iso, translation: r.proposed_text }] })) };\nreturn [{ json: { rows, terms: P.terms, n_write: writes.length, body: JSON.stringify(body) } }];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "ef7c6f87-78f4-479b-bdcf-04270f45d6e3",
+      "name": "Any writes?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4928,
+        320
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "w1",
+              "leftValue": "={{ $json.n_write }}",
+              "operator": {
+                "operation": "gt",
+                "type": "number"
+              },
+              "rightValue": 0
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "5efc7670-5f6f-43f4-aa06-4b2e05c29033",
+      "name": "Write to Lokalise",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5152,
+        220
+      ],
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "jsonBody": "={{ $json.body }}",
+        "method": "PUT",
+        "options": {
+          "timeout": 120000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "https://api.lokalise.com/api2/projects/9933660066825e9a8005c8.58526829/keys"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "executeOnce": true
+    },
+    {
+      "id": "45741632-f029-4e59-ab97-108a5ccca78b",
+      "name": "Finalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5376,
+        320
+      ],
+      "parameters": {
+        "jsCode": "const D = $('Decide writes').first().json; const S = $('Scope').first().json; const iso = S.iso;\nlet w = null; try { if ($('Write to Lokalise').isExecuted) w = $('Write to Lokalise').first().json; } catch (e) {}\nconst okIds = new Set(); const errs = {};\nif (w && Array.isArray(w.keys)) for (const k of w.keys) okIds.add(String(k.key_id));\nif (w && Array.isArray(w.errors)) for (const e of w.errors) { const id = e.key_id || (e.key||{}).key_id; if (id) errs[String(id)] = e.message || JSON.stringify(e).slice(0,120); }\nconst wErr = w && !Array.isArray(w.keys) ? JSON.stringify(w.error || w).slice(0,150) : '';\nconst rows = D.rows.map(r => { if (r.status !== 'to_apply') return r; const id = String(r.key_id);\n  if (okIds.has(id) && !errs[id]) return Object.assign({}, r, { status: 'applied' });\n  return Object.assign({}, r, { status: 'apply_error', reason: 'write failed: ' + (errs[id] || wErr || 'no confirmation') + ' | ' + r.reason }); });\nconst cnt = s => rows.filter(r => r.status === s).length;\nconst st = $('Get state').all().map(i => i.json).find(x => x.id === S.row_id) || {};\nreturn [{ json: { rows, terms: D.terms || [], done: S.status === 'done', iso, run_id: S.run_id, row_id: S.row_id, proposed_total: (st.proposed||0) + cnt('proposed'), applied_total: (st.applied||0) + cnt('applied') } }];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "3ccb62ac-7a1e-4ef1-97b0-b754ac493b02",
+      "name": "Rows out",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5600,
+        100
+      ],
+      "parameters": {
+        "jsCode": "return ($input.first().json.rows || []).map(r => ({ json: r }));",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "b0b17c94-7b5d-40a1-9640-c5bb921c4016",
+      "name": "Terms out",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5600,
+        300
+      ],
+      "parameters": {
+        "jsCode": "return ($input.first().json.terms || []).map(t => ({ json: t }));",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "b39c734f-7a32-4390-8065-08e2ed644f99",
+      "name": "Save terms",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        5824,
+        300
+      ],
+      "parameters": {
+        "columns": {
+          "mappingMode": "defineBelow",
+          "schema": [
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "iso",
+              "id": "iso",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "en_term",
+              "id": "en_term",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "target",
+              "id": "target",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "key_name",
+              "id": "key_name",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "run_id",
+              "id": "run_id",
+              "required": false,
+              "type": "string"
+            }
+          ],
+          "value": {
+            "en_term": "={{ $json.en_term }}",
+            "iso": "={{ $json.iso }}",
+            "key_name": "={{ $json.key_name }}",
+            "run_id": "={{ $json.run_id }}",
+            "target": "={{ $json.target }}"
+          }
+        },
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "7PvOYOTwwqWXpXoT"
+        },
+        "operation": "insert",
+        "resource": "row"
+      }
+    },
+    {
+      "id": "db7beb05-fb1e-4a43-8e05-843ef1fe85b2",
+      "name": "Update state counts",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        5600,
+        500
+      ],
+      "parameters": {
+        "columns": {
+          "mappingMode": "defineBelow",
+          "schema": [
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "proposed",
+              "id": "proposed",
+              "required": false,
+              "type": "number"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "applied",
+              "id": "applied",
+              "required": false,
+              "type": "number"
+            }
+          ],
+          "value": {
+            "applied": "={{ $json.applied_total }}",
+            "proposed": "={{ $json.proposed_total }}"
+          }
+        },
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "yVcTvuZDRiFqFjJU"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "condition": "eq",
+              "keyName": "id",
+              "keyValue": "={{ $json.row_id }}"
+            }
+          ]
+        },
+        "matchType": "allConditions",
+        "operation": "update",
+        "resource": "row"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "91932d9b-5791-4871-99cb-7ebdfdfc0b20",
+      "name": "Language finished?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5600,
+        700
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "d1",
+              "leftValue": "={{ $json.done }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "684b1caa-a1ca-47d6-b380-adf2196f9717",
+      "name": "Get language results",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        5824,
+        700
+      ],
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "p8ryr5LxWpLuZUzA"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "condition": "eq",
+              "keyName": "iso",
+              "keyValue": "={{ $json.iso }}"
+            }
+          ]
+        },
+        "matchType": "allConditions",
+        "operation": "get",
+        "resource": "row",
+        "returnAll": true
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "id": "d612b88a-c2dd-4df4-9e25-194a22afd9b9",
+      "name": "Build Slack message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6048,
+        700
+      ],
+      "parameters": {
+        "jsCode": "const NL = String.fromCharCode(10);\nconst F = $('Finalize').first().json; const S = $('Scope').first().json; const iso = F.iso;\nconst rows = $input.all().map(i => i.json || {}).filter(r => r.iso === iso && r.status && r.status !== 'superseded_test');\nconst c = s => rows.filter(r => r.status === s).length;\nconst NAMES = {da:'Danish',nl:'Dutch',et:'Estonian',fr:'French',de:'German',id:'Indonesian',it:'Italian',ko:'Korean',lv:'Latvian',lt:'Lithuanian',ms:'Malay',no:'Norwegian',pl:'Polish',pt:'Brazilian Portuguese',ro:'Romanian',es:'Spanish',sv:'Swedish',th:'Thai'};\nconst url = 'https://efuturemedia.app.n8n.cloud/projects/dEuUcqimhxflYu8w/datatables/p8ryr5LxWpLuZUzA';\nconst lines = [\n  '*Members MT rewrite: ' + (NAMES[iso] || iso) + ' (' + iso + ') scan done*',\n  (S.total || '') + ' course, lesson, chapter and test keys in the Personality Members project were checked.',\n  '• Applied to Lokalise: ' + c('applied') + ' (courses, lessons and chapters, only keys not edited by a linguist)',\n  '• Pending review: ' + c('proposed') + ' test keys',\n  '• Held for review (to keep a group consistent): ' + c('held'),\n  '• Blocked by safety checks: ' + (c('guard_failed') + c('error') + c('apply_error')),\n  '• Skipped, edited by a linguist during the scan: ' + (c('skipped_linguist') + c('skipped_changed')),\n  'Results: <' + url + '|members_mt_rewrite_proposals> (filter iso = ' + iso + ')'\n];\nreturn [{ json: { text: lines.join(NL) } }];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "02d08dc6-38c1-43d8-9c77-b7cbfe2fd87a",
+      "name": "Post to i18n-team",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        6272,
+        700
+      ],
+      "parameters": {
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C094NS33FN0"
+        },
+        "operation": "post",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        },
+        "resource": "message",
+        "select": "channel",
+        "text": "={{ $json.text }}"
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "webhookId": "2836e2a9-6fb0-4d06-b763-fd44cd314244"
+    }
+  ],
+  "connections": {
+    "Weekend every 2h": {
+      "main": [
+        [
+          {
+            "node": "Get state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get state": {
+      "main": [
+        [
+          {
+            "node": "Plan run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual test": {
+      "main": [
+        [
+          {
+            "node": "Get state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan run": {
+      "main": [
+        [
+          {
+            "node": "Key list p1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Key list p1": {
+      "main": [
+        [
+          {
+            "node": "Key list p2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Key list p2": {
+      "main": [
+        [
+          {
+            "node": "Scope",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scope": {
+      "main": [
+        [
+          {
+            "node": "Advance state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Advance state": {
+      "main": [
+        [
+          {
+            "node": "Get guide",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get guide": {
+      "main": [
+        [
+          {
+            "node": "Contributors Members",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contributors Members": {
+      "main": [
+        [
+          {
+            "node": "Contributors PCO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contributors PCO": {
+      "main": [
+        [
+          {
+            "node": "Contributors QR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contributors QR": {
+      "main": [
+        [
+          {
+            "node": "Plan audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan audit": {
+      "main": [
+        [
+          {
+            "node": "Fetch audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch audit": {
+      "main": [
+        [
+          {
+            "node": "Collect audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect audit": {
+      "main": [
+        [
+          {
+            "node": "Fetch batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch batch": {
+      "main": [
+        [
+          {
+            "node": "Glossary p1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Glossary p1": {
+      "main": [
+        [
+          {
+            "node": "Glossary p2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build prompts": {
+      "main": [
+        [
+          {
+            "node": "OpenAI rewrite",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI rewrite": {
+      "main": [
+        [
+          {
+            "node": "Parse and guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Glossary p2": {
+      "main": [
+        [
+          {
+            "node": "Get terms",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get terms": {
+      "main": [
+        [
+          {
+            "node": "Build prompts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse and guard": {
+      "main": [
+        [
+          {
+            "node": "Live re-check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Live re-check": {
+      "main": [
+        [
+          {
+            "node": "Decide writes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide writes": {
+      "main": [
+        [
+          {
+            "node": "Any writes?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any writes?": {
+      "main": [
+        [
+          {
+            "node": "Write to Lokalise",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Finalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write to Lokalise": {
+      "main": [
+        [
+          {
+            "node": "Finalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize": {
+      "main": [
+        [
+          {
+            "node": "Rows out",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Terms out",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Update state counts",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Language finished?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rows out": {
+      "main": [
+        [
+          {
+            "node": "Save proposals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Terms out": {
+      "main": [
+        [
+          {
+            "node": "Save terms",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Language finished?": {
+      "main": [
+        [
+          {
+            "node": "Get language results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get language results": {
+      "main": [
+        [
+          {
+            "node": "Build Slack message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Slack message": {
+      "main": [
+        [
+          {
+            "node": "Post to i18n-team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Madrid",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 2400
+  },
+  "staticData": {
+    "node:Weekend every 2h": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    }
+  },
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "QqicysVT2yCn6yB1",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-25T13:53:49.325Z",
+      "updatedAt": "2026-09-25T13:53:49.325Z"
+    }
+  ],
+  "activeVersion": null
+}
