@@ -1,0 +1,441 @@
+{
+  "id": "Xdlii3BcrLDTnvk9",
+  "name": "INTERNAT – LLR main ticket done flag",
+  "description": "Every 30 min, labels open INTERNAT LLR tickets main_ticket_done when their main ticket is Done (removes it if reopened). Feeds the Jira filter for LLR tickets still To Do/Blocked.",
+  "active": true,
+  "activeVersionId": "94839ec0-c5df-4ace-bc26-ef301824d730",
+  "createdAt": "2026-10-09T14:35:18.983Z",
+  "updatedAt": "2026-10-09T14:35:18.983Z",
+  "isArchived": false,
+  "versionId": "94839ec0-c5df-4ace-bc26-ef301824d730",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "fa31d7b4-9152-4719-9e73-c890d7a2837b",
+      "name": "Every 30 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "24fb410f-96db-4bcc-831f-d7ecc2067b59",
+      "name": "Get open LLR tickets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://futuremedia.atlassian.net/rest/api/3/search/jql",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "jql",
+              "value": "project = INTERNAT AND labels = LLR AND statusCategory != Done"
+            },
+            {
+              "name": "fields",
+              "value": "labels,issuelinks"
+            },
+            {
+              "name": "maxResults",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "nextPageToken",
+                    "value": "={{ $response.body.nextPageToken }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ $response.body.isLast !== false }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20,
+              "requestInterval": 300
+            }
+          }
+        }
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "QJte7dJbX10mIzJI",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "id": "5b22331e-2494-478f-a628-88adde22da35",
+      "name": "Decide label changes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const LABEL = 'main_ticket_done';\nconst out = [];\nfor (const page of $input.all()) {\n  for (const issue of (page.json.issues || [])) {\n    const f = issue.fields || {};\n    const mains = (f.issuelinks || []).filter(l => l.type && l.type.id === '10079').map(l => l.inwardIssue || l.outwardIssue).filter(Boolean);\n    const mainDone = mains.length > 0 && mains.some(m => m.fields && m.fields.status && m.fields.status.statusCategory && m.fields.status.statusCategory.key === 'done');\n    const has = (f.labels || []).includes(LABEL);\n    if (mainDone && !has) out.push({ json: { key: issue.key, op: 'add', label: LABEL, main: mains.map(m => m.key).join(', ') } });\n    if (!mainDone && has) out.push({ json: { key: issue.key, op: 'remove', label: LABEL, main: mains.map(m => m.key).join(', ') } });\n  }\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "e695d75f-3dd2-4fea-81fc-9e3ab4343f7f",
+      "name": "Add or remove label",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://futuremedia.atlassian.net/rest/api/3/issue/{{ $json.key }}?notifyUsers=false",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ update: { labels: [ { [$json.op]: $json.label } ] } }) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 500
+            }
+          }
+        }
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "QJte7dJbX10mIzJI",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "id": "f0ef4d4d-a58d-46eb-b7cc-983197bcafee",
+      "name": "Sticky Note 73852e24",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        272,
+        0
+      ],
+      "parameters": {
+        "content": "## LLR main ticket done flag\nEvery 30 min: open INTERNAT LLR tickets get label main_ticket_done when their main ticket (link \"Is the localization ticket for\") is Done; label is removed if the main ticket reopens.\nJira filter: project = INTERNAT AND labels = LLR AND labels = main_ticket_done AND status in (\"To Do\", BLOCKED)",
+        "color": 4
+      }
+    }
+  ],
+  "connections": {
+    "Every 30 minutes": {
+      "main": [
+        [
+          {
+            "node": "Get open LLR tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get open LLR tickets": {
+      "main": [
+        [
+          {
+            "node": "Decide label changes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide label changes": {
+      "main": [
+        [
+          {
+            "node": "Add or remove label",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:Every 30 minutes": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    }
+  },
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "Xdlii3BcrLDTnvk9",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-09T14:35:18.987Z",
+      "updatedAt": "2026-10-09T14:35:18.987Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "94839ec0-c5df-4ace-bc26-ef301824d730",
+    "workflowId": "Xdlii3BcrLDTnvk9",
+    "nodes": [
+      {
+        "id": "fa31d7b4-9152-4719-9e73-c890d7a2837b",
+        "name": "Every 30 minutes",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.4,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "minutes",
+                "minutesInterval": 30
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "24fb410f-96db-4bcc-831f-d7ecc2067b59",
+        "name": "Get open LLR tickets",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          224,
+          0
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://futuremedia.atlassian.net/rest/api/3/search/jql",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "jiraSoftwareCloudApi",
+          "sendQuery": true,
+          "specifyQuery": "keypair",
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "jql",
+                "value": "project = INTERNAT AND labels = LLR AND statusCategory != Done"
+              },
+              {
+                "name": "fields",
+                "value": "labels,issuelinks"
+              },
+              {
+                "name": "maxResults",
+                "value": "100"
+              }
+            ]
+          },
+          "options": {
+            "pagination": {
+              "pagination": {
+                "paginationMode": "updateAParameterInEachRequest",
+                "parameters": {
+                  "parameters": [
+                    {
+                      "type": "qs",
+                      "name": "nextPageToken",
+                      "value": "={{ $response.body.nextPageToken }}"
+                    }
+                  ]
+                },
+                "paginationCompleteWhen": "other",
+                "completeExpression": "={{ $response.body.isLast !== false }}",
+                "limitPagesFetched": true,
+                "maxRequests": 20,
+                "requestInterval": 300
+              }
+            }
+          }
+        },
+        "credentials": {
+          "jiraSoftwareCloudApi": {
+            "id": "QJte7dJbX10mIzJI",
+            "name": "Jira SW Cloud account"
+          }
+        }
+      },
+      {
+        "id": "5b22331e-2494-478f-a628-88adde22da35",
+        "name": "Decide label changes",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          448,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "const LABEL = 'main_ticket_done';\nconst out = [];\nfor (const page of $input.all()) {\n  for (const issue of (page.json.issues || [])) {\n    const f = issue.fields || {};\n    const mains = (f.issuelinks || []).filter(l => l.type && l.type.id === '10079').map(l => l.inwardIssue || l.outwardIssue).filter(Boolean);\n    const mainDone = mains.length > 0 && mains.some(m => m.fields && m.fields.status && m.fields.status.statusCategory && m.fields.status.statusCategory.key === 'done');\n    const has = (f.labels || []).includes(LABEL);\n    if (mainDone && !has) out.push({ json: { key: issue.key, op: 'add', label: LABEL, main: mains.map(m => m.key).join(', ') } });\n    if (!mainDone && has) out.push({ json: { key: issue.key, op: 'remove', label: LABEL, main: mains.map(m => m.key).join(', ') } });\n  }\n}\nreturn out;"
+        }
+      },
+      {
+        "id": "e695d75f-3dd2-4fea-81fc-9e3ab4343f7f",
+        "name": "Add or remove label",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          672,
+          0
+        ],
+        "parameters": {
+          "method": "PUT",
+          "url": "=https://futuremedia.atlassian.net/rest/api/3/issue/{{ $json.key }}?notifyUsers=false",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "jiraSoftwareCloudApi",
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ update: { labels: [ { [$json.op]: $json.label } ] } }) }}",
+          "options": {
+            "batching": {
+              "batch": {
+                "batchSize": 5,
+                "batchInterval": 500
+              }
+            }
+          }
+        },
+        "credentials": {
+          "jiraSoftwareCloudApi": {
+            "id": "QJte7dJbX10mIzJI",
+            "name": "Jira SW Cloud account"
+          }
+        }
+      },
+      {
+        "id": "f0ef4d4d-a58d-46eb-b7cc-983197bcafee",
+        "name": "Sticky Note 73852e24",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          272,
+          0
+        ],
+        "parameters": {
+          "content": "## LLR main ticket done flag\nEvery 30 min: open INTERNAT LLR tickets get label main_ticket_done when their main ticket (link \"Is the localization ticket for\") is Done; label is removed if the main ticket reopens.\nJira filter: project = INTERNAT AND labels = LLR AND labels = main_ticket_done AND status in (\"To Do\", BLOCKED)",
+          "color": 4
+        }
+      }
+    ],
+    "connections": {
+      "Every 30 minutes": {
+        "main": [
+          [
+            {
+              "node": "Get open LLR tickets",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get open LLR tickets": {
+        "main": [
+          [
+            {
+              "node": "Decide label changes",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Decide label changes": {
+        "main": [
+          [
+            {
+              "node": "Add or remove label",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Maria Sica (via MCP)",
+    "name": "Initial LLR main-ticket-done flag",
+    "description": "Created with 5 nodes: Every 30 minutes, Get open LLR tickets, Decide label changes, Add or remove label, Sticky Note 73852e24",
+    "autosaved": false,
+    "createdAt": "2026-10-09T14:35:18.988Z",
+    "updatedAt": "2026-10-09T14:35:18.988Z",
+    "workflowPublishHistory": [
+      {
+        "id": 2540,
+        "workflowId": "Xdlii3BcrLDTnvk9",
+        "versionId": "94839ec0-c5df-4ace-bc26-ef301824d730",
+        "event": "activated",
+        "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
+        "createdAt": "2026-10-09T14:35:53.851Z"
+      }
+    ]
+  }
+}
