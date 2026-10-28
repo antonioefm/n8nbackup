@@ -1,0 +1,252 @@
+{
+  "id": "YTWzXwG7yqZNN0OG",
+  "name": "RealChecker localize - TM and glossary context (READ ONLY)",
+  "description": "Read-only: fetch RealChecker FE TM context and shared glossary for localizing untranslated keys",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-22T06:26:21.705Z",
+  "updatedAt": "2026-10-22T15:55:48.004Z",
+  "isArchived": false,
+  "versionId": "19d09bed-d076-4fdb-a238-ce85db4574be",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "59ea949d-03c9-4e84-bb62-f60d48d3517b",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "665c2fb5-1b05-402f-b605-589edb24a1c9",
+      "name": "Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [1,2,3,4,5].map(function (p) { return { json: { project_id: '691331356a3b9a68428ab3.43540470', page: p } }; });"
+      }
+    },
+    {
+      "id": "f49f3ef1-b0ac-4caf-a8b8-2d99ddc5c6bd",
+      "name": "Fetch Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?include_translations=1&limit=500&page={{ $json.page }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 400
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "be5e1309-2dd2-46b9-9ddf-8bda5722268c",
+      "name": "Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const out = []; let scanned = 0;\nfor (const it of $input.all()) { const r = it.json;\n  for (const k of ((r.body && r.body.keys) || [])) { if (k.is_archived) { continue; } scanned++;\n    const name = (k.key_name && k.key_name.web) || ''; let en = ''; const tr = {}; let n = 0;\n    for (const t of (k.translations || [])) { if (t.language_iso === 'en') { en = t.translation; continue; } if (t.translation && String(t.translation).trim()) { tr[t.language_iso] = t.translation; n++; } }\n    if (n < 6 || !en || en.length > 200) { continue; }\n    out.push({ name: name, en: en, tr: tr }); } }\nreturn [{ json: { ctx_marker: 1, scanned: scanned, count: out.length, keys: out } }];"
+      }
+    },
+    {
+      "id": "2d4e9b3f-5d6a-465c-95e4-e91e160d4f8d",
+      "name": "Fetch Glossary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20,
+              "requestInterval": 300
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "executeOnce": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "cab32103-db6d-411c-bf3a-62ad192c7cfa",
+      "name": "Glossary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const out = []; let keys = [];\nfor (const it of $input.all()) { const b = it.json.body || it.json; keys = Object.keys(b); const terms = b.data || b.terms || [];\n  for (const t of terms) { out.push({ term: t.term, d: t.description, tr8: t.translatable, cs: t.caseSensitive, tags: t.tags, t: (t.translations || []).filter(function (x) { return x.translation; }).map(function (x) { return [x.langId, x.translation]; }) }); } }\nreturn [{ json: { gl_marker: 1, pages: $input.all().length, body_keys: keys, count: out.length, terms: out } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pages": {
+      "main": [
+        [
+          {
+            "node": "Fetch Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Keys": {
+      "main": [
+        [
+          {
+            "node": "Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Context": {
+      "main": [
+        [
+          {
+            "node": "Fetch Glossary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Glossary": {
+      "main": [
+        [
+          {
+            "node": "Glossary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "YTWzXwG7yqZNN0OG",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-22T06:26:21.710Z",
+      "updatedAt": "2026-10-22T06:26:21.710Z"
+    }
+  ],
+  "activeVersion": null
+}
