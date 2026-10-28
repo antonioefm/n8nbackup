@@ -1,0 +1,225 @@
+{
+  "id": "P8g7dTyl8Z1NwVdU",
+  "name": "Lokalise WRITE - glossary notes from daily audit 2026-10-28 (one-off)",
+  "description": "DONE 28.10.26 (exec 920217): glossary from daily audit notes - fr contact us/get in touch -> nous contacter; it notes on upload + restore. WRITE disabled, Prepare is read-only.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-16T12:24:22.687Z",
+  "updatedAt": "2026-10-28T09:23:37.795Z",
+  "isArchived": false,
+  "versionId": "91e6b9e7-9771-4791-9f6d-3ea5afa175bd",
+  "versionCounter": 18,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "e2610f48-04ad-4594-901f-bdc1c8a707fa",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "07172c35-8e7e-441c-b883-4ebd098fa4e8",
+      "name": "Fetch Glossary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.body.meta.nextCursor }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body.meta.hasMore }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20,
+              "requestInterval": 300
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "a3411b4c-a4a2-4fe8-b34f-89acb019947d",
+      "name": "Prepare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// RETIRED 28 Oct 2026 after exec 920217 (4 glossary terms updated). Now READ-ONLY verification of those terms.\nconst TERMS = ['get in touch','contact us','upload','restore'];\nconst LANGS = {673:'fr',734:'it'};\nconst terms = []; for (const it of $input.all()) { const b = it.json.body || {}; for (const t of (b.data || [])) terms.push(t); }\nconst out = [];\nfor (const t of terms) { if (!TERMS.includes(String(t.term).trim().toLowerCase())) continue;\n  const tr = {}; for (const x of (t.translations || [])) if (LANGS[x.langId]) tr[LANGS[x.langId]] = { t: x.translation, d: x.description };\n  out.push({ term: t.term, tr }); }\nreturn [{ json: { none: true, total_terms: terms.length, report: out } }];\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "351fcdfd-143b-4abc-aec3-96c3f7039726",
+      "name": "WRITE",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "={{ $json.method }}",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.none ? \"{}\" : JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "disabled": true
+    },
+    {
+      "id": "006f8a75-09af-4eba-bd8b-fd85552d4cf9",
+      "name": "Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const req = $('Prepare').all(); if (req[0].json.none) return [req[0].json];\nconst r = $input.first().json; const b = r.body || {};\nreturn [{ json: { status: r.statusCode, updated_terms: (b.data || []).length, report: req[0].json.report, err: r.statusCode === 200 ? '' : JSON.stringify(b).slice(0, 800) } }];\n",
+        "mode": "runOnceForAllItems"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Glossary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Glossary": {
+      "main": [
+        [
+          {
+            "node": "Prepare",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare": {
+      "main": [
+        [
+          {
+            "node": "WRITE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WRITE": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "P8g7dTyl8Z1NwVdU",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-16T12:24:22.689Z",
+      "updatedAt": "2026-10-16T12:24:22.689Z"
+    }
+  ],
+  "activeVersion": null
+}
