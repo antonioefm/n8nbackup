@@ -1,0 +1,255 @@
+{
+  "id": "V5ngHjT6ZHbjAlox",
+  "name": "Lokalise WRITE - glossary Personality linguist terms (it/fr/th) 2026-10-12",
+  "description": "WRITE (Write node disabled by default). Aligns shared glossary with Personality linguist edits 5-12 Oct: it anxiety traits, fr balanced empathy, th anxiety/empathy levels + empathy. Full translations array per term; MODE test/all in Config.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-07T06:59:50.353Z",
+  "updatedAt": "2026-10-13T08:53:19.576Z",
+  "isArchived": false,
+  "versionId": "a25d9647-2349-41be-a9b5-bb36cb7e9a0b",
+  "versionCounter": 25,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "e674448d-9098-407d-bd7c-754a2832f795",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "8e10c33c-e0f7-4d68-8c10-33173ffda572",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// IT: cancel (sense 2, subscription) -> disdici (Maria 2026-10-13)\nconst MODE = 'all';\nconst EDITS = [\n {term:'cancel',iso:'it',tr:'disdici'}\n];\nconst B = 'https://api.lokalise.com/api2/projects/';\nconst GL = '46552447679363c70f7ef8.58193285';\nreturn [\n  { json: { label: 'langs', url: B + GL + '/languages?limit=500', edits: EDITS, mode: MODE } },\n  { json: { label: 'glossary', url: B + GL + '/glossary-terms?limit=500' } }\n];\n"
+      }
+    },
+    {
+      "id": "4a70557c-b206-4099-a2f0-7502c495f716",
+      "name": "Fetch glossary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 10,
+              "requestInterval": 700
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "bced0ce6-d596-4cf2-b312-57d50dd7feb6",
+      "name": "Prepare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const C = $('Config').first().json; const E = C.edits;\nconst norm = s => String(s == null ? '' : s).trim().toLowerCase();\nconst isoToId = {}; const idToIso = {}; const terms = []; const errors = [];\nfor (const it of $input.all()) { const b = it.json.body || {};\n  if (Array.isArray(b.languages)) { for (const l of b.languages) { if (!isoToId[l.lang_iso]) isoToId[l.lang_iso] = l.lang_id; idToIso[l.lang_id] = l.lang_iso; } continue; }\n  if (Array.isArray(b.data)) { for (const t of b.data) terms.push(t); continue; }\n  errors.push({ status: it.json.statusCode, body: JSON.stringify(b).slice(0, 200) }); }\nconst byTerm = {}; const plan = []; const problems = [];\nfor (const e of E) {\n  const m = terms.filter(t => norm(t.term) === norm(e.term)); const langId = isoToId[e.iso];\n  if (m.length !== 1 || !langId) { problems.push({ e, matches: m.length, langId }); continue; }\n  const t = m[0];\n  if (!byTerm[t.id]) byTerm[t.id] = { id: t.id, term: t.term, tr: (t.translations || []).map(x => ({ langId: x.langId, translation: x.translation, description: x.description || '' })) };\n  const cur = byTerm[t.id].tr.find(x => x.langId === langId);\n  plan.push({ id: t.id, term: t.term, iso: e.iso, langId, old: cur ? cur.translation : null, new: e.tr });\n  if (cur) cur.translation = e.tr; else byTerm[t.id].tr.push({ langId, translation: e.tr, description: '' });\n}\nlet ids = Object.keys(byTerm);\nif (C.mode === 'test') ids = ids.slice(0, 1);\nconst body = { terms: ids.map(id => ({ id: Number(id), translations: byTerm[id].tr })) };\nconst blocked = errors.length > 0 || terms.length < 500 || problems.length > 0;\nreturn [{ json: { termsN: terms.length, errors, problems, plan, blocked, mode: C.mode, termIds: ids, body } }];\n"
+      }
+    },
+    {
+      "id": "611cd7be-fd54-4ee9-830f-7b8131231bb3",
+      "name": "Write glossary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.blocked ? '{}' : JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "id": "6bb8013c-d4da-45cb-8452-a1c4c4e84e66",
+      "name": "Verify",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const p = $('Prepare').first().json; const r = $input.first().json; const b = r.body || {};\nconst data = b.data || b.terms || []; const mism = []; let checked = 0;\nfor (const s of p.body.terms) { const t = data.find(d => d.id === s.id) || {};\n  for (const x of s.translations) { checked++; const y = (t.translations || []).find(z => z.langId === x.langId);\n    if (!y || String(y.translation) !== String(x.translation)) mism.push({ id: s.id, langId: x.langId, sent: x.translation, got: y ? y.translation : null }); } }\nreturn [{ json: { status: r.statusCode, written: data.map(d => d.term), checked, mism, raw: data.length ? '' : JSON.stringify(b).slice(0, 600) } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch glossary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch glossary": {
+      "main": [
+        [
+          {
+            "node": "Prepare",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare": {
+      "main": [
+        [
+          {
+            "node": "Write glossary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write glossary": {
+      "main": [
+        [
+          {
+            "node": "Verify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "V5ngHjT6ZHbjAlox",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-07T06:59:50.358Z",
+      "updatedAt": "2026-10-07T06:59:50.358Z"
+    }
+  ],
+  "activeVersion": null
+}
