@@ -1,0 +1,808 @@
+{
+  "id": "eSjjFVWZJtohOBzP",
+  "name": "PeopleForce availability endpoint (PTO + holidays)",
+  "description": "Read-only webhook endpoint for internal teams: returns per person name, email, booked time off (dates only, type hidden) and their national holidays. Whitelist built in a Code node; nothing from PeopleForce is passed through.",
+  "active": true,
+  "activeVersionId": "c5f68739-df63-4fbe-ad95-958a37de66b1",
+  "createdAt": "2026-09-01T08:29:05.707Z",
+  "updatedAt": "2026-09-01T09:10:43.776Z",
+  "isArchived": false,
+  "versionId": "c5f68739-df63-4fbe-ad95-958a37de66b1",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "parameters": {
+        "path": "peopleforce-availability",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "f92395fa-36fb-4858-98e6-66a1643f3da1",
+      "name": "Availability request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "04fc9c46-9ab1-4a81-89b3-0c531c19f991",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "s2Hr4Mc3p6KTYWRf",
+          "name": "Peopleforce x n8n header auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "from-date",
+              "name": "from_date",
+              "type": "string",
+              "value": "={{ $json.query?.from || $now.toFormat(\"yyyy-MM-dd\") }}"
+            },
+            {
+              "id": "to-date",
+              "name": "to_date",
+              "type": "string",
+              "value": "={{ $json.query?.to || $now.plus({ days: 90 }).toFormat(\"yyyy-MM-dd\") }}"
+            },
+            {
+              "id": "fetch-from",
+              "name": "fetch_from",
+              "type": "string",
+              "value": "={{ ($json.query?.from ? DateTime.fromISO($json.query.from) : $now).minus({ days: 60 }).toFormat(\"yyyy-MM-dd\") }}"
+            },
+            {
+              "id": "fetch-to",
+              "name": "fetch_to",
+              "type": "string",
+              "value": "={{ ($json.query?.to ? DateTime.fromISO($json.query.to) : $now.plus({ days: 90 })).plus({ days: 60 }).toFormat(\"yyyy-MM-dd\") }}"
+            },
+            {
+              "id": "emails-filter",
+              "name": "emails_filter",
+              "type": "string",
+              "value": "={{ $json.query?.emails || \"\" }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d474e037-7b1c-4ad4-9d93-800472d8825b",
+      "name": "Read request params",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://app.peopleforce.io/api/public/v3/employees",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "active"
+            },
+            {
+              "name": "per_page",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "parameters": {
+                "parameters": [
+                  {
+                    "name": "page",
+                    "value": "={{ $pageCount + 1 }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ $response.body.data.length === 0 }}",
+              "limitPagesFetched": true
+            }
+          }
+        }
+      },
+      "id": "e6c57d13-b9de-419a-aabd-58f5fc4c9de6",
+      "name": "PF: List active employees",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cItb79MRupYkKrjv",
+          "name": "Peopleforce company api key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = [];\nfor (const item of $input.all()) {\n  const page = Array.isArray(item.json.data) ? item.json.data : [];\n  for (const emp of page) {\n    const name = emp.full_name || [emp.first_name, emp.last_name].filter(Boolean).join(' ');\n    rows.push({ json: { id: emp.id, name: name, email: emp.email || null } });\n  }\n}\nreturn rows;"
+      },
+      "id": "bfb40162-f2a5-4451-9d22-c96027910d41",
+      "name": "Flatten employees",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://app.peopleforce.io/api/public/v3/employees/{{ $json.id }}/holidays",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 10,
+              "batchInterval": 500
+            }
+          }
+        }
+      },
+      "id": "a1084955-1711-48bf-a2fb-8dc3be7890f7",
+      "name": "PF: Employee holidays",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cItb79MRupYkKrjv",
+          "name": "Peopleforce company api key"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://app.peopleforce.io/api/public/v3/leave_requests",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "states[]",
+              "value": "approved"
+            },
+            {
+              "name": "starts_on",
+              "value": "={{ $('Read request params').first().json.fetch_from }}"
+            },
+            {
+              "name": "ends_on",
+              "value": "={{ $('Read request params').first().json.fetch_to }}"
+            },
+            {
+              "name": "per_page",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "parameters": {
+                "parameters": [
+                  {
+                    "name": "page",
+                    "value": "={{ $pageCount + 1 }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ $response.body.data.length === 0 }}",
+              "limitPagesFetched": true
+            }
+          }
+        }
+      },
+      "id": "9d18d098-6d35-404d-9215-a8754c546e1a",
+      "name": "PF: List approved leave",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        0
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cItb79MRupYkKrjv",
+          "name": "Peopleforce company api key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const params = $('Read request params').first().json;\nconst from = params.from_date;\nconst to = params.to_date;\n\nconst rawEmails = String(params.emails_filter || '').toLowerCase();\nconst emailFilter = rawEmails ? rawEmails.split(',').map(s => s.trim()).filter(Boolean) : [];\n\nconst employees = $('Flatten employees').all().map(i => i.json);\nconst holidayItems = $('PF: Employee holidays').all();\n\nconst byId = {};\nconst people = [];\n\nemployees.forEach((emp, idx) => {\n  const email = String(emp.email || '').toLowerCase();\n  if (emailFilter.length && emailFilter.indexOf(email) === -1) return;\n\n  const hItem = holidayItems[idx];\n  const hRows = hItem && hItem.json && Array.isArray(hItem.json.data) ? hItem.json.data : [];\n  const publicHolidays = [];\n  hRows.forEach(h => {\n    const d = String(h.date || h.starts_on || h.day || '').slice(0, 10);\n    if (d && d >= from && d <= to) publicHolidays.push({ date: d, name: h.name || h.title || null });\n  });\n\n  const person = { name: emp.name, email: emp.email, time_off: [], public_holidays: publicHolidays };\n  byId[emp.id] = person;\n  people.push(person);\n});\n\n$('PF: List approved leave').all().forEach(item => {\n  const rows = item.json && Array.isArray(item.json.data) ? item.json.data : [];\n  rows.forEach(lr => {\n    const empId = lr.employee && lr.employee.id ? lr.employee.id : lr.employee_id;\n    const person = byId[empId];\n    if (!person) return;\n    const start = String(lr.starts_on || lr.start_date || '').slice(0, 10);\n    const end = String(lr.ends_on || lr.end_date || start).slice(0, 10);\n    if (!start || end < from || start > to) return;\n    person.time_off.push({ start: start, end: end, status: 'away' });\n  });\n});\n\npeople.forEach(p => {\n  p.time_off.sort((a, b) => (a.start < b.start ? -1 : 1));\n  p.public_holidays.sort((a, b) => (a.date < b.date ? -1 : 1));\n});\n\nreturn [{ json: { range: { from: from, to: to }, generated_at: $now.toISO(), people: people } }];"
+      },
+      "id": "773c7ebc-9d25-44c5-b1ee-aa9a083c8d92",
+      "name": "Build filtered payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "33a555c5-4e41-4526-9da3-2974cc008e9c",
+      "name": "Return filtered data",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Whitelist happens here\nThis Code node builds brand new objects: name, email, time_off (start/end only, every absence labelled \"away\" so leave type never leaves n8n) and public_holidays. Nothing from the PeopleForce payload is spread or passed through — adding a field here is the only way to widen what internal teams see.",
+        "color": 3
+      },
+      "id": "03a4c5e3-ff3b-426e-b3f1-26634d8a7996",
+      "name": "Sticky Note 41bea931",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        112,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Auth\nHeader Auth credential on the webhook — set the header name and shared secret, and give each internal team the value. Optional query params: from, to (yyyy-MM-dd) and emails (comma-separated) to narrow the response.",
+        "color": 4
+      },
+      "id": "1e75fd76-0c3b-4c5c-9cb2-20682a4e1a11",
+      "name": "Sticky Note ae1bbb1e",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        112,
+        560
+      ]
+    }
+  ],
+  "connections": {
+    "Availability request": {
+      "main": [
+        [
+          {
+            "node": "Read request params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read request params": {
+      "main": [
+        [
+          {
+            "node": "PF: List active employees",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PF: List active employees": {
+      "main": [
+        [
+          {
+            "node": "Flatten employees",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flatten employees": {
+      "main": [
+        [
+          {
+            "node": "PF: Employee holidays",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PF: Employee holidays": {
+      "main": [
+        [
+          {
+            "node": "PF: List approved leave",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PF: List approved leave": {
+      "main": [
+        [
+          {
+            "node": "Build filtered payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build filtered payload": {
+      "main": [
+        [
+          {
+            "node": "Return filtered data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "BY3PNiyJJJ9EMdEi",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "pinData": {},
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "eSjjFVWZJtohOBzP",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "updatedAt": "2025-09-16T08:57:49.000Z"
+      },
+      "createdAt": "2026-09-01T08:29:05.709Z",
+      "updatedAt": "2026-09-01T08:29:05.709Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "c5f68739-df63-4fbe-ad95-958a37de66b1",
+    "workflowId": "eSjjFVWZJtohOBzP",
+    "nodes": [
+      {
+        "parameters": {
+          "path": "peopleforce-availability",
+          "authentication": "headerAuth",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "f92395fa-36fb-4858-98e6-66a1643f3da1",
+        "name": "Availability request",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          0,
+          0
+        ],
+        "webhookId": "04fc9c46-9ab1-4a81-89b3-0c531c19f991",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "s2Hr4Mc3p6KTYWRf",
+            "name": "Peopleforce x n8n header auth"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "from-date",
+                "name": "from_date",
+                "type": "string",
+                "value": "={{ $json.query?.from || $now.toFormat(\"yyyy-MM-dd\") }}"
+              },
+              {
+                "id": "to-date",
+                "name": "to_date",
+                "type": "string",
+                "value": "={{ $json.query?.to || $now.plus({ days: 90 }).toFormat(\"yyyy-MM-dd\") }}"
+              },
+              {
+                "id": "fetch-from",
+                "name": "fetch_from",
+                "type": "string",
+                "value": "={{ ($json.query?.from ? DateTime.fromISO($json.query.from) : $now).minus({ days: 60 }).toFormat(\"yyyy-MM-dd\") }}"
+              },
+              {
+                "id": "fetch-to",
+                "name": "fetch_to",
+                "type": "string",
+                "value": "={{ ($json.query?.to ? DateTime.fromISO($json.query.to) : $now.plus({ days: 90 })).plus({ days: 60 }).toFormat(\"yyyy-MM-dd\") }}"
+              },
+              {
+                "id": "emails-filter",
+                "name": "emails_filter",
+                "type": "string",
+                "value": "={{ $json.query?.emails || \"\" }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "d474e037-7b1c-4ad4-9d93-800472d8825b",
+        "name": "Read request params",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          240,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "url": "https://app.peopleforce.io/api/public/v3/employees",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "status",
+                "value": "active"
+              },
+              {
+                "name": "per_page",
+                "value": "100"
+              }
+            ]
+          },
+          "options": {
+            "pagination": {
+              "pagination": {
+                "parameters": {
+                  "parameters": [
+                    {
+                      "name": "page",
+                      "value": "={{ $pageCount + 1 }}"
+                    }
+                  ]
+                },
+                "paginationCompleteWhen": "other",
+                "completeExpression": "={{ $response.body.data.length === 0 }}",
+                "limitPagesFetched": true
+              }
+            }
+          }
+        },
+        "id": "e6c57d13-b9de-419a-aabd-58f5fc4c9de6",
+        "name": "PF: List active employees",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          480,
+          0
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "cItb79MRupYkKrjv",
+            "name": "Peopleforce company api key"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const rows = [];\nfor (const item of $input.all()) {\n  const page = Array.isArray(item.json.data) ? item.json.data : [];\n  for (const emp of page) {\n    const name = emp.full_name || [emp.first_name, emp.last_name].filter(Boolean).join(' ');\n    rows.push({ json: { id: emp.id, name: name, email: emp.email || null } });\n  }\n}\nreturn rows;"
+        },
+        "id": "bfb40162-f2a5-4451-9d22-c96027910d41",
+        "name": "Flatten employees",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          720,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "url": "=https://app.peopleforce.io/api/public/v3/employees/{{ $json.id }}/holidays",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "options": {
+            "batching": {
+              "batch": {
+                "batchSize": 10,
+                "batchInterval": 500
+              }
+            }
+          }
+        },
+        "id": "a1084955-1711-48bf-a2fb-8dc3be7890f7",
+        "name": "PF: Employee holidays",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          960,
+          0
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "cItb79MRupYkKrjv",
+            "name": "Peopleforce company api key"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "url": "https://app.peopleforce.io/api/public/v3/leave_requests",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "states[]",
+                "value": "approved"
+              },
+              {
+                "name": "starts_on",
+                "value": "={{ $('Read request params').first().json.fetch_from }}"
+              },
+              {
+                "name": "ends_on",
+                "value": "={{ $('Read request params').first().json.fetch_to }}"
+              },
+              {
+                "name": "per_page",
+                "value": "100"
+              }
+            ]
+          },
+          "options": {
+            "pagination": {
+              "pagination": {
+                "parameters": {
+                  "parameters": [
+                    {
+                      "name": "page",
+                      "value": "={{ $pageCount + 1 }}"
+                    }
+                  ]
+                },
+                "paginationCompleteWhen": "other",
+                "completeExpression": "={{ $response.body.data.length === 0 }}",
+                "limitPagesFetched": true
+              }
+            }
+          }
+        },
+        "id": "9d18d098-6d35-404d-9215-a8754c546e1a",
+        "name": "PF: List approved leave",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1200,
+          0
+        ],
+        "executeOnce": true,
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "cItb79MRupYkKrjv",
+            "name": "Peopleforce company api key"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const params = $('Read request params').first().json;\nconst from = params.from_date;\nconst to = params.to_date;\n\nconst rawEmails = String(params.emails_filter || '').toLowerCase();\nconst emailFilter = rawEmails ? rawEmails.split(',').map(s => s.trim()).filter(Boolean) : [];\n\nconst employees = $('Flatten employees').all().map(i => i.json);\nconst holidayItems = $('PF: Employee holidays').all();\n\nconst byId = {};\nconst people = [];\n\nemployees.forEach((emp, idx) => {\n  const email = String(emp.email || '').toLowerCase();\n  if (emailFilter.length && emailFilter.indexOf(email) === -1) return;\n\n  const hItem = holidayItems[idx];\n  const hRows = hItem && hItem.json && Array.isArray(hItem.json.data) ? hItem.json.data : [];\n  const publicHolidays = [];\n  hRows.forEach(h => {\n    const d = String(h.date || h.starts_on || h.day || '').slice(0, 10);\n    if (d && d >= from && d <= to) publicHolidays.push({ date: d, name: h.name || h.title || null });\n  });\n\n  const person = { name: emp.name, email: emp.email, time_off: [], public_holidays: publicHolidays };\n  byId[emp.id] = person;\n  people.push(person);\n});\n\n$('PF: List approved leave').all().forEach(item => {\n  const rows = item.json && Array.isArray(item.json.data) ? item.json.data : [];\n  rows.forEach(lr => {\n    const empId = lr.employee && lr.employee.id ? lr.employee.id : lr.employee_id;\n    const person = byId[empId];\n    if (!person) return;\n    const start = String(lr.starts_on || lr.start_date || '').slice(0, 10);\n    const end = String(lr.ends_on || lr.end_date || start).slice(0, 10);\n    if (!start || end < from || start > to) return;\n    person.time_off.push({ start: start, end: end, status: 'away' });\n  });\n});\n\npeople.forEach(p => {\n  p.time_off.sort((a, b) => (a.start < b.start ? -1 : 1));\n  p.public_holidays.sort((a, b) => (a.date < b.date ? -1 : 1));\n});\n\nreturn [{ json: { range: { from: from, to: to }, generated_at: $now.toISO(), people: people } }];"
+        },
+        "id": "773c7ebc-9d25-44c5-b1ee-aa9a083c8d92",
+        "name": "Build filtered payload",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1440,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "options": {}
+        },
+        "id": "33a555c5-4e41-4526-9da3-2974cc008e9c",
+        "name": "Return filtered data",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1680,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "content": "## Whitelist happens here\nThis Code node builds brand new objects: name, email, time_off (start/end only, every absence labelled \"away\" so leave type never leaves n8n) and public_holidays. Nothing from the PeopleForce payload is spread or passed through — adding a field here is the only way to widen what internal teams see.",
+          "color": 3
+        },
+        "id": "03a4c5e3-ff3b-426e-b3f1-26634d8a7996",
+        "name": "Sticky Note 41bea931",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          112,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "content": "## Auth\nHeader Auth credential on the webhook — set the header name and shared secret, and give each internal team the value. Optional query params: from, to (yyyy-MM-dd) and emails (comma-separated) to narrow the response.",
+          "color": 4
+        },
+        "id": "1e75fd76-0c3b-4c5c-9cb2-20682a4e1a11",
+        "name": "Sticky Note ae1bbb1e",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          112,
+          560
+        ]
+      }
+    ],
+    "connections": {
+      "Availability request": {
+        "main": [
+          [
+            {
+              "node": "Read request params",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read request params": {
+        "main": [
+          [
+            {
+              "node": "PF: List active employees",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "PF: List active employees": {
+        "main": [
+          [
+            {
+              "node": "Flatten employees",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Flatten employees": {
+        "main": [
+          [
+            {
+              "node": "PF: Employee holidays",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "PF: Employee holidays": {
+        "main": [
+          [
+            {
+              "node": "PF: List approved leave",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "PF: List approved leave": {
+        "main": [
+          [
+            {
+              "node": "Build filtered payload",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build filtered payload": {
+        "main": [
+          [
+            {
+              "node": "Return filtered data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Antonio antonio.marusic@efuturemedia.com",
+    "name": "Version c5f68739",
+    "description": "",
+    "autosaved": true,
+    "createdAt": "2026-09-01T09:09:10.369Z",
+    "updatedAt": "2026-09-01T09:10:23.000Z",
+    "workflowPublishHistory": [
+      {
+        "id": 1802,
+        "workflowId": "eSjjFVWZJtohOBzP",
+        "versionId": "c5f68739-df63-4fbe-ad95-958a37de66b1",
+        "event": "activated",
+        "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e",
+        "createdAt": "2026-09-01T09:10:23.697Z"
+      },
+      {
+        "id": 1803,
+        "workflowId": "eSjjFVWZJtohOBzP",
+        "versionId": "c5f68739-df63-4fbe-ad95-958a37de66b1",
+        "event": "deactivated",
+        "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e",
+        "createdAt": "2026-09-01T09:10:43.894Z"
+      },
+      {
+        "id": 1804,
+        "workflowId": "eSjjFVWZJtohOBzP",
+        "versionId": "c5f68739-df63-4fbe-ad95-958a37de66b1",
+        "event": "activated",
+        "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e",
+        "createdAt": "2026-09-01T09:10:43.895Z"
+      }
+    ]
+  }
+}
