@@ -1,0 +1,284 @@
+{
+  "id": "qNyEypRkZ4Iv1XUm",
+  "name": "Lokalise READ - BrainIQ untranslated ES + TM + glossary",
+  "description": "READ ONLY (read-only token). All BrainIQ* projects: non-archived keys with empty ES (key info: description, char limit, tags, comments, filename), existing EN/ES pairs as TM, and the shared glossary with ES.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-16T12:06:47.824Z",
+  "updatedAt": "2026-10-28T09:50:18.010Z",
+  "isArchived": false,
+  "versionId": "a1c2a5ff-3811-4968-b628-e56bd78d7975",
+  "versionCounter": 7,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "5c1adafa-69a0-4930-83cd-41c96ae03c48",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "69de1bc2-32ed-40b0-b903-42a0f7d4caa5",
+      "name": "Fetch Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "cbf7e129-2024-4dea-8aea-06fdf4374112",
+      "name": "Fetch Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 100,
+              "requestInterval": 250
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "executeOnce": false,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "640ebc88-8b21-4d42-86ba-453f42d903e1",
+      "name": "Fetch Glossary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.body.meta.nextCursor }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body.meta.hasMore }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20,
+              "requestInterval": 250
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "executeOnce": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "0e3fb45c-7d54-44f9-b73f-0182ce313271",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const tm = [];\nconst projs = $('Pick BrainIQ').all().map(x => x.json.name);\nfor (const it of $('Fetch Keys').all()) {\n  const b = it.json.body || {};\n  const pid = b.project_id || '';\n  for (const k of (b.keys || [])) {\n    if (k.is_archived || k.is_plural) continue;\n    const kn = (typeof k.key_name === 'object') ? (k.key_name.web || k.key_name.other || Object.values(k.key_name)[0]) : k.key_name;\n    if (/^members-content::/.test(kn)) continue;\n    let en = '', es = '', by = '';\n    for (const tr of (k.translations || [])) {\n      if (typeof tr.translation !== 'string') continue;\n      if (tr.language_iso === 'en') en = tr.translation;\n      if (tr.language_iso === 'es') { es = tr.translation; by = tr.modified_by_email || ''; }\n    }\n    if (!en.trim() || !es.trim()) continue;\n    if (en.length > 400) continue;\n    tm.push([pid.slice(0,8), kn, en, es, by, k.description || '']);\n  }\n}\nconst gl = [];\nfor (const it of $('Fetch Glossary').all()) {\n  for (const t of (((it.json || {}).body || {}).data || [])) {\n    const tags = (t.tags || []).map(x => String(x).toLowerCase());\n    const tr = (t.translations || []).filter(x => x.langIso === 'es' || x.langId === 1056)[0] || {};\n    gl.push([t.term, tr.translation || '', tags.join(','), t.forbidden ? 1 : 0, t.translatable ? 1 : 0, (tr.description || t.description || '').slice(0,200)]);\n  }\n}\nreturn [{ json: { projects: projs, tm_n: tm.length, tm: tm, gl_n: gl.length, gl: gl } }];\n"
+      }
+    },
+    {
+      "id": "640c6fd4-c46b-4075-8f91-ff8bfc1da191",
+      "name": "Pick BrainIQ",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        330,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const out = [];\nfor (const it of $input.all()) {\n  const b = it.json.body || {};\n  for (const p of (b.projects || [])) {\n    if (/brain\\s*iq/i.test(p.name || '')) {\n      out.push({ json: { pid: p.project_id, name: p.name, keys_total: (p.statistics || {}).keys_total || 0,\n        url: 'https://api.lokalise.com/api2/projects/' + p.project_id + '/keys?include_translations=1&include_comments=1&filter_langs=en,es&disable_references=1&limit=500&pagination=cursor' } });\n    }\n  }\n}\nreturn out;\n",
+        "mode": "runOnceForAllItems"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Keys": {
+      "main": [
+        [
+          {
+            "node": "Fetch Glossary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Glossary": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Projects": {
+      "main": [
+        [
+          {
+            "node": "Pick BrainIQ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick BrainIQ": {
+      "main": [
+        [
+          {
+            "node": "Fetch Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "qNyEypRkZ4Iv1XUm",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-16T12:06:47.827Z",
+      "updatedAt": "2026-10-16T12:06:47.827Z"
+    }
+  ],
+  "activeVersion": null
+}
