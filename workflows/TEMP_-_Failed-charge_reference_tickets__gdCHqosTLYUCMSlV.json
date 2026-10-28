@@ -1,0 +1,297 @@
+{
+  "id": "gdCHqosTLYUCMSlV",
+  "name": "TEMP - Failed-charge reference tickets",
+  "description": "Temporary read-only workflow that fetches the 17 known failed-charge-reassurance tickets by ID with their full first customer message, automation reply, agent replies and internal notes, to serve as the labelled reference set for classifying fresh tickets",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-03T15:19:48.610Z",
+  "updatedAt": "2026-09-03T15:19:56.124Z",
+  "isArchived": false,
+  "versionId": "c4477637-bd66-4d37-a2bd-fc64ba3611df",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "b3c66ae4-7e98-46f4-a570-1d99f715d2ee",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "d9de28de-31d9-431a-828e-6f748966ce7d",
+      "name": "Set params",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "r1",
+              "name": "project_key",
+              "value": "personality_prod",
+              "type": "string"
+            },
+            {
+              "id": "r2",
+              "name": "ticket_ids",
+              "value": "670467,671670,670340,670446,670707,671153,671734,671905,670903,671602,670753,671615,671471,671857,670783,670281,670752",
+              "type": "string"
+            },
+            {
+              "id": "r3",
+              "name": "text_limit",
+              "value": 1200,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "f8c51095-94a2-4a12-8d8b-e9d3278c049d",
+      "name": "Get Project Config",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "IRxwFN8iBhHLFQxQ",
+          "cachedResultName": "cs_project_config"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "project_key",
+              "keyValue": "={{ $('Set params').first().json.project_key }}"
+            }
+          ]
+        },
+        "limit": 1
+      }
+    },
+    {
+      "id": "d9ab5c06-0a8d-42d0-a52a-154b5e3d51d8",
+      "name": "Show Many Tickets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/show_many.json\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "ids",
+              "value": "={{ $('Set params').first().json.ticket_ids }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      }
+    },
+    {
+      "id": "0e43131e-ad10-46ba-a30a-a66397316d08",
+      "name": "Split Tickets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const list = ($input.first().json.tickets) || [];\nreturn list.map(t => ({ json: { id: t.id, created_at: t.created_at, status: t.status, subject: t.subject, requester_id: t.requester_id, assignee_id: t.assignee_id || null, channel: t.via && t.via.channel, tags: t.tags || [], description: t.description ? String(t.description).slice(0, 2000) : '' } }));\n"
+      }
+    },
+    {
+      "id": "c3b1f728-d26b-45f2-9165-64a49f8d74f6",
+      "name": "Get Comments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $json.id + \"/comments.json\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "include_inline_images",
+              "value": "false"
+            },
+            {
+              "name": "page[size]",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 3,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "38935db6-4053-47b5-aa5a-f74dc2a0218f",
+      "name": "Build Reference Set",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const params = $('Set params').first().json;\nconst cfg = $('Get Project Config').first().json;\nconst autoId = String(cfg.automation_agent_id || '');\nconst limit = Number(params.text_limit) || 1200;\nconst tickets = $('Split Tickets').all();\nconst responses = $input.all();\nfunction clean(s, cap) {\n  if (!s) return '';\n  const c = cap || limit;\n  let t = String(s).replace(/\\r/g, '');\n  t = t.split('\\n').filter(l => !/^\\s*>/.test(l)).join(' ');\n  t = t.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\\s+/g, ' ').trim();\n  return t.length > c ? t.slice(0, c) + '...' : t;\n}\nconst out = [];\nfor (let i = 0; i < tickets.length; i++) {\n  const t = tickets[i].json;\n  const resp = responses[i] ? responses[i].json : {};\n  const comments = (resp && resp.comments) || [];\n  const pub = comments.filter(c => c.public);\n  const cust = pub.filter(c => String(c.author_id) === String(t.requester_id));\n  const auto = autoId ? pub.filter(c => String(c.author_id) === autoId) : [];\n  const agent = pub.filter(c => String(c.author_id) !== String(t.requester_id) && (!autoId || String(c.author_id) !== autoId));\n  const notes = comments.filter(c => !c.public);\n  out.push({ id: t.id, created: t.created_at, status: t.status, channel: t.channel, subject: t.subject,\n    tags: (t.tags || []).join(','),\n    n_cust: cust.length, n_agent: agent.length, n_auto: auto.length, n_notes: notes.length,\n    first_customer_message: clean((cust[0] && cust[0].plain_body) ? cust[0].plain_body : t.description, 1500),\n    automation_reply: auto[0] ? clean(auto[0].plain_body, 400) : '',\n    agent_reply: agent[0] ? clean(agent[0].plain_body, 900) : '',\n    last_agent_reply: agent.length > 1 ? clean(agent[agent.length - 1].plain_body, 500) : '',\n    internal_notes: clean(notes.map(c => String(c.plain_body || '')).join(' || '), 800) });\n}\nreturn [{ json: { requested: (params.ticket_ids || '').split(',').length, returned: out.length, automation_agent_id: autoId, tickets: out } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Set params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set params": {
+      "main": [
+        [
+          {
+            "node": "Get Project Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Project Config": {
+      "main": [
+        [
+          {
+            "node": "Show Many Tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Show Many Tickets": {
+      "main": [
+        [
+          {
+            "node": "Split Tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Tickets": {
+      "main": [
+        [
+          {
+            "node": "Get Comments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Comments": {
+      "main": [
+        [
+          {
+            "node": "Build Reference Set",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "gdCHqosTLYUCMSlV",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "updatedAt": "2025-09-16T08:57:49.000Z"
+      },
+      "createdAt": "2026-09-03T15:19:48.612Z",
+      "updatedAt": "2026-09-03T15:19:48.612Z"
+    }
+  ],
+  "activeVersion": null
+}
