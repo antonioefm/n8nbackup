@@ -1,0 +1,344 @@
+{
+  "id": "b6bfe9WrpBbc5Rj4",
+  "name": "Jira - shipped but not localized (INTERNAT)",
+  "description": "Weekday check for INTERNAT localization tickets whose linked product ticket is already Done. Posts only the delta to #i18n-team.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-18T10:55:12.709Z",
+  "updatedAt": "2026-09-23T07:32:09.846Z",
+  "isArchived": false,
+  "versionId": "641a21b3-dca8-408b-83fd-7e41c532a69c",
+  "versionCounter": 11,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "fd83a58d-a737-4193-b866-010cb4a20dd7",
+      "name": "Every Monday 06:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "expression": "0 0 6 * * 1",
+              "field": "cronExpression"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "44784d8f-2b5f-4cef-a67d-3f0cf66b9e12",
+      "name": "Fetch open INTERNAT tickets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://futuremedia.atlassian.net/rest/api/3/search/jql",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "jql",
+              "value": "project = INTERNAT AND (statusCategory != Done OR status = \"PROD VERIFICATION\") ORDER BY key ASC"
+            },
+            {
+              "name": "fields",
+              "value": "summary,status,issuelinks"
+            },
+            {
+              "name": "maxResults",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "nextPageToken",
+                    "value": "={{ $response.body.nextPageToken }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ $response.body.isLast === true || !$response.body.nextPageToken }}",
+              "limitPagesFetched": true,
+              "maxRequests": 10
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "QJte7dJbX10mIzJI",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "id": "ea469fe2-0901-47fb-a0db-5ac188d9aaad",
+      "name": "Find shipped but not localized",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const NL = String.fromCharCode(10);\nconst LINK_NAME = 'Localization ticket';\nconst BASE = 'https://futuremedia.atlassian.net/browse/';\nconst ORDER = ['To Do', 'BLOCKED', 'PROD VERIFICATION'];\nconst MAX_CHARS = 3800;\nconst pages = $input.all();\nlet issues = [];\nfor (const p of pages) {\n  const b = p.json || {};\n  if (Array.isArray(b.issues)) { issues = issues.concat(b.issues); }\n}\nconst lastPage = pages.length > 0 ? (pages[pages.length - 1].json || {}) : {};\nconst truncated = lastPage.isLast === false && !!lastPage.nextPageToken;\nfunction clean(s) {\n  const t = String(s || '');\n  const a = t.indexOf('[\"');\n  const b = t.indexOf('\"]');\n  if (a !== -1 && b > a) { return t.slice(a + 2, b); }\n  return t;\n}\nfunction link(k) { return '<' + BASE + k + '|' + k + '>'; }\nconst rows = [];\nconst seen = {};\nfor (const iss of issues) {\n  const f = iss.fields || {};\n  const status = (f.status || {}).name || 'Unknown';\n  if (ORDER.indexOf(status) === -1) { continue; }\n  const links = f.issuelinks || [];\n  for (const l of links) {\n    const tn = l.type && l.type.name ? String(l.type.name) : '';\n    if (tn.indexOf(LINK_NAME) === -1) { continue; }\n    const other = l.inwardIssue || l.outwardIssue;\n    if (!other || !other.fields || !other.fields.status) { continue; }\n    const cat = other.fields.status.statusCategory || {};\n    if (cat.key !== 'done') { continue; }\n    const id = iss.key + '|' + other.key;\n    if (seen[id]) { continue; }\n    seen[id] = true;\n    rows.push({ locKey: iss.key, locStatus: status, prodKey: other.key, summary: clean(f.summary) });\n  }\n}\nif (rows.length === 0) { return []; }\nrows.sort(function (a, b) { return a.locKey < b.locKey ? -1 : 1; });\nconst counts = [];\nconst chunks = [];\nfor (const st of ORDER) {\n  const g = rows.filter(function (r) { return r.locStatus === st; });\n  if (g.length === 0) { continue; }\n  counts.push(g.length + ' ' + st);\n  const lines = ['*' + st + ' (' + g.length + ')*'];\n  for (const r of g) {\n    lines.push('- ' + link(r.locKey) + '  <-  ' + link(r.prodKey) + '  ' + r.summary.slice(0, 80));\n  }\n  let buf = '';\n  for (const line of lines) {\n    if (buf.length + line.length + 1 > MAX_CHARS) { chunks.push(buf); buf = ''; }\n    buf = buf.length > 0 ? buf + NL + line : line;\n  }\n  if (buf.length > 0) { chunks.push(buf); }\n}\nconst head = [];\nhead.push('*Shipped but not localized* - the product ticket is Done, the localization ticket is not closed.');\nhead.push(rows.length + ' open: ' + counts.join(', ') + '. Details in thread.');\nif (truncated) { head.push('_Jira returned more pages than were fetched - raise maxRequests on the fetch node._'); }\nreturn [{ json: { summary: head.join(NL), chunks: chunks, openCount: rows.length } }];"
+      }
+    },
+    {
+      "id": "99d1ba22-3eb4-479b-ad79-25ff9676f3b1",
+      "name": "Post summary to i18n-team",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C094NS33FN0",
+          "mode": "id"
+        },
+        "text": "={{ $json.summary }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "executeOnce": true,
+      "webhookId": "5ee5b3a2-94cf-4a90-8a50-b03cd436b19f",
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "disabled": false
+    },
+    {
+      "id": "9ea1d446-3039-4a61-8e7b-8f7cc6585d05",
+      "name": "Post ticket list in thread",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C094NS33FN0",
+          "mode": "id"
+        },
+        "text": "={{ $json.chunk }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false,
+          "thread_ts": {
+            "replyValues": {
+              "thread_ts": "={{ $('Post summary to i18n-team').first().json.message_timestamp }}"
+            }
+          }
+        }
+      },
+      "executeOnce": false,
+      "webhookId": "d02dfc7e-c9be-4ea9-8c0d-471175dc9e35",
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "disabled": false
+    },
+    {
+      "id": "1819f81e-fbf0-4641-9f13-7a1d87f061f1",
+      "name": "Sticky Note 69b1699b",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        100,
+        300
+      ],
+      "parameters": {
+        "content": "## Shipped but not localized\n\nJQL cannot filter on a linked issue status, so this pulls every open INTERNAT ticket with its issuelinks field (which carries the linked issue status inline) and filters in code.\n\nGotchas: the link type is named \"Localization ticket \" WITH A TRAILING SPACE, matched with indexOf. The product ticket is always the inward issue seen from the INTERNAT side.\n\nOnly the delta is posted. State lives in workflow static data, which persists across scheduled runs but not manual test runs.",
+        "color": 4
+      }
+    },
+    {
+      "id": "4c40953a-0d81-4f72-9885-fa623c39ee17",
+      "name": "Run manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "9b838370-d0a2-4f3e-8503-ad690c8da314",
+      "name": "Split detail into chunks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const src = $('Find shipped but not localized').first().json.chunks || [];\nconst out = [];\nfor (const c of src) { out.push({ json: { chunk: c } }); }\nreturn out;",
+        "mode": "runOnceForAllItems"
+      }
+    }
+  ],
+  "connections": {
+    "Fetch open INTERNAT tickets": {
+      "main": [
+        [
+          {
+            "node": "Find shipped but not localized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find shipped but not localized": {
+      "main": [
+        [
+          {
+            "node": "Post summary to i18n-team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every Monday 06:00": {
+      "main": [
+        [
+          {
+            "node": "Fetch open INTERNAT tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run manually": {
+      "main": [
+        [
+          {
+            "node": "Fetch open INTERNAT tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post summary to i18n-team": {
+      "main": [
+        [
+          {
+            "node": "Split detail into chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split detail into chunks": {
+      "main": [
+        [
+          {
+            "node": "Post ticket list in thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Madrid"
+  },
+  "staticData": {
+    "node:Every weekday morning": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    },
+    "node:Every Monday 06:00": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    }
+  },
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "b6bfe9WrpBbc5Rj4",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-18T10:55:12.712Z",
+      "updatedAt": "2026-09-18T10:55:12.712Z"
+    }
+  ],
+  "activeVersion": null
+}
