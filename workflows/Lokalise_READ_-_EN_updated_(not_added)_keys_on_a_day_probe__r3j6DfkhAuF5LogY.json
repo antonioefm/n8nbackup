@@ -1,0 +1,200 @@
+{
+  "id": "r3j6DfkhAuF5LogY",
+  "name": "Lokalise READ - EN updated (not added) keys on a day probe",
+  "description": "READ ONLY: lists keys in PDF Editor monorepo (4790737…) whose EN was modified on DAY (set in Analyze) but were created earlier.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-15T07:11:59.412Z",
+  "updatedAt": "2026-10-19T10:15:30.297Z",
+  "isArchived": false,
+  "versionId": "af074c3e-2fce-47b9-bea9-ac09eaf429c0",
+  "versionCounter": 6,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "ba4f627e-ee0e-450a-9b23-6ef0dba6dc9d",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a3f868b9-543a-419e-bd82-6ada0356e82e",
+      "name": "Fetch Project",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/479073796a6095e8c10e35.09051894",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "03e4f9ff-cca6-4b8f-80d0-c3cd272b3e54",
+      "name": "Build Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const p = $input.first().json;\nconst total = (p.statistics && p.statistics.keys_total) || 0;\nconst pages = Math.max(1, Math.ceil(total / 500) + 1);\nconst out = [];\nfor (let i = 1; i <= pages; i++) { out.push({ json: { page: i } }); }\nreturn out;\n"
+      }
+    },
+    {
+      "id": "48b917eb-b579-4cb0-83a2-bd543a8b3a1b",
+      "name": "Fetch Keys Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/479073796a6095e8c10e35.09051894/keys?limit=500&page={{ $json.page }}&filter_archived=include&include_translations=1&filter_langs=en",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "a783b79b-158f-4982-ae13-260074df8dc4",
+      "name": "Analyze EN updated on day",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Keys whose EN (base) translation was modified on DAY but the key was created earlier.\nconst proj = $('Fetch Project').first().json;\nconst DAY = '2026-10-19';\nconst res = $input.all();\nconst out = []; const failed = []; let scanned = 0; let createdToday = 0;\nfunction d(s) { return String(s || '').slice(0, 10); }\nfor (let i = 0; i < res.length; i++) {\n  const r = res[i].json || {};\n  if (r.statusCode !== 200) { failed.push(i + 1); continue; }\n  for (const k of ((r.body || {}).keys || [])) {\n    scanned++;\n    if (d(k.created_at) === DAY) { createdToday++; continue; }\n    const en = (k.translations || []).find(function (t) { return t.language_iso === 'en'; });\n    if (!en || d(en.modified_at) !== DAY) { continue; }\n    const n = k.key_name || {};\n    out.push({ key_id: k.key_id, key: typeof n === 'string' ? n : (n.web || n.other), created_at: k.created_at, en_modified_at: en.modified_at, en_modified_by: en.modified_by_email, archived: k.is_archived, tags: k.tags, en: String(typeof en.translation === 'string' ? en.translation : JSON.stringify(en.translation)).slice(0, 300) });\n  }\n}\nout.sort(function (a, b) { return String(b.en_modified_at).localeCompare(String(a.en_modified_at)); });\nreturn [{ json: { project: proj.name, keys_total_stat: proj.statistics && proj.statistics.keys_total, scanned: scanned, failed_pages: failed, created_today: createdToday, en_updated_today_count: out.length, en_updated_today: out.slice(0, 60) } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Project": {
+      "main": [
+        [
+          {
+            "node": "Build Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Pages": {
+      "main": [
+        [
+          {
+            "node": "Fetch Keys Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Keys Page": {
+      "main": [
+        [
+          {
+            "node": "Analyze EN updated on day",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "r3j6DfkhAuF5LogY",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-15T07:11:59.415Z",
+      "updatedAt": "2026-10-15T07:11:59.415Z"
+    }
+  ],
+  "activeVersion": null
+}
