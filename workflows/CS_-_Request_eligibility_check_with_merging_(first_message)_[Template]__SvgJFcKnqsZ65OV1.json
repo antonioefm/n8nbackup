@@ -5,10 +5,10 @@
   "active": false,
   "activeVersionId": null,
   "createdAt": "2026-08-24T06:35:40.970Z",
-  "updatedAt": "2026-09-15T08:14:25.141Z",
+  "updatedAt": "2026-10-19T15:19:00.762Z",
   "isArchived": false,
-  "versionId": "c24be611-48e3-4556-80c9-895ba7ecd5b8",
-  "versionCounter": 22,
+  "versionId": "335e16ae-7681-43c3-9a1b-d290655057d7",
+  "versionCounter": 25,
   "sourceWorkflowId": null,
   "triggerCount": 0,
   "nodes": [
@@ -1299,7 +1299,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\nconst v = $('Parse spam verdict').first().json;\n\nconst ticketId = trig.body['ticket.id'];\n\nconst noteBody = [\n  'Note: This ticket was automatically classified as spam / marketing by the automation'\n    + (v.spam_category ? ' (category: ' + v.spam_category + ')' : '')\n    + ', with confidence ' + v.spam_confidence + ' against a threshold of ' + v.spam_threshold_used + '.',\n  v.spam_reason ? '\\nReason given: ' + v.spam_reason : '',\n  '\\nThe ticket was solved automatically and no reply was sent to the customer.',\n  'If this was misclassified, please reopen the ticket and report it to the Operations Department.'\n].filter(Boolean).join('\\n');\n\nconst ticket = {\n  status: 'solved',\n  comment: { public: false, body: noteBody }\n};\n\n// TAGS. `additional_tags` is ONLY supported on the Update Many Tickets endpoint.\n// On a single-ticket PUT Zendesk silently discards it - 200 response, no tag\n// event in the audit. This tag was never actually being applied. A single-ticket\n// PUT only accepts `tags`, which replaces the array, so merge the existing ones.\nconst liveTicket = $('Get ticket status').first().json.ticket || {};\nconst tags = Array.isArray(liveTicket.tags) ? liveTicket.tags.slice() : [];\nif (tags.indexOf('spam_auto_solved') === -1) {\n  tags.push('spam_auto_solved');\n}\nticket.tags = tags;\n\n// Zendesk enforces required custom fields on the solve transition and validates\n// against the INCOMING payload, not the stored ticket:\n//   422 RecordInvalid - \"Language: is required when solving a ticket\"\n// So every required field has to ride along in this one PUT.\nconst fields = [];\n\nconst catFieldId = Number(cfg.ticket_custom_field_category);\nconst catValue = cfg.category_value_spam_marketing;\nif (Number.isFinite(catFieldId) && catFieldId > 0\n    && catValue !== null && catValue !== undefined && String(catValue).trim() !== '') {\n  fields.push({ id: catFieldId, value: String(catValue) });\n}\n\nconst langFieldId = Number(cfg.ticket_field_language_id);\nconst langValue = cfg.language_value_english;\nif (Number.isFinite(langFieldId) && langFieldId > 0\n    && langValue !== null && langValue !== undefined && String(langValue).trim() !== '') {\n  fields.push({ id: langFieldId, value: String(langValue) });\n}\n\nif (fields.length > 0) {\n  ticket.custom_fields = fields;\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    note_body: noteBody,\n    fields_applied: fields.length,\n    tags_sent: ticket.tags,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
+        "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\nconst v = $('Parse spam verdict').first().json;\n\nconst ticketId = trig.body['ticket.id'];\n\nconst noteBody = [\n  'Note: This ticket was automatically classified as spam / marketing by the automation'\n    + (v.spam_category ? ' (category: ' + v.spam_category + ')' : '')\n    + ', with confidence ' + v.spam_confidence + ' against a threshold of ' + v.spam_threshold_used + '.',\n  v.spam_reason ? '\\nReason given: ' + v.spam_reason : '',\n  '\\nThe ticket was solved automatically and no reply was sent to the customer.',\n  'If this was misclassified, please reopen the ticket and report it to the Operations Department.'\n].filter(Boolean).join('\\n');\n\nconst ticket = {\n  status: 'solved',\n  comment: { public: false, body: noteBody }\n};\n\n// TAGS. `additional_tags` is ONLY supported on the Update Many Tickets endpoint.\n// On a single-ticket PUT Zendesk silently discards it - 200 response, no tag\n// event in the audit. This tag was never actually being applied. A single-ticket\n// PUT only accepts `tags`, which replaces the array, so merge the existing ones.\nconst liveTicket = $('Get ticket status').first().json.ticket || {};\nconst tags = Array.isArray(liveTicket.tags) ? liveTicket.tags.slice() : [];\nif (tags.indexOf('spam_auto_solved') === -1) {\n  tags.push('spam_auto_solved');\n}\nticket.tags = tags;\n\n// Zendesk enforces required custom fields on the solve transition and validates\n// against the INCOMING payload, not the stored ticket:\n//   422 RecordInvalid - \"Language: is required when solving a ticket\"\n// So every required field has to ride along in this one PUT.\nconst fields = [];\n\nconst catFieldId = Number(cfg.ticket_custom_field_category);\nconst catValue = cfg.category_value_spam_marketing;\nif (Number.isFinite(catFieldId) && catFieldId > 0\n    && catValue !== null && catValue !== undefined && String(catValue).trim() !== '') {\n  fields.push({ id: catFieldId, value: String(catValue) });\n}\n\nconst langFieldId = Number(cfg.ticket_field_language_id);\nconst langValue = cfg.language_value_english;\nif (Number.isFinite(langFieldId) && langFieldId > 0\n    && langValue !== null && langValue !== undefined && String(langValue).trim() !== '') {\n  fields.push({ id: langFieldId, value: String(langValue) });\n}\n\n// Rejection Complaint (record-based case 2) - required to solve on Personality.\n// This path never sends a refund rejection, so it writes \"no\". STICKY: a ticket\n// that already carries \"yes\" keeps it - same rule as the Zendesk ticket update\n// request sub-workflow, so an earlier rejection is never erased.\nlet rcValue = null;\nconst rcFieldId = Number(cfg.ticket_field_rejection_complaint);\nif (Number.isFinite(rcFieldId) && rcFieldId > 0) {\n  const liveFields = Array.isArray(liveTicket.custom_fields) ? liveTicket.custom_fields : [];\n  const rcCurrent = liveFields.find(f => Number(f.id) === rcFieldId);\n  // Option values from cs_project_config (empty = yes / no).\n  const rcYes = String(cfg.rejection_complaint_value_yes || 'yes');\n  const rcNo = String(cfg.rejection_complaint_value_no || 'no');\n  rcValue = (rcCurrent && rcCurrent.value === rcYes) ? rcYes : rcNo;\n  fields.push({ id: rcFieldId, value: rcValue });\n}\n\nif (fields.length > 0) {\n  ticket.custom_fields = fields;\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    note_body: noteBody,\n    fields_applied: fields.length,\n    rejection_complaint: rcValue,\n    tags_sent: ticket.tags,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
       },
       "id": "aee0d84d-7ac4-40a0-aecb-a5693d6503db",
       "name": "Build spam solve payload",
@@ -1385,7 +1385,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\n\nconst ticketId = trig.body['ticket.id'];\nconst noteBody = $('Note: Auto-solve email').first().json.note_body;\n\nconst ticket = {\n  status: 'solved',\n  comment: { public: false, body: noteBody }\n};\n\n// TAGS. `additional_tags` is ONLY supported on the Update Many Tickets endpoint.\n// On a single-ticket PUT Zendesk silently discards it - 200 response, no tag\n// event in the audit. This tag was never actually being applied. A single-ticket\n// PUT only accepts `tags`, which replaces the array, so merge the existing ones.\nconst liveTicket = $('Get ticket status').first().json.ticket || {};\nconst tags = Array.isArray(liveTicket.tags) ? liveTicket.tags.slice() : [];\nif (tags.indexOf('autosolve_email') === -1) {\n  tags.push('autosolve_email');\n}\nticket.tags = tags;\n\n// Zendesk enforces required custom fields on the solve transition and validates\n// against the INCOMING payload, not the stored ticket:\n//   422 RecordInvalid - \"Language: is required when solving a ticket\"\n// So every required field has to ride along in this one PUT.\nconst fields = [];\n\nconst catFieldId = Number(cfg.ticket_custom_field_category);\nconst catValue = cfg.category_value_duplicate_contact;\nif (Number.isFinite(catFieldId) && catFieldId > 0\n    && catValue !== null && catValue !== undefined && String(catValue).trim() !== '') {\n  fields.push({ id: catFieldId, value: String(catValue) });\n}\n\nconst langFieldId = Number(cfg.ticket_field_language_id);\nconst langValue = cfg.language_value_english;\nif (Number.isFinite(langFieldId) && langFieldId > 0\n    && langValue !== null && langValue !== undefined && String(langValue).trim() !== '') {\n  fields.push({ id: langFieldId, value: String(langValue) });\n}\n\nif (fields.length > 0) {\n  ticket.custom_fields = fields;\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    note_body: noteBody,\n    fields_applied: fields.length,\n    tags_sent: ticket.tags,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
+        "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\n\nconst ticketId = trig.body['ticket.id'];\nconst noteBody = $('Note: Auto-solve email').first().json.note_body;\n\nconst ticket = {\n  status: 'solved',\n  comment: { public: false, body: noteBody }\n};\n\n// TAGS. `additional_tags` is ONLY supported on the Update Many Tickets endpoint.\n// On a single-ticket PUT Zendesk silently discards it - 200 response, no tag\n// event in the audit. This tag was never actually being applied. A single-ticket\n// PUT only accepts `tags`, which replaces the array, so merge the existing ones.\nconst liveTicket = $('Get ticket status').first().json.ticket || {};\nconst tags = Array.isArray(liveTicket.tags) ? liveTicket.tags.slice() : [];\nif (tags.indexOf('autosolve_email') === -1) {\n  tags.push('autosolve_email');\n}\nticket.tags = tags;\n\n// Zendesk enforces required custom fields on the solve transition and validates\n// against the INCOMING payload, not the stored ticket:\n//   422 RecordInvalid - \"Language: is required when solving a ticket\"\n// So every required field has to ride along in this one PUT.\nconst fields = [];\n\nconst catFieldId = Number(cfg.ticket_custom_field_category);\nconst catValue = cfg.category_value_duplicate_contact;\nif (Number.isFinite(catFieldId) && catFieldId > 0\n    && catValue !== null && catValue !== undefined && String(catValue).trim() !== '') {\n  fields.push({ id: catFieldId, value: String(catValue) });\n}\n\nconst langFieldId = Number(cfg.ticket_field_language_id);\nconst langValue = cfg.language_value_english;\nif (Number.isFinite(langFieldId) && langFieldId > 0\n    && langValue !== null && langValue !== undefined && String(langValue).trim() !== '') {\n  fields.push({ id: langFieldId, value: String(langValue) });\n}\n\n// Rejection Complaint (record-based case 2) - required to solve on Personality.\n// This path never sends a refund rejection, so it writes \"no\". STICKY: a ticket\n// that already carries \"yes\" keeps it - same rule as the Zendesk ticket update\n// request sub-workflow, so an earlier rejection is never erased.\nlet rcValue = null;\nconst rcFieldId = Number(cfg.ticket_field_rejection_complaint);\nif (Number.isFinite(rcFieldId) && rcFieldId > 0) {\n  const liveFields = Array.isArray(liveTicket.custom_fields) ? liveTicket.custom_fields : [];\n  const rcCurrent = liveFields.find(f => Number(f.id) === rcFieldId);\n  // Option values from cs_project_config (empty = yes / no).\n  const rcYes = String(cfg.rejection_complaint_value_yes || 'yes');\n  const rcNo = String(cfg.rejection_complaint_value_no || 'no');\n  rcValue = (rcCurrent && rcCurrent.value === rcYes) ? rcYes : rcNo;\n  fields.push({ id: rcFieldId, value: rcValue });\n}\n\nif (fields.length > 0) {\n  ticket.custom_fields = fields;\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    note_body: noteBody,\n    fields_applied: fields.length,\n    rejection_complaint: rcValue,\n    tags_sent: ticket.tags,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
       },
       "id": "1d7fc759-7ce1-4499-be5c-24294c7f9a50",
       "name": "Build auto-solve payload",
@@ -1396,6 +1396,242 @@
         496
       ],
       "notes": "Builds the PUT body natively so the category field can be set alongside status. Skips the category field if either the field id or the per-brand value is unconfigured."
+    },
+    {
+      "id": "dd845e37-a26f-406c-8b52-bafaeb60fbc4",
+      "name": "High risk check enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2400,
+        1904
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "hr-enabled",
+              "leftValue": "={{ $('Get Project Config').first().json.high_risk_check_enabled === true }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "notes": "cs_project_config.high_risk_check_enabled. Empty or false = OFF (opt-in), same convention as spam_check_enabled and dedupe_merge_enabled."
+    },
+    {
+      "id": "b6696afc-3a61-46cd-bda0-4909d14d34b8",
+      "name": "Get High Risk Keywords",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2624,
+        1904
+      ],
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "cachedResultName": "cs_high_risk_keywords",
+          "mode": "list",
+          "value": "H0oFIJNTlQgUVrk5"
+        },
+        "operation": "get",
+        "returnAll": true
+      },
+      "notes": "cs_high_risk_keywords. GLOBAL - no project_key column. The same phrase list applies to every brand; only the check itself is per-project."
+    },
+    {
+      "id": "f0fad212-986b-4bfd-9e9c-d681da0ff63a",
+      "name": "Match High Risk Keywords",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2848,
+        1904
+      ],
+      "parameters": {
+        "jsCode": "// === High risk keyword matching ===\n// Mode: \"Run Once for All Items\". Input = rows from Get High Risk Keywords.\n\nconst ticket = $('Get ticket status').first().json.ticket || {};\n\n// Tier precedence. Lower rank wins. C (safety) outranks A (commercial threat),\n// which outranks B (conduct). This mirrors the queue urgency: safety-review,\n// then Priority, then Standard. A ticket matching several tiers is labelled with\n// the highest-risk one.\nconst TIER_RANK = { C: 0, A: 1, B: 2 };\n\nconst TIER_TAG = {\n  A: 'high-risk-legal-financial',\n  B: 'high-risk-conduct',\n  C: 'high-risk-safety-critical'\n};\n\nconst TIER_QUEUE = {\n  A: 'Priority',\n  B: 'Standard',\n  C: 'safety-review'\n};\n\nconst TIER_LABEL = {\n  A: 'Commercial threat',\n  B: 'Hostility / repeat / account',\n  C: 'Safety / duty of care'\n};\n\n// MATCHING RULE (October 2026). Letters are never changed, only their case.\n//  - Both sides are lowercased. Accents, umlauts, Greek tonos, Vietnamese tone\n//    marks and Thai vowel/tone marks are kept exactly as written: \"llame\" in the\n//    table does not match \"llamé\" in a ticket and vice versa.\n//  - Any run of spaces, line breaks, tabs or punctuation counts as ONE space, on\n//    both sides. So \"can't\" matches \"can’t\" (iPhone apostrophe), \"self harm\"\n//    matches \"self-harm\", and a phrase split by a line break or a double space\n//    still matches. Only characters that are not a letter, mark or digit in any\n//    alphabet are affected.\n//  - The keyword must be bordered by the start/end of the text or by such a\n//    space: \"sue\" never fires inside \"issue\", \"sud\" never inside \"sudbina\",\n//    \"24 hours\" never inside \"124 hours\".\n//  - Unicode NFC runs first. It does not change how the text looks and does not\n//    remove accents. It only makes sure an accented letter is stored the same\n//    way on both sides - some mail clients send \"é\" as \"e\" plus a separate\n//    accent character, which would otherwise never compare equal.\n//  - JavaScript lowercases the Turkish capital \"İ\" to \"i\" plus a combining dot.\n//    The dot is dropped so \"İADE\" matches \"iade\".\n//  - A keyword with no letters or digits at all (an emoji, \"!!!\") is matched\n//    exactly as written instead of being skipped.\n//\n// Replaces the old a-z normaliser, which deleted every non-English letter and\n// collapsed localized keywords into fragments such as \"1\", \"24\" or \"t\".\n//\n// Do NOT add space-insensitive fallback matching. A despaced variant of this\n// caused two customers to be publicly told our product was not ours on\n// 2026-09-09 (Personality tickets 685429 and 685459).\nconst WORD_CHAR = /[\\p{L}\\p{M}\\p{N}]/u;\n\nfunction lower(text) {\n  return String(text == null ? '' : text).normalize('NFC').toLowerCase().replace(/i̇/g, 'i');\n}\n\nfunction prepare(text) {\n  return lower(text).replace(/[^\\p{L}\\p{M}\\p{N}]+/gu, ' ').trim();\n}\n\n// Character immediately before index i, surrogate-pair safe.\nfunction charBefore(s, i) {\n  if (i <= 0) return '';\n  const c = s.charCodeAt(i - 1);\n  if (c >= 0xDC00 && c <= 0xDFFF && i >= 2) return s.slice(i - 2, i);\n  return s[i - 1];\n}\n\n// Character starting at index j, surrogate-pair safe.\nfunction charAfter(s, j) {\n  if (j >= s.length) return '';\n  return String.fromCodePoint(s.codePointAt(j));\n}\n\n// True when needle occurs in hay with no letter or digit directly before or\n// after it. Checks every occurrence, not just the first.\nfunction containsWhole(hay, needle) {\n  let from = 0;\n  for (;;) {\n    const i = hay.indexOf(needle, from);\n    if (i === -1) return false;\n    const b = charBefore(hay, i);\n    const a = charAfter(hay, i + needle.length);\n    if (!(b && WORD_CHAR.test(b)) && !(a && WORD_CHAR.test(a))) return true;\n    from = i + 1;\n  }\n}\n\n// Deliberately NOT stripping quoted history, unlike the wrong-brand matcher.\n// This is a duty-of-care check and over-matching is the preferred failure mode.\n// Subject and description are joined with a line break.\nconst rawText =\n  String(ticket.subject == null ? '' : ticket.subject) + '\\n' +\n  String(ticket.description == null ? '' : ticket.description);\nconst haystack = prepare(rawText);\n// Only used for keywords that contain no letters or digits at all.\nconst haystackRaw = lower(rawText);\n\nconst rows = $input.all();\n\n// One entry per distinct keyword. The localized lists repeat many terms across\n// languages (chargeback, gdpr, trustpilot ...), so a keyword is listed once in\n// the note, with every language it came from, and keeps its highest-risk tier.\nconst byNeedle = new Map();\n\nfor (const r of rows) {\n  const row = r.json || {};\n\n  // Fail-open on active: only an explicit negative disables a row, so a null\n  // (never set) counts as active.\n  const isActive = !(row.active === false || row.active === 0\n    || row.active === 'false' || row.active === '0' || row.active === 'no');\n  if (!isActive) continue;\n\n  let needle = prepare(row.keyword);\n  let hay = haystack;\n  if (!needle) {\n    needle = lower(row.keyword).trim();\n    hay = haystackRaw;\n  }\n  if (!needle) continue;\n\n  const tier = String(row.tier == null ? '' : row.tier).trim().toUpperCase();\n  if (!(tier in TIER_RANK)) continue;\n\n  if (!containsWhole(hay, needle)) continue;\n\n  const lang = String(row.language == null ? '' : row.language).trim().toLowerCase();\n  const category = String(row.category == null ? '' : row.category);\n  const prev = byNeedle.get(needle);\n\n  if (!prev) {\n    byNeedle.set(needle, {\n      keyword: String(row.keyword).trim(),\n      needle: needle,\n      tier: tier,\n      category: category,\n      languages: lang ? [lang] : []\n    });\n  } else {\n    if (lang && prev.languages.indexOf(lang) === -1) prev.languages.push(lang);\n    if (TIER_RANK[tier] < TIER_RANK[prev.tier]) {\n      prev.tier = tier;\n      prev.category = category;\n    }\n  }\n}\n\nconst matches = Array.from(byNeedle.values());\n\n// Highest-risk tier first, then longest (most specific) phrase within that tier.\nmatches.sort((a, b) => {\n  const r = TIER_RANK[a.tier] - TIER_RANK[b.tier];\n  if (r !== 0) return r;\n  return b.needle.length - a.needle.length;\n});\n\n// Language suffix for the note. Omitted for English-only keywords so existing\n// notes read exactly as before.\nfunction langSuffix(m) {\n  const l = m.languages;\n  if (!l.length || (l.length === 1 && l[0] === 'en')) return '';\n  const shown = l.length > 5 ? l.slice(0, 5).join(', ') + ' +' + (l.length - 5) : l.join(', ');\n  return ' [' + shown + ']';\n}\n\nconst winner = matches.length ? matches[0] : null;\n\nreturn [{\n  json: {\n    high_risk_matched: matches.length > 0,\n    match_count: matches.length,\n    tier: winner ? winner.tier : null,\n    tier_label: winner ? TIER_LABEL[winner.tier] : null,\n    category: winner ? winner.category : null,\n    queue: winner ? TIER_QUEUE[winner.tier] : null,\n    tag: winner ? TIER_TAG[winner.tier] : null,\n    primary_match: winner ? winner.keyword : null,\n    matched_keywords: matches.map(m => m.keyword),\n    matched_detail: matches.map(m => m.tier + '/' + m.category + ': ' + m.keyword + langSuffix(m)),\n    tiers_matched: matches.map(m => m.tier).filter((t, i, a) => a.indexOf(t) === i),\n    languages_matched: matches.reduce((acc, m) => acc.concat(m.languages), []).filter((l, i, a) => a.indexOf(l) === i),\n    rows_checked: rows.length,\n    haystack_chars: haystack.length\n  }\n}];"
+      }
+    },
+    {
+      "id": "0252db9b-603f-4182-928f-6fc64428a528",
+      "name": "High risk match?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3072,
+        1904
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "hr-matched",
+              "leftValue": "={{ $json.high_risk_matched }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "aad3a1c0-0e0b-4877-a2d5-853bc0f7dc12",
+      "name": "Build high risk payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3296,
+        1744
+      ],
+      "parameters": {
+        "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\nconst m = $('Match High Risk Keywords').first().json;\n\nconst ticketId = trig.body['ticket.id'];\n\n// cs_project_config.high_risk_enforce\n//   OFF (default) = monitoring. Tag + internal note only, automation continues.\n//   ON            = tag + note + status open + allow_automation _no_, automation stops.\nconst flag = cfg.high_risk_enforce;\nconst enforce = (flag === true || flag === 1 || flag === 'true' || flag === '1' || flag === 'yes');\n\nconst lines = [\n  'Note: This ticket matched the high-risk keyword list.',\n  '',\n  'Tier: ' + m.tier + ' - ' + m.tier_label,\n  'Category: ' + m.category,\n  'Queue: ' + m.queue,\n  'Tag applied: ' + m.tag,\n  'Matched phrase: \"' + m.primary_match + '\"'\n];\n\nif (m.match_count > 1) {\n  lines.push('');\n  lines.push('All ' + m.match_count + ' matches:');\n  for (const d of m.matched_detail) {\n    lines.push('  - ' + d);\n  }\n}\n\nlines.push('');\n\nif (enforce) {\n  lines.push('Automation has been stopped and no reply was sent to the customer.');\n  lines.push('Please pick this ticket up from the ' + m.queue + ' queue and handle it manually.');\n} else {\n  lines.push('MONITORING MODE: the ticket was tagged and this note added, but automation was NOT stopped.');\n  lines.push('The bot may still reply to this customer. No agent action is required unless the reply is wrong.');\n}\n\nconst noteBody = lines.join('\\n');\n\nconst ticket = {\n  comment: { public: false, body: noteBody }\n};\n\n// TAGS. `additional_tags` is ONLY supported on the Update Many Tickets endpoint\n// (PUT /api/v2/tickets/update_many.json). On a single-ticket PUT it is not a\n// recognised field, and Zendesk silently DISCARDS it - the request still returns\n// 200 and the audit shows no tag event at all. Ticket 687990 was flagged and\n// noted correctly but came back with tags unchanged.\n//\n// A single-ticket PUT only accepts `tags`, which REPLACES the whole array, so the\n// existing tags have to be merged in by hand. They come from the live re-read in\n// Get ticket status a few seconds earlier; a tag added by a Zendesk trigger inside\n// that window would be lost, which is an accepted trade against a second API call.\nconst liveTicket = $('Get ticket status').first().json.ticket || {};\nconst existingTags = Array.isArray(liveTicket.tags) ? liveTicket.tags.slice() : [];\n\nif (m.tag && existingTags.indexOf(m.tag) === -1) {\n  existingTags.push(m.tag);\n}\nticket.tags = existingTags;\n\nif (enforce) {\n  // Setting to open is not a solve transition, so Zendesk does not enforce\n  // required custom fields here and the category does not need to ride along.\n  const openStatusId = Number(cfg.ticket_custom_status_open_id);\n  if (Number.isFinite(openStatusId) && openStatusId > 0) {\n    ticket.custom_status_id = openStatusId;\n  }\n\n  // Stop the 2nd-message automation from re-engaging when the customer replies.\n  const allowFieldId = Number(cfg.ticket_field_allow_automation);\n  if (Number.isFinite(allowFieldId) && allowFieldId > 0) {\n    ticket.custom_fields = [{ id: allowFieldId, value: '_no_' }];\n  }\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    enforce: enforce,\n    tier: m.tier,\n    queue: m.queue,\n    tag: m.tag,\n    tags_sent: ticket.tags,\n    primary_match: m.primary_match,\n    match_count: m.match_count,\n    note_body: noteBody,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
+      },
+      "notes": "Builds the PUT natively so the tag, note, status and allow-automation field go in one request. In monitoring mode only the tag and note are sent - no status change, no allow_automation change, and the ticket continues into automation."
+    },
+    {
+      "id": "7908f36c-2937-48c3-a8ef-c166b54b1ed9",
+      "name": "Zendesk: Flag high risk",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        3520,
+        1744
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "jsonBody": "={{ JSON.stringify($json.zendesk_body) }}",
+        "method": "PUT",
+        "nodeCredentialType": "zendeskApi",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $json.ticket_id }}"
+      },
+      "credentials": {
+        "zendeskApi": {
+          "id": "yDBGaacw8ekSNOp4",
+          "name": "Development test Zendesk account"
+        }
+      }
+    },
+    {
+      "id": "5d66fe90-a68b-48e1-802c-2e8c821da0b9",
+      "name": "High risk enforce?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3744,
+        1744
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "hr-enforce",
+              "leftValue": "={{ $('Build high risk payload').first().json.enforce }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "notes": "True = stop automation. False = monitoring mode, fall through to the spam gate and carry on as normal."
+    },
+    {
+      "id": "97403f9d-182c-4012-87ec-30bd0fc55e60",
+      "name": "Do not proceed (high risk)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3968,
+        1616
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "hr-dnp-p",
+              "name": "proceedWithAutomation",
+              "type": "boolean",
+              "value": false
+            },
+            {
+              "id": "hr-dnp-r",
+              "name": "fail_reason",
+              "type": "string",
+              "value": "high_risk_keyword"
+            },
+            {
+              "id": "hr-dnp-t",
+              "name": "high_risk_tier",
+              "type": "string",
+              "value": "={{ $('Build high risk payload').first().json.tier }}"
+            },
+            {
+              "id": "hr-dnp-q",
+              "name": "high_risk_queue",
+              "type": "string",
+              "value": "={{ $('Build high risk payload').first().json.queue }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Same return shape as every other terminal - the calling workflow needs no change. The note and status were already written by Zendesk: Flag high risk, so this does NOT route through the shared loud-fail path."
+    },
+    {
+      "id": "61670df5-0887-4092-82f9-e4bb6a35676c",
+      "name": "Sticky High Risk",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2368,
+        2112
+      ],
+      "parameters": {
+        "color": 3,
+        "content": "## 1d) High-risk keyword check\n\nRuns after the blocklist and auto-solve tables, and **before the spam gate and the dedupe merge** - both of those solve or close the ticket silently, and a legal threat or a self-harm mention must never disappear that way.\n\n**Table:** `cs_high_risk_keywords`. Global, no `project_key` - one phrase list for every brand. Rows are switched on and off with `active`.\n\n**Matching:** normalise both sides, then token-sequence match anchored with `(^| )needle( |$)`. A multi-word phrase must match as a consecutive run, so `several emails` never fires on `several` alone.\n\n**Tier precedence C > A > B**, matching queue urgency (safety-review, Priority, Standard). A ticket matching several tiers takes the highest-risk one. Every match is listed in the note, not just the winner.\n\n**Two independent switches in cs_project_config:**\n- `high_risk_check_enabled` - master on/off, per project, opt-in\n- `high_risk_enforce` - OFF = monitoring (tag + note only, bot still replies), ON = tag + note + status open + `allow_automation _no_` + automation stops\n\nStart with enforce OFF to size the daily volume per tier before committing staff to the queues. Tier B profanity in particular could pull a large share of ordinary refund tickets out of automation.",
+        "height": 460,
+        "width": 460
+      }
     }
   ],
   "connections": {
@@ -1789,7 +2025,7 @@
         ],
         [
           {
-            "node": "Spam check enabled?",
+            "node": "High risk check enabled?",
             "type": "main",
             "index": 0
           }
@@ -1914,6 +2150,104 @@
         [
           {
             "node": "Zendesk: Solve silently",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High risk check enabled?": {
+      "main": [
+        [
+          {
+            "node": "Get High Risk Keywords",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Spam check enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get High Risk Keywords": {
+      "main": [
+        [
+          {
+            "node": "Match High Risk Keywords",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match High Risk Keywords": {
+      "main": [
+        [
+          {
+            "node": "High risk match?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High risk match?": {
+      "main": [
+        [
+          {
+            "node": "Build high risk payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Spam check enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build high risk payload": {
+      "main": [
+        [
+          {
+            "node": "Zendesk: Flag high risk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk: Flag high risk": {
+      "main": [
+        [
+          {
+            "node": "High risk enforce?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High risk enforce?": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed (high risk)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Spam check enabled?",
             "type": "main",
             "index": 0
           }
