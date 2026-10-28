@@ -1,0 +1,200 @@
+{
+  "id": "wKEYpi0IT50aKVfT",
+  "name": "Lokalise READ - automations API probe 2026-10-16",
+  "description": "READ ONLY (read-only token). Probes whether the Lokalise public API exposes project automations. Scratch, inactive.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-16T09:42:53.108Z",
+  "updatedAt": "2026-10-16T09:42:53.108Z",
+  "isArchived": false,
+  "versionId": "7f7a861f-17f1-4d68-8ce6-110449b603a3",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "5b70ef56-fb20-4646-9248-cb6abfa29132",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "75bf1a27-0996-4aab-ac21-7d3157d89304",
+      "name": "Fetch Lokalise Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=500&page=1&include_statistics=0&include_settings=0",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "610da4a8-7a21-47a3-86ca-0c6c10ec14b6",
+      "name": "Build Probes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ps = (items[0].json.projects || []);\nconst p = ps.find(x => /qr/i.test(x.name || '')) || ps[0];\nconst pid = p.project_id;\nconst tid = p.team_id;\nconst B = 'https://api.lokalise.com/api2';\nconst urls = [\n  B + '/projects/' + pid + '/automations',\n  B + '/projects/' + pid + '/automation',\n  B + '/projects/' + pid + '/automation_rules',\n  B + '/projects/' + pid + '/mt_automations',\n  B + '/automations',\n  B + '/teams/' + tid + '/automations',\n  B + '/projects/' + pid + '/webhooks',\n  B + '/projects/' + pid + '/__control_nonexistent__'\n];\nreturn urls.map(u => ({ json: { url: u, project: p.name, project_id: pid, team_id: tid, project_count: ps.length, project_names: ps.map(x => x.name + ' | ' + x.project_id) } }));"
+      }
+    },
+    {
+      "id": "755e8770-de79-47dc-b5b2-c10b00a91ace",
+      "name": "Probe Endpoints",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "c7170682-6ced-4472-b4b4-fa2220803ce5",
+      "name": "Collect",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const reqs = $('Build Probes').all();\nconst out = $input.all().map((r, i) => ({ url: reqs[i].json.url, status: r.json.statusCode, body: JSON.stringify(r.json.body || r.json).slice(0, 400) }));\nreturn [{ json: { project: reqs[0].json.project, project_count: reqs[0].json.project_count, project_names: reqs[0].json.project_names, results: out } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lokalise Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lokalise Projects": {
+      "main": [
+        [
+          {
+            "node": "Build Probes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Probes": {
+      "main": [
+        [
+          {
+            "node": "Probe Endpoints",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Probe Endpoints": {
+      "main": [
+        [
+          {
+            "node": "Collect",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "wKEYpi0IT50aKVfT",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-16T09:42:53.111Z",
+      "updatedAt": "2026-10-16T09:42:53.111Z"
+    }
+  ],
+  "activeVersion": null
+}
