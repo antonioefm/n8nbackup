@@ -1,0 +1,274 @@
+{
+  "id": "KN4qQ5QRP9JAmOKD",
+  "name": "Lokalise - find recent import",
+  "description": "Read-only: lists recent Lokalise file-import processes across projects to locate an upload by its inserted/skipped counts.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-16T10:14:58.203Z",
+  "updatedAt": "2026-10-16T10:14:58.203Z",
+  "isArchived": false,
+  "versionId": "c5885dc9-7f47-4faf-aa7e-1f602216078c",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "bcd9d5e7-be5c-4c51-880b-d040dd9c0a19",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "e01468a4-20ff-4eab-bae0-3d8817fcd95e",
+      "name": "Fetch Lokalise Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=500&page=1&include_statistics=0&include_settings=0",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "82f70bf1-4ee9-452f-ba7f-6c26ffd9cba8",
+      "name": "Split Projects",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const out = [];\nfor (const it of items) {\n  for (const p of (it.json.projects || [])) {\n    out.push({ json: { project_id: p.project_id, project_name: p.name } });\n  }\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "69b9cac8-eea8-4e6c-81d2-97c9a3f3c7ea",
+      "name": "List Processes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/processes?limit=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 220
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "288f2807-00cd-4e2c-ab34-b36cd7d52cf4",
+      "name": "Pick Recent Imports",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const reqs = $('Split Projects').all();\nconst res = $input.all();\nconst out = [];\nconst cutoff = Date.now() - 4 * 24 * 3600 * 1000;\nfor (let i = 0; i < res.length; i++) {\n  const meta = (reqs[i] || {}).json || {};\n  const body = (res[i].json || {}).body || {};\n  for (const p of (body.processes || [])) {\n    const t = (p.created_at_timestamp ? p.created_at_timestamp * 1000 : Date.parse(p.created_at || ''));\n    if (p.type !== 'file-import') { continue; }\n    if (t && t < cutoff) { continue; }\n    out.push({ json: { project_id: meta.project_id, project_name: meta.project_name, process_id: p.process_id, created_at: p.created_at, created_by_email: p.created_by_email, status: p.status } });\n  }\n}\nif (out.length === 0) { return [{ json: { none: true } }]; }\nreturn out;\n"
+      }
+    },
+    {
+      "id": "e834dfc7-a7ae-497b-8817-833248ab4396",
+      "name": "Get Process Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/processes/{{ $json.process_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 220
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "41a29c93-7e37-4ad5-9980-0b00cf1c2828",
+      "name": "Summarize Imports",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const reqs = $('Pick Recent Imports').all();\nconst res = $input.all();\nconst rows = [];\nfor (let i = 0; i < res.length; i++) {\n  const meta = (reqs[i] || {}).json || {};\n  const pr = (((res[i].json || {}).body || {}).process) || {};\n  const files = ((pr.details || {}).files) || [];\n  for (const f of files) {\n    rows.push({ project: meta.project_name, project_id: meta.project_id, process_id: meta.process_id, created_at: meta.created_at, by: meta.created_by_email, file: f.name_original || f.name, inserted: f.key_count_inserted, updated: f.key_count_updated, skipped: f.key_count_skipped, status: f.status });\n  }\n}\nconst match = rows.filter(function (r) { return r.inserted === 3156; });\nreturn [{ json: { match: match, all_recent: rows } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lokalise Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lokalise Projects": {
+      "main": [
+        [
+          {
+            "node": "Split Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Projects": {
+      "main": [
+        [
+          {
+            "node": "List Processes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Processes": {
+      "main": [
+        [
+          {
+            "node": "Pick Recent Imports",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Recent Imports": {
+      "main": [
+        [
+          {
+            "node": "Get Process Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Process Details": {
+      "main": [
+        [
+          {
+            "node": "Summarize Imports",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "KN4qQ5QRP9JAmOKD",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-16T10:14:58.206Z",
+      "updatedAt": "2026-10-16T10:14:58.206Z"
+    }
+  ],
+  "activeVersion": null
+}
