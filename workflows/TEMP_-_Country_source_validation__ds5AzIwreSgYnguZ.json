@@ -1,0 +1,454 @@
+{
+  "id": "ds5AzIwreSgYnguZ",
+  "name": "TEMP - Country source validation",
+  "description": "Temporary read-only workflow that samples recent Personality and MyQRCode tickets to determine which country source is reliable: audit IP location, submitting client, time zone, locale, or a country field.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-08T12:32:36.795Z",
+  "updatedAt": "2026-10-08T12:32:47.122Z",
+  "isArchived": false,
+  "versionId": "abc437d9-2afe-451b-b312-52101c4b7e0e",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "4d3c12b4-b654-4e57-ac73-b26531e39eed",
+      "name": "Run country sample",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -600,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "b2ab0373-8833-4eb5-add7-c8a1123fddd5",
+      "name": "personality p1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -380,
+        300
+      ],
+      "parameters": {
+        "url": "https://personalitytest.zendesk.com/api/v2/tickets.json?sort_by=created_at&sort_order=desc&per_page=100&page=1&include=users",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {}
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      }
+    },
+    {
+      "id": "19cf85b9-8409-404d-8cc4-7ccd3e63546a",
+      "name": "personality p2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -160,
+        300
+      ],
+      "parameters": {
+        "url": "https://personalitytest.zendesk.com/api/v2/tickets.json?sort_by=created_at&sort_order=desc&per_page=100&page=2&include=users",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {}
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      }
+    },
+    {
+      "id": "89c52862-554f-45bc-a964-88f141233a2b",
+      "name": "personality fields",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        60,
+        300
+      ],
+      "parameters": {
+        "url": "https://personalitytest.zendesk.com/api/v2/ticket_fields.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {}
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      }
+    },
+    {
+      "id": "874a2e6f-6278-4eca-bf48-8f7e63bec9fd",
+      "name": "personality split",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "var pages = [].concat($('personality p1').all(), $('personality p2').all());\nvar users = {}; var tickets = []; var errors = [];\npages.forEach(function (it) { var b = it.json || {}; if (b.error) errors.push(String(JSON.stringify(b.error)).slice(0, 160)); (b.users || []).forEach(function (u) { users[u.id] = u; }); (b.tickets || []).forEach(function (t) { tickets.push(t); }); });\nvar seen = {}; var out = [];\ntickets.forEach(function (t) {\n  if (!t || !t.id || seen[t.id]) return; seen[t.id] = true;\n  var u = users[t.requester_id] || {}; var uf = u.user_fields || {};\n  var ufKeys = Object.keys(uf).filter(function (k) { return uf[k] !== null && uf[k] !== '' && uf[k] !== false; });\n  out.push({ json: { id: t.id, channel: (t.via && t.via.channel) || 'unknown', tz: u.time_zone || null, locale: u.locale || null, user_field_keys: ufKeys, fetch_errors: errors } });\n});\nif (!out.length) out.push({ json: { id: 0, empty: true, fetch_errors: errors } });\nreturn out;"
+      }
+    },
+    {
+      "id": "89134a48-bc08-4252-b0ac-df3fe61d2b0c",
+      "name": "personality audits",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        300
+      ],
+      "parameters": {
+        "url": "=https://personalitytest.zendesk.com/api/v2/tickets/{{ $json.id }}/audits.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      }
+    },
+    {
+      "id": "5838dadb-506e-4948-b862-1d70e27caefe",
+      "name": "myqrcode p1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        300
+      ],
+      "parameters": {
+        "url": "https://myqrcode.zendesk.com/api/v2/tickets.json?sort_by=created_at&sort_order=desc&per_page=100&page=1&include=users",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {}
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "zendeskApi": {
+          "id": "xuMSyZRuUvHoUthd",
+          "name": "MyQRCode Zendesk account"
+        }
+      }
+    },
+    {
+      "id": "062d149b-2954-468d-8603-883b0766f508",
+      "name": "myqrcode p2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        940,
+        300
+      ],
+      "parameters": {
+        "url": "https://myqrcode.zendesk.com/api/v2/tickets.json?sort_by=created_at&sort_order=desc&per_page=100&page=2&include=users",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {}
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "zendeskApi": {
+          "id": "xuMSyZRuUvHoUthd",
+          "name": "MyQRCode Zendesk account"
+        }
+      }
+    },
+    {
+      "id": "62e30c52-c28e-4ed9-8a72-fb132a6be7b2",
+      "name": "myqrcode fields",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1160,
+        300
+      ],
+      "parameters": {
+        "url": "https://myqrcode.zendesk.com/api/v2/ticket_fields.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {}
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "zendeskApi": {
+          "id": "xuMSyZRuUvHoUthd",
+          "name": "MyQRCode Zendesk account"
+        }
+      }
+    },
+    {
+      "id": "5ff7077a-599f-49aa-b259-ea153fa790ad",
+      "name": "myqrcode split",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "var pages = [].concat($('myqrcode p1').all(), $('myqrcode p2').all());\nvar users = {}; var tickets = []; var errors = [];\npages.forEach(function (it) { var b = it.json || {}; if (b.error) errors.push(String(JSON.stringify(b.error)).slice(0, 160)); (b.users || []).forEach(function (u) { users[u.id] = u; }); (b.tickets || []).forEach(function (t) { tickets.push(t); }); });\nvar seen = {}; var out = [];\ntickets.forEach(function (t) {\n  if (!t || !t.id || seen[t.id]) return; seen[t.id] = true;\n  var u = users[t.requester_id] || {}; var uf = u.user_fields || {};\n  var ufKeys = Object.keys(uf).filter(function (k) { return uf[k] !== null && uf[k] !== '' && uf[k] !== false; });\n  out.push({ json: { id: t.id, channel: (t.via && t.via.channel) || 'unknown', tz: u.time_zone || null, locale: u.locale || null, user_field_keys: ufKeys, fetch_errors: errors } });\n});\nif (!out.length) out.push({ json: { id: 0, empty: true, fetch_errors: errors } });\nreturn out;"
+      }
+    },
+    {
+      "id": "663723c3-8d82-482b-b70b-b2ef75061649",
+      "name": "myqrcode audits",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        300
+      ],
+      "parameters": {
+        "url": "=https://myqrcode.zendesk.com/api/v2/tickets/{{ $json.id }}/audits.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "zendeskApi": {
+          "id": "xuMSyZRuUvHoUthd",
+          "name": "MyQRCode Zendesk account"
+        }
+      }
+    },
+    {
+      "id": "c4b50ef9-234e-49cd-99e3-a3c469491684",
+      "name": "Summarise",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function cls(ua) { ua = String(ua || ''); if (!ua) return 'none'; if (/Mozilla\\/|AppleWebKit|Chrome\\/|Safari\\/|Firefox\\/|Edg\\//.test(ua)) return 'browser'; return 'server:' + ua.split(/[\\s(;]/)[0].slice(0, 40); }\nfunction country(loc) { if (!loc) return null; var p = String(loc).split(','); return p[p.length - 1].trim() || null; }\nfunction mask(ip) { if (!ip) return null; var p = String(ip).split('.'); return p.length === 4 ? p[0] + '.' + p[1] + '.x.x' : String(ip).slice(0, 8) + '...'; }\nfunction top(map, n) { return Object.keys(map).map(function (k) { return [k, map[k]]; }).sort(function (a, b) { return b[1] - a[1]; }).slice(0, n); }\nfunction analyse(brand, splitName, auditsName, fieldsName) {\n  var tickets = $(splitName).all().map(function (i) { return i.json; }).filter(function (t) { return t.id; });\n  var meta = {}; var auditErrors = 0;\n  $(auditsName).all().forEach(function (it) {\n    var b = it.json || {}; if (b.error) { auditErrors++; return; }\n    var aud = b.audits || []; if (!aud.length) return;\n    var created = null;\n    for (var i = 0; i < aud.length; i++) { var ev = aud[i].events || []; if (ev.some(function (e) { return e.type === 'Create'; })) { created = aud[i]; break; } }\n    if (!created) created = aud[0];\n    var sys = (created.metadata && created.metadata.system) || {};\n    meta[created.ticket_id] = { ip: sys.ip_address || null, location: sys.location || null, client: sys.client || null };\n  });\n  var channels = {}, byCh = {}, tz = {}, loc = {}, samples = [];\n  tickets.forEach(function (t) {\n    channels[t.channel] = (channels[t.channel] || 0) + 1;\n    var m = meta[t.id] || {};\n    var c = byCh[t.channel] = byCh[t.channel] || { n: 0, with_location: 0, ips: {}, clients: {}, countries: {} };\n    c.n++; if (m.location) c.with_location++;\n    if (m.ip) c.ips[m.ip] = (c.ips[m.ip] || 0) + 1;\n    var k = cls(m.client); c.clients[k] = (c.clients[k] || 0) + 1;\n    var co = country(m.location); if (co) c.countries[co] = (c.countries[co] || 0) + 1;\n    if (t.tz) tz[t.tz] = (tz[t.tz] || 0) + 1;\n    if (t.locale) loc[t.locale] = (loc[t.locale] || 0) + 1;\n    if (samples.length < 12) samples.push({ id: t.id, channel: t.channel, client: k, ip: mask(m.ip), country: co, tz: t.tz });\n  });\n  var chOut = {};\n  Object.keys(byCh).forEach(function (ch) {\n    var c = byCh[ch]; var ipTop = top(c.ips, 3);\n    var ipTotal = Object.keys(c.ips).reduce(function (s, k) { return s + c.ips[k]; }, 0);\n    chOut[ch] = { n: c.n, location_rate: c.n ? Math.round(c.with_location / c.n * 100) + '%' : '-', distinct_ips: Object.keys(c.ips).length, top_ip_share: ipTotal ? Math.round(ipTop[0][1] / ipTotal * 100) + '%' : '-', top_ips_masked: ipTop.map(function (x) { return mask(x[0]) + ' x' + x[1]; }), clients: top(c.clients, 5), top_countries: top(c.countries, 8) };\n  });\n  var fieldTitles = [];\n  try { var fj = $(fieldsName).first().json || {}; fieldTitles = (fj.ticket_fields || []).filter(function (f) { return /countr|locat|region|state|geo|nation/i.test(String(f.title || '')); }).map(function (f) { return f.id + ': ' + f.title + ' (' + f.type + (f.active ? '' : ', inactive') + ')'; }); } catch (e) {}\n  var ufKeys = {}; tickets.forEach(function (t) { (t.user_field_keys || []).forEach(function (k) { ufKeys[k] = (ufKeys[k] || 0) + 1; }); });\n  var tzTop = top(tz, 6); var tzTotal = Object.keys(tz).reduce(function (s, k) { return s + tz[k]; }, 0);\n  var firstErr = $(splitName).all().map(function (i) { return i.json.fetch_errors || []; })[0] || [];\n  return { brand: brand, sampled: tickets.length, fetch_errors: firstErr, audit_errors: auditErrors, audits_matched: Object.keys(meta).length, channels: channels, by_channel: chOut, tz_top: tzTop, tz_top_share: tzTotal ? Math.round(tzTop[0][1] / tzTotal * 100) + '%' : '-', locale_top: top(loc, 6), country_like_ticket_fields: fieldTitles, user_fields_populated: top(ufKeys, 10), samples: samples };\n}\nreturn [ { json: analyse('personality', 'personality split', 'personality audits', 'personality fields') }, { json: analyse('myqrcode', 'myqrcode split', 'myqrcode audits', 'myqrcode fields') } ];"
+      }
+    },
+    {
+      "id": "e0f35cfb-919c-48ff-bd42-8e2e8ad06be5",
+      "name": "Sticky Note 537411dd",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        100,
+        300
+      ],
+      "parameters": {
+        "content": "## TEMPORARY - country source validation\n\nRead-only. Samples about 200 recent tickets per brand and reports, per channel, how often the creating audit carries a location, how concentrated the IPs are, and whether the submitting client is a browser or a server library. Also checks requester time zone, locale and any country-like field.\n\nDelete once a country source has been chosen.",
+        "color": 3
+      }
+    }
+  ],
+  "connections": {
+    "Run country sample": {
+      "main": [
+        [
+          {
+            "node": "personality p1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "personality p1": {
+      "main": [
+        [
+          {
+            "node": "personality p2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "personality p2": {
+      "main": [
+        [
+          {
+            "node": "personality fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "personality fields": {
+      "main": [
+        [
+          {
+            "node": "personality split",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "personality split": {
+      "main": [
+        [
+          {
+            "node": "personality audits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "personality audits": {
+      "main": [
+        [
+          {
+            "node": "myqrcode p1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "myqrcode p1": {
+      "main": [
+        [
+          {
+            "node": "myqrcode p2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "myqrcode p2": {
+      "main": [
+        [
+          {
+            "node": "myqrcode fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "myqrcode fields": {
+      "main": [
+        [
+          {
+            "node": "myqrcode split",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "myqrcode split": {
+      "main": [
+        [
+          {
+            "node": "myqrcode audits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "myqrcode audits": {
+      "main": [
+        [
+          {
+            "node": "Summarise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "ds5AzIwreSgYnguZ",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "updatedAt": "2025-09-16T08:57:49.000Z"
+      },
+      "createdAt": "2026-10-08T12:32:36.816Z",
+      "updatedAt": "2026-10-08T12:32:36.816Z"
+    }
+  ],
+  "activeVersion": null
+}
