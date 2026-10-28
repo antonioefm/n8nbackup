@@ -1,0 +1,284 @@
+{
+  "id": "cmpXpbByAFJLfi2g",
+  "name": "GitHub - locale support per repo",
+  "description": "Read-only org-wide scan: for every QR-CODE-App repo, reads the default-branch git tree and lists which locale files exist, so repo language support can be compared against Lokalise.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-09-14T11:12:54.427Z",
+  "updatedAt": "2026-09-14T11:15:14.443Z",
+  "isArchived": false,
+  "versionId": "f577f5af-7631-4f44-bd92-1d7b0e3e1f51",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "32f30cd0-f662-4860-87aa-67937d67d59c",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a0c3944d-39ed-485c-9d6b-67060a4b9f43",
+      "name": "List Org Repos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.github.com/orgs/QR-CODE-App/repos",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "per_page",
+              "value": "100"
+            },
+            {
+              "name": "type",
+              "value": "all"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "4c7dfb55-0d60-493f-b134-6f24aaba1756",
+      "name": "Expand Repos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const out = [];\nfor (const it of $input.all()) {\n  const r = it.json;\n  if (!r || !r.name) continue;\n  out.push({ json: {\n    repo: r.name,\n    full_name: r.full_name,\n    default_branch: r.default_branch || 'main',\n    archived: !!r.archived,\n    fork: !!r.fork,\n    language: r.language || null,\n    pushed_at: r.pushed_at || null\n  }});\n}\nout.sort((a,b) => a.json.repo.localeCompare(b.json.repo));\nreturn out;"
+      }
+    },
+    {
+      "id": "088b6f80-803b-4c2e-b6c1-0d7fb550af23",
+      "name": "Summarize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const rows = $input.all().map(i => i.json);\nrows.sort((a,b) => (b.locale_count - a.locale_count) || a.repo.localeCompare(b.repo));\n\nconst withLocales = rows.filter(r => r.locale_count > 0);\nconst without = rows.filter(r => r.locale_count === 0);\n\nconst all = {};\nfor (const r of withLocales) for (const l of r.locales) all[l] = (all[l] || 0) + 1;\n\nconst lines = [];\nlines.push('| Repo | Locale root(s) | # | Locales |');\nlines.push('|---|---|---|---|');\nfor (const r of withLocales) {\n  lines.push('| ' + r.repo + ' | ' + r.locale_roots.map(x => x.path + ' (' + x.locales.length + ')').join('<br>') + ' | ' + r.locale_count + ' | ' + r.locales.join(' ') + ' |');\n}\n\nconst suspicious = withLocales.filter(r => Object.keys(r.matched_by_suffix || {}).length > 0)\n  .map(r => ({ repo: r.repo, suffix_matched: r.matched_by_suffix }));\n\nreturn [{ json: {\n  scanned: rows.length,\n  repos_with_locale_files: withLocales.length,\n  repos_without: without.map(r => ({ repo: r.repo, status: r.http_status, blobs: r.blob_count, truncated: r.tree_truncated })),\n  locale_frequency: Object.keys(all).sort((a,b) => (all[b]-all[a]) || a.localeCompare(b)).map(l => l + ':' + all[l]),\n  suffix_matches: suspicious,\n  markdown: lines.join('\\n'),\n  detail: withLocales\n}}];"
+      }
+    },
+    {
+      "id": "9a8b0818-b54d-4c3b-8830-471896773ed3",
+      "name": "Get Tree",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/QR-CODE-App/{{ $json.repo }}/git/trees/{{ $json.default_branch }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "recursive",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 4000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "cefe1c20-2284-485c-907f-04024fdd9365",
+      "name": "Extract Locales",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        272
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const meta = $('Loop Repos').first().json;\nconst res = $input.first().json || {};\nconst status = res.statusCode || 0;\nconst body = res.body || {};\nconst tree = Array.isArray(body.tree) ? body.tree : [];\n\nconst LOCALE_DIR = /^(locales?|i18n|lang|langs|languages|messages|translations?|intl)([-_][a-z0-9]+)?$/i;\nconst EXT = /\\.(json|ts|tsx|js|mjs|cjs|ya?ml|po|pot|mo|properties|xlf|xliff|arb|strings|resx)$/i;\nconst ISO = new Set(('aa ab ae af ak am an ar as av ay az ba be bg bh bi bm bn bo br bs ca ce ch co cr cs cu cv cy ' +\n 'da de dv dz ee el en eo es et eu fa ff fi fj fo fr fy ga gd gl gn gu gv ha he hi ho hr ht hu hy hz ia id ie ig ' +\n 'ii ik io is it iu ja jv ka kg ki kj kk kl km kn ko kr ks ku kv kw ky la lb lg li ln lo lt lu lv mg mh mi mk ml ' +\n 'mn mr ms mt my na nb nd ne ng nl nn no nr nv ny oc oj om or os pa pi pl ps pt qu rm rn ro ru rw sa sc sd se sg ' +\n 'si sk sl sm sn so sq sr ss st su sv sw ta te tg th ti tk tl tn to tr ts tt tw ty ug uk ur uz ve vi vo wa wo xh ' +\n 'yi yo za zh zu fil ceb haw kab pst cus').split(/\\s+/));\n\nfunction isLocaleToken(tok) {\n  const t = String(tok).toLowerCase();\n  const m = t.match(/^([a-z]{2,3})(?:[-_]([a-z]{2,4}))?$/);\n  if (!m) return null;\n  if (!ISO.has(m[1])) return null;\n  return m[2] ? m[1] + '_' + m[2].toUpperCase() : m[1];\n}\n\nfunction parseCandidate(name) {\n  let loc = isLocaleToken(name);\n  if (loc) return { loc: loc, exact: true };\n  const m = String(name).match(/[-_]([A-Za-z]{2,3}(?:[-_][A-Za-z]{2,4})?)$/);\n  if (m) {\n    loc = isLocaleToken(m[1]);\n    if (loc) return { loc: loc, exact: false };\n  }\n  return null;\n}\n\nconst found = {};\nconst loose = {};\nconst roots = {};\nconst sampleByLocale = {};\n\nfor (const n of tree) {\n  if (n.type !== 'blob') continue;\n  const p = n.path;\n  if (!p) continue;\n  if (/(^|\\/)(node_modules|dist|build|\\.next|vendor|coverage)(\\/|$)/i.test(p)) continue;\n  const parts = p.split('/');\n  let idx = -1;\n  for (let i = 0; i < parts.length - 1; i++) {\n    if (LOCALE_DIR.test(parts[i])) idx = i;\n  }\n  if (idx === -1) continue;\n  const rest = parts.slice(idx + 1);\n  if (!rest.length) continue;\n  let cand = rest[0];\n  if (rest.length === 1) {\n    if (!EXT.test(cand)) continue;\n    cand = cand.replace(EXT, '');\n  }\n  const parsed = parseCandidate(cand);\n  if (!parsed) continue;\n  const loc = parsed.loc;\n  found[loc] = (found[loc] || 0) + 1;\n  if (!parsed.exact) loose[loc] = (loose[loc] || 0) + 1;\n  const root = parts.slice(0, idx + 1).join('/');\n  roots[root] = roots[root] || {};\n  roots[root][loc] = true;\n  if (!sampleByLocale[loc]) sampleByLocale[loc] = p;\n}\n\nconst locales = Object.keys(found).sort();\nconst rootList = Object.keys(roots).sort().map(r => ({ path: r, locales: Object.keys(roots[r]).sort() }));\n\nreturn [{ json: {\n  repo: meta.repo,\n  default_branch: meta.default_branch,\n  archived: meta.archived,\n  pushed_at: meta.pushed_at,\n  http_status: status,\n  tree_truncated: !!body.truncated,\n  blob_count: tree.length,\n  locale_roots: rootList,\n  locale_count: locales.length,\n  locales: locales,\n  files_per_locale: found,\n  matched_by_suffix: loose,\n  sample_en: sampleByLocale['en'] || null\n}}];"
+      }
+    },
+    {
+      "id": "bd9e72e0-80d9-45be-893c-1d603e76d6d6",
+      "name": "Loop Repos",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "List Org Repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Org Repos": {
+      "main": [
+        [
+          {
+            "node": "Expand Repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand Repos": {
+      "main": [
+        [
+          {
+            "node": "Loop Repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Tree": {
+      "main": [
+        [
+          {
+            "node": "Extract Locales",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Locales": {
+      "main": [
+        [
+          {
+            "node": "Loop Repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Repos": {
+      "main": [
+        [
+          {
+            "node": "Summarize",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Tree",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "cmpXpbByAFJLfi2g",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-09-14T11:12:54.434Z",
+      "updatedAt": "2026-09-14T11:12:54.434Z"
+    }
+  ],
+  "activeVersion": null
+}
