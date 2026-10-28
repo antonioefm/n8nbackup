@@ -1,0 +1,228 @@
+{
+  "id": "RJIMmVKIV1vhY9Uw",
+  "name": "Lokalise WRITE - BrainIQtest ES typo fixes 2026-10-19 (one-off)",
+  "description": "WRITE one-off: 8 ES typo fixes in BrainIQtest members content (Hunspell es_ES + review). Exact replacements, guard: occurs once, last editor = automation.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-19T09:47:03.571Z",
+  "updatedAt": "2026-10-19T09:47:03.571Z",
+  "isArchived": false,
+  "versionId": "d016b002-abea-403c-b02e-0c1ac9303368",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "c1cd1753-d2a2-4013-bf25-cc81d82d4a65",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "4dc6f649-48f2-4dd7-ba7b-19e25882c710",
+      "name": "Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Typo fixes found by es_ES Hunspell + review, 19.10.26 (Maria). Exact replacements; guard: 'from' must occur exactly once in the live ES and last editor must be the automation account.\nconst MODE = 'write';\nconst AUTO = 'maria@efuturemedia.com';\nconst FIXES = [\n { id: 957278109, k: 'members-content::lessons::1668::steps:::2', from: 'Concis\\u00f3n', to: 'Concisi\\u00f3n' },\n { id: 957277971, k: 'members-content::lessons::1655::steps:::15', from: 'pensa en', to: 'piensa en' },\n { id: 957277948, k: 'members-content::lessons::1654::steps:::12', from: 'delegalo', to: 'del\\u00e9galo' },\n { id: 957277633, k: 'members-content::lessons::1629::steps:::4', from: 'obligate a', to: 'obl\\u00edgate a' },\n { id: 957278199, k: 'members-content::lessons::1676::steps:::2', from: 'analiz', to: 'analiz*' },\n { id: 957277788, k: 'members-content::lessons::1645::steps:::9', from: 'un puzzle', to: 'un puzle' },\n { id: 957279305, k: 'members-content::tests::1580::questions::10::answers::3', from: 'Transplante', to: 'Trasplante' },\n { id: 957277650, k: 'members-content::lessons::1631::steps:::5', from: 'los tests', to: 'los test' }\n];\nreturn [{ json: { mode: MODE, auto: AUTO, fixes: FIXES, ids: FIXES.map(function (f) { return f.id; }).join(',') } }];\n"
+      }
+    },
+    {
+      "id": "285e2fdf-ea04-4163-8f0b-263058e08ca6",
+      "name": "Guard fetch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/185916266aa3d6649ca6f7.57851232/keys?include_translations=1&filter_langs=es&disable_references=1&limit=500&filter_key_ids={{ $json.ids }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "ad776cfb-08b6-4355-a4cd-416e5055cac0",
+      "name": "Build PUT",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const p = $('Plan').first().json;\nconst b = $input.first().json.body || {};\nif (!Array.isArray(b.keys)) { throw new Error('Guard fetch failed: ' + JSON.stringify(b).slice(0, 200)); }\nconst live = {};\nfor (const k of b.keys) { for (const t of (k.translations || [])) { if (t.language_iso === 'es') { live[k.key_id] = { t: typeof t.translation === 'string' ? t.translation : '', by: t.modified_by_email || '', arch: k.is_archived }; } } }\nconst keys = []; const skipped = []; const done = [];\nfor (const f of p.fixes) {\n  const L = live[f.id];\n  if (!L || L.arch) { skipped.push({ k: f.k, why: 'missing/archived' }); continue; }\n  if (L.by !== p.auto) { skipped.push({ k: f.k, why: 'last edited by ' + L.by }); continue; }\n  const n = L.t.split(f.from).length - 1;\n  if (n !== 1) { skipped.push({ k: f.k, why: 'from occurs ' + n + ' times' }); continue; }\n  const nv = L.t.replace(f.from, f.to);\n  keys.push({ key_id: f.id, translations: [{ language_iso: 'es', translation: nv, is_unverified: true }] });\n  done.push(f.k + ': ' + f.from + ' -> ' + f.to);\n}\nif (p.mode !== 'write' || !keys.length) { return [{ json: { write: false, done: done, skipped: skipped } }]; }\nreturn [{ json: { write: true, done: done, skipped: skipped, body: JSON.stringify({ keys: keys }) } }];\n"
+      }
+    },
+    {
+      "id": "bfb6f522-434d-45a8-84a8-62f715bbe800",
+      "name": "WRITE fixes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "https://api.lokalise.com/api2/projects/185916266aa3d6649ca6f7.57851232/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.write ? $json.body : JSON.stringify({ keys: [] }) }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "c35692d4-356a-455f-9908-f5556c3db3e8",
+      "name": "Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const p = $('Build PUT').first().json;\nconst r = $input.first().json; const b = r.body || {};\nreturn [{ json: { write: p.write, status: r.statusCode, written: (b.keys || []).length, errors: b.errors || b.error || null, done: p.done, skipped: p.skipped } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan": {
+      "main": [
+        [
+          {
+            "node": "Guard fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard fetch": {
+      "main": [
+        [
+          {
+            "node": "Build PUT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build PUT": {
+      "main": [
+        [
+          {
+            "node": "WRITE fixes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WRITE fixes": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "RJIMmVKIV1vhY9Uw",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-19T09:47:03.573Z",
+      "updatedAt": "2026-10-19T09:47:03.573Z"
+    }
+  ],
+  "activeVersion": null
+}
