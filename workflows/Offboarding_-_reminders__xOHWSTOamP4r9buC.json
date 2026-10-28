@@ -1,0 +1,1049 @@
+{
+  "id": "xOHWSTOamP4r9buC",
+  "name": "Offboarding - reminders",
+  "description": "Every 15 minutes, checks open offboardings, works out which of the 6h/12h/24h/48h reminders is due, reads the checklist xlsx, and DMs each access owner their outstanding tools. At 48h it DMs Antonio and Raul a summary and closes the register row.",
+  "active": true,
+  "activeVersionId": "da05be46-0c2d-49ca-b54e-c3323410d591",
+  "createdAt": "2026-08-28T12:27:47.773Z",
+  "updatedAt": "2026-08-31T12:24:06.773Z",
+  "isArchived": false,
+  "versionId": "da05be46-0c2d-49ca-b54e-c3323410d591",
+  "versionCounter": 13,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "cd42f6d4-f8c7-47c4-835b-460e09881c57",
+      "name": "Every 15 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -704,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "sQVMWaLii0SkDW9w",
+          "cachedResultName": "offboardings"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "state",
+              "keyValue": "open"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "id": "a6654380-e3a7-4e59-be9b-35091eb850d6",
+      "name": "Get open offboardings",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -480,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = Date.now();\nconst items = $input.all();\nconst out = [];\nfor (let i = 0; i < items.length; i++) {\n  const r = items[i].json;\n  // Reminders count from the offboarding start (anchor_at), falling back to\n  // checklist creation for rows written before anchor_at existed.\n  const anchorRaw = r.anchor_at || r.created_at;\n  const anchor = Date.parse(anchorRaw);\n  if (!anchor) { continue; }\n  const hours = (now - anchor) / 3600000;\n  if (hours < 6) { continue; }\n  const marks = [\n    { m: 6, sent: r.sent_6h === true },\n    { m: 12, sent: r.sent_12h === true },\n    { m: 24, sent: r.sent_24h === true },\n    { m: 48, sent: r.sent_48h === true }\n  ];\n  let due = 0;\n  for (let k = 0; k < marks.length; k++) {\n    if (hours >= marks[k].m && !marks[k].sent) { due = marks[k].m; }\n  }\n  if (!due) { continue; }\n  out.push({ json: { rowId: r.id, milestone: due, hoursElapsed: Math.round(hours * 10) / 10, anchorAt: anchorRaw, personName: r.person_name, personEmail: r.person_email, offboardingStart: r.last_day, fileId: r.file_id, fileUrl: r.file_url, worksheetName: r.worksheet_name || 'Base tool checklist', createdAt: r.created_at, sent6: r.sent_6h === true || due >= 6, sent12: r.sent_12h === true || due >= 12, sent24: r.sent_24h === true || due >= 24, sent48: r.sent_48h === true || due >= 48, excludedOwners: r.excluded_owners || '' } });\n}\nreturn out;"
+      },
+      "id": "bbc562d1-4c92-47eb-8a69-8797c3652435",
+      "name": "Pick due milestones",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.microsoft.com/v1.0/me/drive/items/{{ $json.fileId }}/workbook/worksheets('{{ $json.worksheetName }}')/range(address='A6:F400')",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+        "options": {}
+      },
+      "id": "4d8509ad-8de7-4ff3-ba55-d6ac39fb3f58",
+      "name": "Read checklist range",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        288
+      ],
+      "credentials": {
+        "microsoftExcelOAuth2Api": {
+          "id": "0EzEdJWR9aBNEEzQ",
+          "name": "Microsoft Excel account Antonio"
+        },
+        "microsoftOneDriveOAuth2Api": {
+          "id": "e1JyC6cXYYqJWF8c",
+          "name": "Microsoft Drive account Antonio"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const SUMMARY_RECIPIENTS = ['antonio.marusic@efuturemedia.com', 'raul@efuturemedia.com'];\n\nconst rec = $('Loop offboardings').first().json;\nconst sheet = $input.first().json;\nconst values = sheet && sheet.values ? sheet.values : [];\n\n// Free-text notes maintained by Antonio in the offboarding_settings data table.\nlet closingNotes = '';\ntry { closingNotes = $('Normalise closing notes').first().json.notes || ''; } catch (e) { closingNotes = ''; }\nconst notesBlock = closingNotes ? '\\n\\n---\\n' + closingNotes : '';\n\nfunction cell(row, idx) {\n  const v = row && row.length > idx ? row[idx] : '';\n  return v === null || v === undefined ? '' : String(v).trim();\n}\n\nconst outstanding = [];\nfor (let i = 1; i < values.length; i++) {\n  const tool = cell(values[i], 0);\n  if (!tool) { continue; }\n  const status = cell(values[i], 4);\n  if (!status) { continue; }\n  const norm = status.toLowerCase();\n  if (norm === 'done' || norm === 'not needed') { continue; }\n  outstanding.push({ tool: tool, ownerConfluence: cell(values[i], 2), assignee: cell(values[i], 3), status: status });\n}\n\nconst label = rec.milestone + 'h';\nconst header = '*' + rec.personName + '* (' + rec.personEmail + ') - offboarding checklist, ' + label + ' reminder\\nChecklist: ' + rec.fileUrl + '\\n';\nconst actions = [];\n\nif (outstanding.length === 0) {\n  let text = '*' + rec.personName + '* (' + rec.personEmail + ') - offboarding checklist is fully cleared.\\n';\n  text += 'Every tool is marked Done or Not needed. No further reminders will be sent.\\n' + rec.fileUrl;\n  text += notesBlock;\n  for (let i = 0; i < SUMMARY_RECIPIENTS.length; i++) {\n    actions.push({ json: { send: true, kind: 'cleared', email: SUMMARY_RECIPIENTS[i], text: text, rowId: rec.rowId, state: 'closed', sent6: rec.sent6, sent12: rec.sent12, sent24: rec.sent24, sent48: rec.sent48 } });\n  }\n  return actions;\n}\n\nconst byAssignee = {};\nconst unassigned = [];\nfor (let i = 0; i < outstanding.length; i++) {\n  const o = outstanding[i];\n  if (!o.assignee) { unassigned.push(o); continue; }\n  if (!byAssignee[o.assignee]) { byAssignee[o.assignee] = []; }\n  byAssignee[o.assignee].push(o);\n}\n\nconst emails = Object.keys(byAssignee);\nfor (let i = 0; i < emails.length; i++) {\n  const email = emails[i];\n  const tools = byAssignee[email];\n  let text = header + '\\n' + tools.length + ' tool(s) are still marked *To do* for you:\\n';\n  for (let t = 0; t < tools.length; t++) { text += '- ' + tools[t].tool + '\\n'; }\n  text += '\\nPlease remove their access where needed, then set each row to *Done* or *Not needed*.';\n  actions.push({ json: { send: true, kind: 'reminder', email: email, text: text, rowId: rec.rowId, state: 'open', sent6: rec.sent6, sent12: rec.sent12, sent24: rec.sent24, sent48: rec.sent48 } });\n}\n\nif (rec.milestone === 48) {\n  let sum = '*48h summary - ' + rec.personName + '* (' + rec.personEmail + ')\\n';\n  sum += 'Offboarding can start: ' + (rec.offboardingStart || 'not recorded') + '\\nChecklist: ' + rec.fileUrl + '\\n\\n';\n  sum += outstanding.length + ' tool(s) were still not cleared 48h after the offboarding start:\\n\\n';\n  for (let i = 0; i < emails.length; i++) {\n    sum += '*' + emails[i] + '*\\n';\n    const tools = byAssignee[emails[i]];\n    for (let t = 0; t < tools.length; t++) { sum += '- ' + tools[t].tool + ' (' + tools[t].status + ')\\n'; }\n    sum += '\\n';\n  }\n  if (unassigned.length > 0) {\n    sum += '*Nobody assigned* (no owner on Confluence, or excluded on the form)\\n';\n    for (let t = 0; t < unassigned.length; t++) { sum += '- ' + unassigned[t].tool + ' (owner on Confluence: ' + (unassigned[t].ownerConfluence || 'none') + ')\\n'; }\n    sum += '\\n';\n  }\n  if (rec.excludedOwners) { sum += 'Owners excluded at intake: ' + rec.excludedOwners + '\\n'; }\n  sum += '\\nReminders stop here - this offboarding is now closed in the register.';\n  sum += notesBlock;\n  for (let i = 0; i < SUMMARY_RECIPIENTS.length; i++) {\n    actions.push({ json: { send: true, kind: 'summary', email: SUMMARY_RECIPIENTS[i], text: sum, rowId: rec.rowId, state: 'closed', sent6: rec.sent6, sent12: rec.sent12, sent24: rec.sent24, sent48: rec.sent48 } });\n  }\n}\n\nif (actions.length === 0) {\n  actions.push({ json: { send: false, kind: 'nothing-to-send', email: '', text: '', rowId: rec.rowId, state: rec.milestone === 48 ? 'closed' : 'open', sent6: rec.sent6, sent12: rec.sent12, sent24: rec.sent24, sent48: rec.sent48 } });\n}\nreturn actions;"
+      },
+      "id": "0846a7de-b140-463e-9a6b-11fc07a291ff",
+      "name": "Build reminder actions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        544,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.send }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8fddabc2-4a6a-4758-8c0f-917714c5952c",
+      "name": "Anything to send?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        768,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "user",
+        "operation": "lookupByEmail",
+        "email": "={{ $json.email }}"
+      },
+      "id": "aa232685-0122-4b3c-84e0-9598dfd9d01d",
+      "name": "Look up Slack user for reminder",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        1072,
+        272
+      ],
+      "webhookId": "1ab1062d-0dfb-4f72-b54e-5ebd79f6d48b",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "tSpUlRaNhgWKbKN4",
+          "name": "Automations Slack account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "user",
+        "user": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.id }}"
+        },
+        "text": "={{ $('Build reminder actions').item.json.text }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false,
+          "mrkdwn": true
+        }
+      },
+      "id": "f9677e0d-17a7-429d-8fc0-314052bda4ce",
+      "name": "Send reminder DM",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        1296,
+        304
+      ],
+      "webhookId": "4e09e2b3-1fcb-4e15-8064-9abdcafb9ec0",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "tSpUlRaNhgWKbKN4",
+          "name": "Automations Slack account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "c969f3b7-9c6c-4514-b126-57df958bee98",
+      "name": "Loop offboardings",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -32,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "sQVMWaLii0SkDW9w",
+          "cachedResultName": "offboardings"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyValue": "={{ $json.rowId }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "state": "={{ $json.state }}",
+            "sent_6h": "={{ $json.sent6 }}",
+            "sent_12h": "={{ $json.sent12 }}",
+            "sent_24h": "={{ $json.sent24 }}",
+            "sent_48h": "={{ $json.sent48 }}"
+          },
+          "schema": [
+            {
+              "id": "state",
+              "displayName": "state",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sent_6h",
+              "displayName": "sent_6h",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sent_12h",
+              "displayName": "sent_12h",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sent_24h",
+              "displayName": "sent_24h",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sent_48h",
+              "displayName": "sent_48h",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "aff1b24b-ee22-41a4-b4ce-9e8df5c0a213",
+      "name": "Update register",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        800,
+        688
+      ],
+      "executeOnce": true
+    },
+    {
+      "id": "7b9da13f-92c8-4cc5-ab6a-0779a09b3acd",
+      "name": "Get closing DM notes",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -620,
+        160
+      ],
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "cachedResultName": "offboarding_settings",
+          "mode": "id",
+          "value": "2ToPRXh2nopeGFrm"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "condition": "eq",
+              "keyName": "setting_key",
+              "keyValue": "closing_dm_notes"
+            }
+          ]
+        },
+        "matchType": "allConditions",
+        "operation": "get",
+        "resource": "row",
+        "returnAll": true
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "id": "8d0fa4af-8a1f-41f2-81f9-5a6fe5116f9d",
+      "name": "Normalise closing notes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -620,
+        320
+      ],
+      "parameters": {
+        "jsCode": "// Always emits exactly one item, so an empty or broken settings table can never\n// stop the reminder run.\nlet notes = '';\nconst items = $input.all();\nfor (let i = 0; i < items.length; i++) {\n  const r = items[i].json;\n  if (r && r.setting_key === 'closing_dm_notes' && r.setting_value) {\n    notes = String(r.setting_value);\n    break;\n  }\n}\n// Let a literal \\n typed in the data table UI act as a real line break.\nnotes = notes.split('\\\\n').join('\\n').trim();\nreturn [{ json: { notes: notes, hasNotes: notes.length > 0 } }];",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      }
+    }
+  ],
+  "connections": {
+    "Get open offboardings": {
+      "main": [
+        [
+          {
+            "node": "Pick due milestones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick due milestones": {
+      "main": [
+        [
+          {
+            "node": "Loop offboardings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read checklist range": {
+      "main": [
+        [
+          {
+            "node": "Build reminder actions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build reminder actions": {
+      "main": [
+        [
+          {
+            "node": "Anything to send?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Update register",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything to send?": {
+      "main": [
+        [
+          {
+            "node": "Look up Slack user for reminder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop offboardings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Look up Slack user for reminder": {
+      "main": [
+        [
+          {
+            "node": "Send reminder DM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send reminder DM": {
+      "main": [
+        [
+          {
+            "node": "Loop offboardings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop offboardings": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Read checklist range",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 15 minutes": {
+      "main": [
+        [
+          {
+            "node": "Get closing DM notes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get closing DM notes": {
+      "main": [
+        [
+          {
+            "node": "Normalise closing notes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalise closing notes": {
+      "main": [
+        [
+          {
+            "node": "Get open offboardings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate"
+  },
+  "staticData": {
+    "node:Every 15 minutes": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    }
+  },
+  "pinData": {
+    "Every 15 minutes": [
+      {
+        "json": {
+          "timestamp": "2026-08-28T19:30:52.004+00:00",
+          "Readable date": "August 28th 2026, 7:30:52 pm",
+          "Readable time": "7:30:52 pm",
+          "Day of week": "Friday",
+          "Year": "2026",
+          "Month": "August",
+          "Day of month": "28",
+          "Hour": "19",
+          "Minute": "30",
+          "Second": "52",
+          "Timezone": "Etc/UTC (UTC+00:00)"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "xOHWSTOamP4r9buC",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "updatedAt": "2025-09-16T08:57:49.000Z"
+      },
+      "createdAt": "2026-08-28T12:27:47.774Z",
+      "updatedAt": "2026-08-28T12:27:47.774Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "da05be46-0c2d-49ca-b54e-c3323410d591",
+    "workflowId": "xOHWSTOamP4r9buC",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "minutes",
+                "minutesInterval": 15
+              }
+            ]
+          }
+        },
+        "id": "cd42f6d4-f8c7-47c4-835b-460e09881c57",
+        "name": "Every 15 minutes",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          -704,
+          272
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "get",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "sQVMWaLii0SkDW9w",
+            "cachedResultName": "offboardings"
+          },
+          "matchType": "allConditions",
+          "filters": {
+            "conditions": [
+              {
+                "keyName": "state",
+                "keyValue": "open"
+              }
+            ]
+          },
+          "returnAll": true
+        },
+        "id": "a6654380-e3a7-4e59-be9b-35091eb850d6",
+        "name": "Get open offboardings",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          -480,
+          272
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const now = Date.now();\nconst items = $input.all();\nconst out = [];\nfor (let i = 0; i < items.length; i++) {\n  const r = items[i].json;\n  // Reminders count from the offboarding start (anchor_at), falling back to\n  // checklist creation for rows written before anchor_at existed.\n  const anchorRaw = r.anchor_at || r.created_at;\n  const anchor = Date.parse(anchorRaw);\n  if (!anchor) { continue; }\n  const hours = (now - anchor) / 3600000;\n  if (hours < 6) { continue; }\n  const marks = [\n    { m: 6, sent: r.sent_6h === true },\n    { m: 12, sent: r.sent_12h === true },\n    { m: 24, sent: r.sent_24h === true },\n    { m: 48, sent: r.sent_48h === true }\n  ];\n  let due = 0;\n  for (let k = 0; k < marks.length; k++) {\n    if (hours >= marks[k].m && !marks[k].sent) { due = marks[k].m; }\n  }\n  if (!due) { continue; }\n  out.push({ json: { rowId: r.id, milestone: due, hoursElapsed: Math.round(hours * 10) / 10, anchorAt: anchorRaw, personName: r.person_name, personEmail: r.person_email, offboardingStart: r.last_day, fileId: r.file_id, fileUrl: r.file_url, worksheetName: r.worksheet_name || 'Base tool checklist', createdAt: r.created_at, sent6: r.sent_6h === true || due >= 6, sent12: r.sent_12h === true || due >= 12, sent24: r.sent_24h === true || due >= 24, sent48: r.sent_48h === true || due >= 48, excludedOwners: r.excluded_owners || '' } });\n}\nreturn out;"
+        },
+        "id": "bbc562d1-4c92-47eb-8a69-8797c3652435",
+        "name": "Pick due milestones",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -256,
+          272
+        ]
+      },
+      {
+        "parameters": {
+          "url": "=https://graph.microsoft.com/v1.0/me/drive/items/{{ $json.fileId }}/workbook/worksheets('{{ $json.worksheetName }}')/range(address='A6:F400')",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+          "options": {}
+        },
+        "id": "4d8509ad-8de7-4ff3-ba55-d6ac39fb3f58",
+        "name": "Read checklist range",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          320,
+          288
+        ],
+        "credentials": {
+          "microsoftExcelOAuth2Api": {
+            "id": "0EzEdJWR9aBNEEzQ",
+            "name": "Microsoft Excel account Antonio"
+          },
+          "microsoftOneDriveOAuth2Api": {
+            "id": "e1JyC6cXYYqJWF8c",
+            "name": "Microsoft Drive account Antonio"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const SUMMARY_RECIPIENTS = ['antonio.marusic@efuturemedia.com', 'raul@efuturemedia.com'];\n\nconst rec = $('Loop offboardings').first().json;\nconst sheet = $input.first().json;\nconst values = sheet && sheet.values ? sheet.values : [];\n\n// Free-text notes maintained by Antonio in the offboarding_settings data table.\nlet closingNotes = '';\ntry { closingNotes = $('Normalise closing notes').first().json.notes || ''; } catch (e) { closingNotes = ''; }\nconst notesBlock = closingNotes ? '\\n\\n---\\n' + closingNotes : '';\n\nfunction cell(row, idx) {\n  const v = row && row.length > idx ? row[idx] : '';\n  return v === null || v === undefined ? '' : String(v).trim();\n}\n\nconst outstanding = [];\nfor (let i = 1; i < values.length; i++) {\n  const tool = cell(values[i], 0);\n  if (!tool) { continue; }\n  const status = cell(values[i], 4);\n  if (!status) { continue; }\n  const norm = status.toLowerCase();\n  if (norm === 'done' || norm === 'not needed') { continue; }\n  outstanding.push({ tool: tool, ownerConfluence: cell(values[i], 2), assignee: cell(values[i], 3), status: status });\n}\n\nconst label = rec.milestone + 'h';\nconst header = '*' + rec.personName + '* (' + rec.personEmail + ') - offboarding checklist, ' + label + ' reminder\\nChecklist: ' + rec.fileUrl + '\\n';\nconst actions = [];\n\nif (outstanding.length === 0) {\n  let text = '*' + rec.personName + '* (' + rec.personEmail + ') - offboarding checklist is fully cleared.\\n';\n  text += 'Every tool is marked Done or Not needed. No further reminders will be sent.\\n' + rec.fileUrl;\n  text += notesBlock;\n  for (let i = 0; i < SUMMARY_RECIPIENTS.length; i++) {\n    actions.push({ json: { send: true, kind: 'cleared', email: SUMMARY_RECIPIENTS[i], text: text, rowId: rec.rowId, state: 'closed', sent6: rec.sent6, sent12: rec.sent12, sent24: rec.sent24, sent48: rec.sent48 } });\n  }\n  return actions;\n}\n\nconst byAssignee = {};\nconst unassigned = [];\nfor (let i = 0; i < outstanding.length; i++) {\n  const o = outstanding[i];\n  if (!o.assignee) { unassigned.push(o); continue; }\n  if (!byAssignee[o.assignee]) { byAssignee[o.assignee] = []; }\n  byAssignee[o.assignee].push(o);\n}\n\nconst emails = Object.keys(byAssignee);\nfor (let i = 0; i < emails.length; i++) {\n  const email = emails[i];\n  const tools = byAssignee[email];\n  let text = header + '\\n' + tools.length + ' tool(s) are still marked *To do* for you:\\n';\n  for (let t = 0; t < tools.length; t++) { text += '- ' + tools[t].tool + '\\n'; }\n  text += '\\nPlease remove their access where needed, then set each row to *Done* or *Not needed*.';\n  actions.push({ json: { send: true, kind: 'reminder', email: email, text: text, rowId: rec.rowId, state: 'open', sent6: rec.sent6, sent12: rec.sent12, sent24: rec.sent24, sent48: rec.sent48 } });\n}\n\nif (rec.milestone === 48) {\n  let sum = '*48h summary - ' + rec.personName + '* (' + rec.personEmail + ')\\n';\n  sum += 'Offboarding can start: ' + (rec.offboardingStart || 'not recorded') + '\\nChecklist: ' + rec.fileUrl + '\\n\\n';\n  sum += outstanding.length + ' tool(s) were still not cleared 48h after the offboarding start:\\n\\n';\n  for (let i = 0; i < emails.length; i++) {\n    sum += '*' + emails[i] + '*\\n';\n    const tools = byAssignee[emails[i]];\n    for (let t = 0; t < tools.length; t++) { sum += '- ' + tools[t].tool + ' (' + tools[t].status + ')\\n'; }\n    sum += '\\n';\n  }\n  if (unassigned.length > 0) {\n    sum += '*Nobody assigned* (no owner on Confluence, or excluded on the form)\\n';\n    for (let t = 0; t < unassigned.length; t++) { sum += '- ' + unassigned[t].tool + ' (owner on Confluence: ' + (unassigned[t].ownerConfluence || 'none') + ')\\n'; }\n    sum += '\\n';\n  }\n  if (rec.excludedOwners) { sum += 'Owners excluded at intake: ' + rec.excludedOwners + '\\n'; }\n  sum += '\\nReminders stop here - this offboarding is now closed in the register.';\n  sum += notesBlock;\n  for (let i = 0; i < SUMMARY_RECIPIENTS.length; i++) {\n    actions.push({ json: { send: true, kind: 'summary', email: SUMMARY_RECIPIENTS[i], text: sum, rowId: rec.rowId, state: 'closed', sent6: rec.sent6, sent12: rec.sent12, sent24: rec.sent24, sent48: rec.sent48 } });\n  }\n}\n\nif (actions.length === 0) {\n  actions.push({ json: { send: false, kind: 'nothing-to-send', email: '', text: '', rowId: rec.rowId, state: rec.milestone === 48 ? 'closed' : 'open', sent6: rec.sent6, sent12: rec.sent12, sent24: rec.sent24, sent48: rec.sent48 } });\n}\nreturn actions;"
+        },
+        "id": "0846a7de-b140-463e-9a6b-11fc07a291ff",
+        "name": "Build reminder actions",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          544,
+          288
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 1
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.send }}",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "8fddabc2-4a6a-4758-8c0f-917714c5952c",
+        "name": "Anything to send?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          768,
+          288
+        ]
+      },
+      {
+        "parameters": {
+          "authentication": "oAuth2",
+          "resource": "user",
+          "operation": "lookupByEmail",
+          "email": "={{ $json.email }}"
+        },
+        "id": "aa232685-0122-4b3c-84e0-9598dfd9d01d",
+        "name": "Look up Slack user for reminder",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.7,
+        "position": [
+          1072,
+          272
+        ],
+        "webhookId": "1ab1062d-0dfb-4f72-b54e-5ebd79f6d48b",
+        "credentials": {
+          "slackOAuth2Api": {
+            "id": "tSpUlRaNhgWKbKN4",
+            "name": "Automations Slack account"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "authentication": "oAuth2",
+          "select": "user",
+          "user": {
+            "__rl": true,
+            "mode": "id",
+            "value": "={{ $json.id }}"
+          },
+          "text": "={{ $('Build reminder actions').item.json.text }}",
+          "otherOptions": {
+            "includeLinkToWorkflow": false,
+            "mrkdwn": true
+          }
+        },
+        "id": "f9677e0d-17a7-429d-8fc0-314052bda4ce",
+        "name": "Send reminder DM",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.7,
+        "position": [
+          1296,
+          304
+        ],
+        "webhookId": "4e09e2b3-1fcb-4e15-8064-9abdcafb9ec0",
+        "credentials": {
+          "slackOAuth2Api": {
+            "id": "tSpUlRaNhgWKbKN4",
+            "name": "Automations Slack account"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "options": {}
+        },
+        "id": "c969f3b7-9c6c-4514-b126-57df958bee98",
+        "name": "Loop offboardings",
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": 3,
+        "position": [
+          -32,
+          272
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "update",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "sQVMWaLii0SkDW9w",
+            "cachedResultName": "offboardings"
+          },
+          "matchType": "allConditions",
+          "filters": {
+            "conditions": [
+              {
+                "keyValue": "={{ $json.rowId }}"
+              }
+            ]
+          },
+          "columns": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "state": "={{ $json.state }}",
+              "sent_6h": "={{ $json.sent6 }}",
+              "sent_12h": "={{ $json.sent12 }}",
+              "sent_24h": "={{ $json.sent24 }}",
+              "sent_48h": "={{ $json.sent48 }}"
+            },
+            "schema": [
+              {
+                "id": "state",
+                "displayName": "state",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "sent_6h",
+                "displayName": "sent_6h",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "boolean",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "sent_12h",
+                "displayName": "sent_12h",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "boolean",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "sent_24h",
+                "displayName": "sent_24h",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "boolean",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "sent_48h",
+                "displayName": "sent_48h",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "boolean",
+                "canBeUsedToMatch": true
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "aff1b24b-ee22-41a4-b4ce-9e8df5c0a213",
+        "name": "Update register",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          800,
+          688
+        ],
+        "executeOnce": true
+      },
+      {
+        "id": "7b9da13f-92c8-4cc5-ab6a-0779a09b3acd",
+        "name": "Get closing DM notes",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          -620,
+          160
+        ],
+        "parameters": {
+          "dataTableId": {
+            "__rl": true,
+            "cachedResultName": "offboarding_settings",
+            "mode": "id",
+            "value": "2ToPRXh2nopeGFrm"
+          },
+          "filters": {
+            "conditions": [
+              {
+                "condition": "eq",
+                "keyName": "setting_key",
+                "keyValue": "closing_dm_notes"
+              }
+            ]
+          },
+          "matchType": "allConditions",
+          "operation": "get",
+          "resource": "row",
+          "returnAll": true
+        },
+        "onError": "continueRegularOutput",
+        "alwaysOutputData": true
+      },
+      {
+        "id": "8d0fa4af-8a1f-41f2-81f9-5a6fe5116f9d",
+        "name": "Normalise closing notes",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -620,
+          320
+        ],
+        "parameters": {
+          "jsCode": "// Always emits exactly one item, so an empty or broken settings table can never\n// stop the reminder run.\nlet notes = '';\nconst items = $input.all();\nfor (let i = 0; i < items.length; i++) {\n  const r = items[i].json;\n  if (r && r.setting_key === 'closing_dm_notes' && r.setting_value) {\n    notes = String(r.setting_value);\n    break;\n  }\n}\n// Let a literal \\n typed in the data table UI act as a real line break.\nnotes = notes.split('\\\\n').join('\\n').trim();\nreturn [{ json: { notes: notes, hasNotes: notes.length > 0 } }];",
+          "language": "javaScript",
+          "mode": "runOnceForAllItems"
+        }
+      }
+    ],
+    "connections": {
+      "Get open offboardings": {
+        "main": [
+          [
+            {
+              "node": "Pick due milestones",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Pick due milestones": {
+        "main": [
+          [
+            {
+              "node": "Loop offboardings",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read checklist range": {
+        "main": [
+          [
+            {
+              "node": "Build reminder actions",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build reminder actions": {
+        "main": [
+          [
+            {
+              "node": "Anything to send?",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Update register",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Anything to send?": {
+        "main": [
+          [
+            {
+              "node": "Look up Slack user for reminder",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Loop offboardings",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Look up Slack user for reminder": {
+        "main": [
+          [
+            {
+              "node": "Send reminder DM",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send reminder DM": {
+        "main": [
+          [
+            {
+              "node": "Loop offboardings",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Loop offboardings": {
+        "main": [
+          [],
+          [
+            {
+              "node": "Read checklist range",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Every 15 minutes": {
+        "main": [
+          [
+            {
+              "node": "Get closing DM notes",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get closing DM notes": {
+        "main": [
+          [
+            {
+              "node": "Normalise closing notes",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalise closing notes": {
+        "main": [
+          [
+            {
+              "node": "Get open offboardings",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Antonio antonio.marusic@efuturemedia.com (via MCP)",
+    "name": "Anchor reminders to the offboarding start and append editable closing notes",
+    "description": "Reminders now count from anchor_at (the chosen offboarding start) instead of checklist creation, falling back to created_at for older rows. Also reads a free-text notes block from the offboarding_settings data table and appends it to the closing DMs to Antonio and Raul.",
+    "autosaved": false,
+    "createdAt": "2026-08-31T12:24:06.774Z",
+    "updatedAt": "2026-08-31T12:24:06.774Z",
+    "workflowPublishHistory": [
+      {
+        "id": 3157,
+        "workflowId": "xOHWSTOamP4r9buC",
+        "versionId": "da05be46-0c2d-49ca-b54e-c3323410d591",
+        "event": "activated",
+        "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e",
+        "createdAt": "2026-10-28T13:57:37.766Z"
+      }
+    ]
+  }
+}
