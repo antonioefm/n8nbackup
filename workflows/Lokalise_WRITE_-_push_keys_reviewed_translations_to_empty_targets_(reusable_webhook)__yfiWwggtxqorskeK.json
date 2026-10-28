@@ -1,0 +1,265 @@
+{
+  "id": "yfiWwggtxqorskeK",
+  "name": "Lokalise WRITE - push keys: reviewed translations to empty targets (reusable webhook)",
+  "description": "Reusable: writes reviewed translations (payload via secret webhook) only into empty targets whose EN is unchanged; unverified + optional custom status; reads back. Keep unpublished when not in use.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-28T10:25:40.274Z",
+  "updatedAt": "2026-10-28T10:25:40.274Z",
+  "isArchived": false,
+  "versionId": "0ec7124a-2511-4660-b8f2-de110b0f48b3",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "4337e336-460e-4978-9416-88e7c24e0fc6",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "l10n-push-translations",
+        "responseMode": "lastNode",
+        "responseData": "allEntries",
+        "options": {}
+      },
+      "webhookId": "f36f0fe9-a4d6-4d7e-99ef-63a5af2626bc"
+    },
+    {
+      "id": "cbc015fc-1de9-416f-ab3e-d641dfc38f7e",
+      "name": "Params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b = $input.first().json.body || {};\nconst h = $input.first().json.headers || {};\nif (h['x-l10n-secret'] !== 'f41b7c2e9d0a83561e2b4c7d9a0f13e8') throw new Error('bad secret');\nif (!['one','all'].includes(b.mode)) throw new Error('bad mode');\nif (!/^[0-9a-f]+\\.[0-9]+$/.test(b.pid || '')) throw new Error('bad pid');\nconst T = b.T || [];\nconst ids = [...new Set(T.map(t => t[0]))];\nreturn [{ json: { mode: b.mode, pid: b.pid, status: b.status_id || null, T, ids: ids.join(',') } }];"
+      }
+    },
+    {
+      "id": "8ddd5f2c-038d-4575-a88b-ee1ff9a91d1f",
+      "name": "Get Current",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.pid }}/keys?include_translations=1&limit=500&filter_key_ids={{ $json.ids }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "3f2aa2fe-33ce-42a9-bd52-bad9a554c787",
+      "name": "Build",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const cfg = $('Params').first().json;\nconst live = {};\nfor (const k of ($('Get Current').first().json.keys || [])) { const m = {}; for (const t of (k.translations||[])) m[t.language_iso] = typeof t.translation === 'string' ? t.translation : JSON.stringify(t.translation); live[k.key_id] = { m, arch: k.is_archived }; }\nconst per = {}; const held = [];\nfor (const [id, iso, en, tr] of cfg.T) {\n  const L = live[id];\n  if (!L || L.arch) { held.push([id, iso, 'missing/archived']); continue; }\n  if ((L.m.en || '') !== en) { held.push([id, iso, 'EN changed']); continue; }\n  if ((L.m[iso] || '').trim()) { held.push([id, iso, 'already filled']); continue; }\n  const t = { language_iso: iso, translation: tr, is_unverified: true };\n  if (cfg.status) t.custom_translation_status_ids = [cfg.status];\n  (per[id] = per[id] || []).push(t);\n}\nlet keys = Object.keys(per).map(id => ({ key_id: Number(id), translations: per[id] }));\nif (cfg.mode === 'one') keys = keys.slice(0, 1);\nconst out = []; for (let i = 0; i < keys.length; i += 40) out.push({ json: { body: { keys: keys.slice(i, i + 40) }, n: keys.slice(i, i + 40).reduce((a, k) => a + k.translations.length, 0), held } });\nif (!out.length) throw new Error('nothing to write: ' + JSON.stringify(held.slice(0, 20)));\nreturn out;"
+      }
+    },
+    {
+      "id": "444a4316-386d-4ce4-876f-6d26e1193798",
+      "name": "WRITE Translations",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $('Params').first().json.pid }}/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2000
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "15fdb20a-576e-4810-afdb-8fedfd72fed3",
+      "name": "Read Back",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $('Params').first().json.pid }}/keys?include_translations=1&limit=500&filter_key_ids={{ $('Params').first().json.ids }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "060cfd47-0301-41b2-bf47-8c0e8c515969",
+      "name": "Compare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const cfg = $('Params').first().json;\nconst live = {};\nfor (const k of ($('Read Back').first().json.keys || [])) for (const t of (k.translations||[])) live[k.key_id + '|' + t.language_iso] = t;\nconst per = {}; let match = 0, unver = 0, status = 0; const diff = [];\nfor (const [id, iso, en, tr] of cfg.T) { const t = live[id + '|' + iso] || {}; per[iso] = per[iso] || 0; if (t.translation === tr) { match++; per[iso]++; if (t.is_unverified) unver++; if (cfg.status && (t.custom_translation_statuses || []).some(s => s.status_id === cfg.status)) status++; } else diff.push([id, iso]); }\nconst b = $('Build').all();\nreturn [{ json: { sent: b.reduce((a, i) => a + i.json.n, 0), held: b[0].json.held.length, heldSample: b[0].json.held.slice(0, 10), matchNow: match, perLang: per, unverified: unver, withStatus: status, notMatching: diff.length } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Params": {
+      "main": [
+        [
+          {
+            "node": "Get Current",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Current": {
+      "main": [
+        [
+          {
+            "node": "Build",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build": {
+      "main": [
+        [
+          {
+            "node": "WRITE Translations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WRITE Translations": {
+      "main": [
+        [
+          {
+            "node": "Read Back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Back": {
+      "main": [
+        [
+          {
+            "node": "Compare",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "yfiWwggtxqorskeK",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-28T10:25:40.277Z",
+      "updatedAt": "2026-10-28T10:25:40.277Z"
+    }
+  ],
+  "activeVersion": null
+}
