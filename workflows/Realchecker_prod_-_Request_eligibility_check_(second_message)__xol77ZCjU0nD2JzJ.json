@@ -1,0 +1,3537 @@
+{
+  "id": "xol77ZCjU0nD2JzJ",
+  "name": "Realchecker prod - Request eligibility check (second message)",
+  "description": null,
+  "active": true,
+  "activeVersionId": "efe71d7f-1a0a-476b-87bd-baeb9b5e1245",
+  "createdAt": "2026-07-29T09:04:49.324Z",
+  "updatedAt": "2026-10-19T20:58:03.560Z",
+  "isArchived": false,
+  "versionId": "efe71d7f-1a0a-476b-87bd-baeb9b5e1245",
+  "versionCounter": 16,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        1184,
+        704
+      ],
+      "id": "2d1211cc-2961-4c7c-ad24-fc3bd9ceeaf5",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5d3b1e8a-1111-4a01-9a01-000000000001",
+              "name": "project_key",
+              "value": "realchecker_prod",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "6f7dca14-bcb1-400c-918d-96c2cd3f9b2c",
+      "name": "Set project_key",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1408,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "IRxwFN8iBhHLFQxQ",
+          "cachedResultName": "cs_project_config"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "project_key",
+              "keyValue": "={{ $('Set project_key').first().json.project_key }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "id": "ef2362e2-3376-49ea-98a2-e5140daf8cea",
+      "name": "Get Project Config",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1632,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Re-emit the original passthrough payload from the execute-workflow trigger.\n// Get Project Config replaces the incoming item with the config row, so we\n// restore the ticket data here for every downstream check to reference via\n// $('Restore trigger data').\nreturn $('When Executed by Another Workflow').all();\n"
+      },
+      "id": "88b4ebca-f84a-4e4f-a5ee-4345cd63fd06",
+      "name": "Restore trigger data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1856,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "VKJxPTkYWhZaXFqW",
+          "mode": "list",
+          "cachedResultName": "cs_email_blocklist",
+          "cachedResultUrl": "/projects/CH8lyrRTH2IOvQOj/datatables/VKJxPTkYWhZaXFqW"
+        },
+        "returnAll": true
+      },
+      "id": "7325a19a-170f-44d2-b83c-ab0cb4a10ec9",
+      "name": "Get Email Blocklist",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        2736,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// === Email blocklist filter ===\n// Mode: \"Run Once for All Items\".\n// Input to this node = rows from the \"Get Email Blocklist\" Data Table node.\n\n// 1) Requester email, from the restored trigger payload.\nconst email = String(\n  $('Restore trigger data').first()?.json?.body?.['ticket.requester.email'] ?? ''\n).trim().toLowerCase();\n\n// 2) Blocklist rows (each input item = one row from the data table).\nconst rows = $input.all();\n\n// 3) First active rule whose match_value is contained in the email wins.\nlet matched = null;\nif (email) {\n  for (const r of rows) {\n    const row = r.json || {};\n    const isActive = !(row.active === false || row.active === 0\n      || row.active === 'false' || row.active === '0' || row.active === 'no');\n    if (!isActive) continue;\n    const needle = String(row.match_value ?? '').trim().toLowerCase();\n    if (!needle) continue;\n    if (email.includes(needle)) { matched = row; break; }\n  }\n}\n\n// 4) One decision item out.\nreturn [{\n  json: {\n    email,\n    blocked: matched !== null,\n    matched_value: matched ? matched.match_value : null,\n    matched_reason: (matched && matched.reason != null) ? matched.reason : null,\n  },\n}];\n"
+      },
+      "id": "0ad2942d-5e5e-4edf-9a84-8840b12a7cd4",
+      "name": "Filter Blocked Emails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2960,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f4c0cc20-8c15-4297-bdf9-b51546e1508d",
+              "leftValue": "={{ $json.blocked }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3f194695-6be1-4cf2-9664-5c2c9e609a8a",
+      "name": "Is Blocked?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3184,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "74965532-52ce-4b5e-8e39-5787b53d7770",
+              "name": "fail_reason",
+              "value": "blocked_email",
+              "type": "string"
+            },
+            {
+              "id": "f3cc563d-c6e1-4a1c-be65-9684ceed39ff",
+              "name": "note_body",
+              "value": "=Note: The requester {{ $('Restore trigger data').first().json.body['ticket.requester.email'] }} is on the automation blocklist because: {{ $json.matched_reason ? $json.matched_reason : \"no reason provided\" }}. If this requester shouldn't be blocked, please report it to the Operations Department.\n\nAutomation was skipped — please handle this ticket manually.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cdda5025-7acd-4417-90dc-a870080e540b",
+      "name": "Note: Blocked email",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        5440,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "044aee42-6466-4dca-b7c8-ef99f10b8148",
+              "leftValue": "={{ $('Restore trigger data').first().json.body[\"ticket.ticket_field_\" + $('Get Project Config').first().json.ticket_field_contact_form_classification_id] }}",
+              "rightValue": "cancellation",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "2d23813d-2219-4ad4-8fc5-b5703dad90b0",
+      "name": "Is contact form cancellation",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        5136,
+        1056
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "2abe7692-4f7c-4aaf-88e4-0703cd5f3dc5",
+              "name": "fail_reason",
+              "value": "contact_form_cancellation",
+              "type": "string"
+            },
+            {
+              "id": "14b886c2-7beb-4655-a701-932b72e5da21",
+              "name": "note_body",
+              "value": "=Note: This ticket (#{{ $('Restore trigger data').first().json.body['ticket.id'] }}) was submitted through the contact form as a cancellation request. Automation was skipped.\n\nPlease handle this ticket manually.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f27dc3eb-6559-4e71-bb8e-b96014ce3e94",
+      "name": "Note: Contact form cancellation",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        5440,
+        848
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "2ba34ef1-5c68-432b-88ad-5252e3929865",
+      "name": "Do not proceed",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        5760,
+        800
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "96712c40-7267-4a55-88b5-bea246f215d9",
+      "name": "Proceed (eligible)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        5760,
+        1056
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $('Restore trigger data').first().json.body['ticket.id'] }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ticket.comment.public",
+              "value": "false"
+            },
+            {
+              "name": "ticket.comment.body",
+              "value": "=User eligibility failed:\nFail reason: {{ $json.fail_reason }}\nNote: {{ $json.note_body }}\n\nPlease handle this request manually. "
+            },
+            {
+              "name": "ticket.custom_status_id",
+              "value": "={{ $(\"Get Project Config\").first().json.ticket_custom_status_open_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9685297f-ab63-463b-a771-cfbfcc5de25f",
+      "name": "Reply to internally and set status to open3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        6032,
+        800
+      ],
+      "retryOnFail": true,
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "Oiek4pqYY75QVNcy",
+          "name": "Realchecker Zendesk OAuth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## 1) Check for blocked emails",
+        "height": 120,
+        "width": 420,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2720,
+        560
+      ],
+      "id": "0dec15c7-8d27-4554-8756-ad5ebd8f2210",
+      "name": "Sticky Blocked"
+    },
+    {
+      "parameters": {
+        "content": "## 3) Check for contact form cancellations",
+        "height": 120,
+        "width": 230,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        4992,
+        912
+      ],
+      "id": "38bc980a-6011-414f-890c-571fbbeebcaf",
+      "name": "Sticky Cancel"
+    },
+    {
+      "parameters": {
+        "content": "# Do not proceed\nAll three fail notes merge here (note_body + fail_reason). Wire your single fail action after this node.",
+        "height": 200,
+        "width": 300,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        5760,
+        576
+      ],
+      "id": "5017c331-6e03-421e-9da8-df855348caff",
+      "name": "Sticky Fail"
+    },
+    {
+      "parameters": {
+        "content": "# Proceed\nAll three checks passed. Wire the main automation after this node.",
+        "height": 208,
+        "width": 300,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        5760,
+        1200
+      ],
+      "id": "ca1c8f88-aa27-44fe-96a8-5a7a1fe6b017",
+      "name": "Sticky Proceed"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "03853d94-c29e-4385-a2b9-eedb5596cb7c",
+              "name": "proceedWithAutomation",
+              "value": false,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        6240,
+        800
+      ],
+      "id": "57c5a2de-8d60-4f95-9dfe-54305efe4a45",
+      "name": "Do not proceed1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "03853d94-c29e-4385-a2b9-eedb5596cb7c",
+              "name": "proceedWithAutomation",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        6240,
+        1056
+      ],
+      "id": "b28f924b-f8d1-4df0-8d0f-12c379661841",
+      "name": "Proceed"
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {},
+        "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $('Restore trigger data').first().json.body['ticket.id'] + \"?include=metric_sets\" }}"
+      },
+      "id": "140e5b09-892f-4d1b-8597-d9287ac0c64c",
+      "name": "Get ticket status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2080,
+        704
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "Oiek4pqYY75QVNcy",
+          "name": "Realchecker Zendesk OAuth"
+        }
+      },
+      "notes": "Live re-read of the ticket. Runs before the blocklist read and requester lookup so a duplicate delivery costs one GET, not the whole pipeline."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c2d5f8b3-a042-4d99-9e32-6b8f4a1c2d01",
+              "leftValue": "={{ $json.ticket.status }}",
+              "rightValue": "solved",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "c2d5f8b3-a042-4d99-9e32-6b8f4a1c2d02",
+              "leftValue": "={{ $json.ticket.status }}",
+              "rightValue": "closed",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ec5e2be5-99b3-42b0-8a87-2ee82bd15188",
+      "name": "Ticket not solved or closed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2304,
+        704
+      ],
+      "notes": "True (continue): new, open, pending, hold. False (stop): solved, closed."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c2d5f8b3-a042-4d99-9e32-6b8f4a1c2d03",
+              "name": "fail_reason",
+              "value": "already_solved_or_closed",
+              "type": "string"
+            },
+            {
+              "id": "c2d5f8b3-a042-4d99-9e32-6b8f4a1c2d04",
+              "name": "note_body",
+              "value": "=Note: Ticket #{{ $('Restore trigger data').first().json.body['ticket.id'] }} is already in status \"{{ $json.ticket.status }}\", so the automation had already finished with it. This run was almost certainly a duplicate or replayed Zendesk webhook. Automation was skipped and no reply was sent. No agent action needed.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "85cebdcc-fdd2-41a2-8223-ff9c1079a670",
+      "name": "Note: Ticket already solved or closed",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2640,
+        912
+      ],
+      "notes": "Execution log only - deliberately not written to Zendesk."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c2d5f8b3-a042-4d99-9e32-6b8f4a1c2d05",
+              "name": "proceedWithAutomation",
+              "value": false,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3626a0f3-6af4-4c7c-9f17-d236d51bb17b",
+      "name": "Do not proceed2",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2864,
+        912
+      ],
+      "notes": "Same output shape as Do not proceed1, so the caller needs no change."
+    },
+    {
+      "parameters": {
+        "color": 3,
+        "content": "## 0) Check the ticket is not already solved or closed\n\nRuns first, and on purpose does NOT post an internal note or reopen the ticket.\n\nWhy the guard: on 2026-07-23 Zendesk redelivered a `ticket created` webhook 8h37m late. The automation re-ran on the original first email, found the refundable charges already consumed, and emailed the customer a refund rejection after having already granted the refund.\n\nWhy no internal note here: the shared `Do not proceed` path sets the ticket back to `open`. On a solved ticket that would re-queue it for agents and could re-fire the 2nd-message trigger.\n\nWhy base `status` and not a `cs_project_config` id: the ticket API always returns `status` as a plain string, so no new column is needed and `closed` is covered for free.",
+        "height": 340,
+        "width": 460
+      },
+      "id": "97bd4b14-d094-49b3-a78d-23b0c5082187",
+      "name": "Sticky Status Guard",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2464,
+        1072
+      ]
+    },
+    {
+      "id": "ec7a4b86-adf3-431d-9340-ac48d7bea088",
+      "name": "Get Auto-solve Emails",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        3400,
+        2000
+      ],
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "cachedResultName": "cs_email_autosolve",
+          "mode": "list",
+          "value": "akdSwJgEUUpbgHrE"
+        },
+        "operation": "get",
+        "returnAll": true
+      }
+    },
+    {
+      "id": "a422a3c3-492f-431f-86c8-e632c2569853",
+      "name": "Filter Auto-solve Emails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3620,
+        2000
+      ],
+      "parameters": {
+        "jsCode": "const email = String($('Restore trigger data').first()?.json?.body?.['ticket.requester.email'] ?? '').trim().toLowerCase();\n\nconst rows = $input.all();\n\nlet matched = null;\nif (email) {\n  for (const r of rows) {\n    const row = r.json || {};\n    const isActive = !(row.active === false || row.active === 0 || row.active === 'false' || row.active === '0' || row.active === 'no');\n    if (!isActive) continue;\n    const needle = String(row.match_value ?? '').trim().toLowerCase();\n    if (!needle) continue;\n    if (email.includes(needle)) { matched = row; break; }\n  }\n}\n\nreturn [{\n  json: {\n    email,\n    autosolve: matched !== null,\n    matched_value: matched ? matched.match_value : null,\n    matched_reason: (matched && matched.reason != null) ? matched.reason : null\n  }\n}];"
+      }
+    },
+    {
+      "id": "0c9904f7-8f68-4aca-a0c5-18195c5f7fc5",
+      "name": "Is Auto-solve?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3840,
+        2000
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "ec-autosolve",
+              "leftValue": "={{ $json.autosolve }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "notes": "True = requester email is on the auto-solve list. Solve silently, no customer-facing reply."
+    },
+    {
+      "id": "8af59b34-523c-4b83-8129-b2dbb6ade3fe",
+      "name": "Note: Auto-solve email",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4060,
+        1860
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ec-as-reason",
+              "name": "fail_reason",
+              "type": "string",
+              "value": "autosolve_email"
+            },
+            {
+              "id": "ec-as-note",
+              "name": "note_body",
+              "type": "string",
+              "value": "=Note: The requester {{ $('Restore trigger data').first().json.body['ticket.requester.email'] }} has been identified as an auto-solve email{{ $json.matched_reason ? \" because: \" + $json.matched_reason : \"\" }}. This ticket was solved automatically. No reply was sent to the customer and no agent action is needed."
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "mode": "manual"
+      }
+    },
+    {
+      "id": "4d9352be-b23a-405c-91f1-8530b828fe7a",
+      "name": "Build auto-solve payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4280,
+        1860
+      ],
+      "parameters": {
+        "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\n\nconst ticketId = trig.body['ticket.id'];\nconst noteBody = $('Note: Auto-solve email').first().json.note_body;\n\nconst ticket = {\n  status: 'solved',\n  comment: { public: false, body: noteBody }\n};\n\n// TAGS. `additional_tags` is ONLY supported on the Update Many Tickets endpoint.\n// On a single-ticket PUT Zendesk silently discards it - 200 response, no tag\n// event in the audit. This tag was never actually being applied. A single-ticket\n// PUT only accepts `tags`, which replaces the array, so merge the existing ones.\nconst liveTicket = $('Get ticket status').first().json.ticket || {};\nconst tags = Array.isArray(liveTicket.tags) ? liveTicket.tags.slice() : [];\nif (tags.indexOf('autosolve_email') === -1) {\n  tags.push('autosolve_email');\n}\nticket.tags = tags;\n\n// Zendesk enforces required custom fields on the solve transition and validates\n// against the INCOMING payload, not the stored ticket:\n//   422 RecordInvalid - \"Language: is required when solving a ticket\"\n// So every required field has to ride along in this one PUT.\nconst fields = [];\n\nconst catFieldId = Number(cfg.ticket_custom_field_category);\nconst catValue = cfg.category_value_duplicate_contact;\nif (Number.isFinite(catFieldId) && catFieldId > 0\n    && catValue !== null && catValue !== undefined && String(catValue).trim() !== '') {\n  fields.push({ id: catFieldId, value: String(catValue) });\n}\n\nconst langFieldId = Number(cfg.ticket_field_language_id);\nconst langValue = cfg.language_value_english;\nif (Number.isFinite(langFieldId) && langFieldId > 0\n    && langValue !== null && langValue !== undefined && String(langValue).trim() !== '') {\n  fields.push({ id: langFieldId, value: String(langValue) });\n}\n\n// Rejection Complaint (record-based case 2) - required to solve on Personality.\n// This path never sends a refund rejection, so it writes \"no\". STICKY: a ticket\n// that already carries \"yes\" keeps it - same rule as the Zendesk ticket update\n// request sub-workflow, so an earlier rejection is never erased.\nlet rcValue = null;\nconst rcFieldId = Number(cfg.ticket_field_rejection_complaint);\nif (Number.isFinite(rcFieldId) && rcFieldId > 0) {\n  const liveFields = Array.isArray(liveTicket.custom_fields) ? liveTicket.custom_fields : [];\n  const rcCurrent = liveFields.find(f => Number(f.id) === rcFieldId);\n  // Option values from cs_project_config (empty = yes / no).\n  const rcYes = String(cfg.rejection_complaint_value_yes || 'yes');\n  const rcNo = String(cfg.rejection_complaint_value_no || 'no');\n  rcValue = (rcCurrent && rcCurrent.value === rcYes) ? rcYes : rcNo;\n  fields.push({ id: rcFieldId, value: rcValue });\n}\n\nif (fields.length > 0) {\n  ticket.custom_fields = fields;\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    note_body: noteBody,\n    fields_applied: fields.length,\n    rejection_complaint: rcValue,\n    tags_sent: ticket.tags,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
+      },
+      "notes": "Builds the PUT body natively so the category field can be set alongside status."
+    },
+    {
+      "id": "73f58b9e-8f77-41d6-9232-3750a0aab028",
+      "name": "Zendesk: Solve silently",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        4500,
+        1860
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "jsonBody": "={{ JSON.stringify($json.zendesk_body) }}",
+        "method": "PUT",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $json.ticket_id }}"
+      },
+      "notes": "Private note + status solved + tag autosolve_email + Duplicate contact category. No public comment, so the customer is never notified.",
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "Oiek4pqYY75QVNcy",
+          "name": "Realchecker Zendesk OAuth"
+        }
+      }
+    },
+    {
+      "id": "754cf4ef-0002-48ba-8361-127ccb685eef",
+      "name": "Do not proceed (auto-solved)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4720,
+        1860
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ec-asf-p",
+              "name": "proceedWithAutomation",
+              "type": "boolean",
+              "value": false
+            },
+            {
+              "id": "ec-asf-r",
+              "name": "fail_reason",
+              "type": "string",
+              "value": "autosolve_email"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "mode": "manual"
+      },
+      "notes": "Same return shape as the other terminals - the calling workflow needs no change."
+    },
+    {
+      "id": "d848dac8-1f8e-47b4-9139-05ce7bd6b8c4",
+      "name": "Sticky Followup Scope",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3380,
+        2180
+      ],
+      "parameters": {
+        "color": 5,
+        "content": "# Second message / follow-up path\n\nThis check runs on customer REPLIES inside an existing ticket, not on first contact.\n\n**Deliberately NOT here** (all of them belong to first contact only, and are handled by `Request eligibility check with merging (first message)`):\n- requester lookup + requested-tickets fetch\n- the active-ticket guard and duplicate merge - by definition the customer is replying inside an active ticket, so merging could close the very ticket they are conversing in\n- the AI spam check - already cleared on message one, and a terse follow-up (\"ANY UPDATE???\") is its worst false-positive shape\n\n**Bug removed 2026-08-27:** the old `Evaluate Open Ticket Guard` counted ANY other requester ticket regardless of status, including solved and closed ones for 120 days. It suppressed automation for essentially every repeat customer, wrote an internal note calling closed tickets \"unhandled (new)\", and flipped pending tickets back to open. Every label on it said \"new tickets\" - only the code disagreed.\n\n**What remains:** status guard, blocklist, auto-solve list, contact-form cancellation. Four cheap checks, no AI, no user lookup.",
+        "height": 460,
+        "width": 460
+      }
+    },
+    {
+      "id": "3cbe5cf4-317a-476c-a785-6f8cfb380cdf",
+      "name": "High risk check enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3400,
+        2750
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "hr2-enabled",
+              "leftValue": "={{ $('Get Project Config').first().json.high_risk_check_enabled === true }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "notes": "cs_project_config.high_risk_check_enabled. Empty or false = OFF (opt-in)."
+    },
+    {
+      "id": "d3a7ca53-f397-4265-95ca-fee5aa44ef18",
+      "name": "Get last customer comment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        3620,
+        2750
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {},
+        "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $('Restore trigger data').first().json.body['ticket.id'] + \"/comments.json\" }}"
+      },
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "Oiek4pqYY75QVNcy",
+          "name": "Realchecker Zendesk OAuth"
+        }
+      },
+      "notes": "On the follow-up path the ticket's description is still the ORIGINAL message, so it cannot be used for matching. The new text lives in the latest customer comment and has to be fetched. This runs here rather than later in the 2nd message flow so that tickets dropped by the message-limit and classification gates are still covered."
+    },
+    {
+      "id": "b5384e72-628d-4965-abc2-255ecb3ba491",
+      "name": "Extract last customer comment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3840,
+        2750
+      ],
+      "parameters": {
+        "jsCode": "const liveTicket = $('Get ticket status').first().json.ticket || {};\nconst requesterId = Number(liveTicket.requester_id);\n\nconst comments = $input.first().json.comments || [];\n\n// Walk backwards to the newest comment written by the requester. Agent replies\n// and the automation's own internal notes are skipped - matching those would\n// flag our own wording back at us, and the note text itself contains the\n// matched keyword.\nlet target = null;\nfor (let i = comments.length - 1; i >= 0; i--) {\n  if (Number(comments[i].author_id) === requesterId) {\n    target = comments[i];\n    break;\n  }\n}\n\nconst fromRequester = target !== null;\n\n// Fall back to the newest comment of any author rather than checking nothing at\n// all. Over-matching is the preferred failure mode for a duty-of-care check.\nif (!target && comments.length) {\n  target = comments[comments.length - 1];\n}\n\nreturn [{\n  json: {\n    comment_id: target ? target.id : null,\n    comment_text: target ? String(target.body == null ? '' : target.body) : '',\n    from_requester: fromRequester,\n    comment_count: comments.length\n  }\n}];"
+      },
+      "notes": "Newest comment authored by the requester. Matching only the NEW text is deliberate: matching the whole thread would re-flag the same ticket on every follow-up, and the original message was already checked by the first-message eligibility check."
+    },
+    {
+      "id": "87ca23f6-1de6-4d11-9802-dfaa784e0a8e",
+      "name": "Get High Risk Keywords",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        4060,
+        2750
+      ],
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "cachedResultName": "cs_high_risk_keywords",
+          "mode": "list",
+          "value": "H0oFIJNTlQgUVrk5"
+        },
+        "operation": "get",
+        "returnAll": true
+      },
+      "notes": "cs_high_risk_keywords. GLOBAL - no project_key column. One phrase list for every brand; only the check itself is per-project."
+    },
+    {
+      "id": "1efbcd19-8d58-4e3f-ac75-531442b1c240",
+      "name": "Match High Risk Keywords",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4280,
+        2750
+      ],
+      "parameters": {
+        "jsCode": "// === High risk keyword matching (follow-up path) ===\n// Mode: \"Run Once for All Items\". Input = rows from Get High Risk Keywords.\n//\n// Matches ONLY the latest customer comment, not the ticket description. On this\n// path the description is still the original first message, which the\n// first-message eligibility check already evaluated.\n\nconst c = $('Extract last customer comment').first().json;\n\n// Tier precedence. Lower rank wins. C (safety) outranks A (commercial threat),\n// which outranks B (conduct). This mirrors the queue urgency: safety-review,\n// then Priority, then Standard. A ticket matching several tiers is labelled with\n// the highest-risk one.\nconst TIER_RANK = { C: 0, A: 1, B: 2 };\n\nconst TIER_TAG = {\n  A: 'high-risk-legal-financial',\n  B: 'high-risk-conduct',\n  C: 'high-risk-safety-critical'\n};\n\nconst TIER_QUEUE = {\n  A: 'Priority',\n  B: 'Standard',\n  C: 'safety-review'\n};\n\nconst TIER_LABEL = {\n  A: 'Commercial threat',\n  B: 'Hostility / repeat / account',\n  C: 'Safety / duty of care'\n};\n\n// MATCHING RULE (October 2026). Letters are never changed, only their case.\n//  - Both sides are lowercased. Accents, umlauts, Greek tonos, Vietnamese tone\n//    marks and Thai vowel/tone marks are kept exactly as written: \"llame\" in the\n//    table does not match \"llamé\" in a ticket and vice versa.\n//  - Any run of spaces, line breaks, tabs or punctuation counts as ONE space, on\n//    both sides. So \"can't\" matches \"can’t\" (iPhone apostrophe), \"self harm\"\n//    matches \"self-harm\", and a phrase split by a line break or a double space\n//    still matches. Only characters that are not a letter, mark or digit in any\n//    alphabet are affected.\n//  - The keyword must be bordered by the start/end of the text or by such a\n//    space: \"sue\" never fires inside \"issue\", \"sud\" never inside \"sudbina\",\n//    \"24 hours\" never inside \"124 hours\".\n//  - Unicode NFC runs first. It does not change how the text looks and does not\n//    remove accents. It only makes sure an accented letter is stored the same\n//    way on both sides - some mail clients send \"é\" as \"e\" plus a separate\n//    accent character, which would otherwise never compare equal.\n//  - JavaScript lowercases the Turkish capital \"İ\" to \"i\" plus a combining dot.\n//    The dot is dropped so \"İADE\" matches \"iade\".\n//  - A keyword with no letters or digits at all (an emoji, \"!!!\") is matched\n//    exactly as written instead of being skipped.\n//\n// Replaces the old a-z normaliser, which deleted every non-English letter and\n// collapsed localized keywords into fragments such as \"1\", \"24\" or \"t\".\n//\n// Do NOT add space-insensitive fallback matching. A despaced variant of this\n// caused two customers to be publicly told our product was not ours on\n// 2026-09-09 (Personality tickets 685429 and 685459).\nconst WORD_CHAR = /[\\p{L}\\p{M}\\p{N}]/u;\n\nfunction lower(text) {\n  return String(text == null ? '' : text).normalize('NFC').toLowerCase().replace(/i̇/g, 'i');\n}\n\nfunction prepare(text) {\n  return lower(text).replace(/[^\\p{L}\\p{M}\\p{N}]+/gu, ' ').trim();\n}\n\n// Character immediately before index i, surrogate-pair safe.\nfunction charBefore(s, i) {\n  if (i <= 0) return '';\n  const c = s.charCodeAt(i - 1);\n  if (c >= 0xDC00 && c <= 0xDFFF && i >= 2) return s.slice(i - 2, i);\n  return s[i - 1];\n}\n\n// Character starting at index j, surrogate-pair safe.\nfunction charAfter(s, j) {\n  if (j >= s.length) return '';\n  return String.fromCodePoint(s.codePointAt(j));\n}\n\n// True when needle occurs in hay with no letter or digit directly before or\n// after it. Checks every occurrence, not just the first.\nfunction containsWhole(hay, needle) {\n  let from = 0;\n  for (;;) {\n    const i = hay.indexOf(needle, from);\n    if (i === -1) return false;\n    const b = charBefore(hay, i);\n    const a = charAfter(hay, i + needle.length);\n    if (!(b && WORD_CHAR.test(b)) && !(a && WORD_CHAR.test(a))) return true;\n    from = i + 1;\n  }\n}\n\n// Deliberately NOT stripping quoted history. This is a duty-of-care check and\n// over-matching is the preferred failure mode.\nconst haystack = prepare(c.comment_text);\n// Only used for keywords that contain no letters or digits at all.\nconst haystackRaw = lower(c.comment_text);\n\nconst rows = $input.all();\n\n// One entry per distinct keyword. The localized lists repeat many terms across\n// languages (chargeback, gdpr, trustpilot ...), so a keyword is listed once in\n// the note, with every language it came from, and keeps its highest-risk tier.\nconst byNeedle = new Map();\n\nfor (const r of rows) {\n  const row = r.json || {};\n\n  // Fail-open on active: only an explicit negative disables a row, so a null\n  // (never set) counts as active.\n  const isActive = !(row.active === false || row.active === 0\n    || row.active === 'false' || row.active === '0' || row.active === 'no');\n  if (!isActive) continue;\n\n  let needle = prepare(row.keyword);\n  let hay = haystack;\n  if (!needle) {\n    needle = lower(row.keyword).trim();\n    hay = haystackRaw;\n  }\n  if (!needle) continue;\n\n  const tier = String(row.tier == null ? '' : row.tier).trim().toUpperCase();\n  if (!(tier in TIER_RANK)) continue;\n\n  if (!containsWhole(hay, needle)) continue;\n\n  const lang = String(row.language == null ? '' : row.language).trim().toLowerCase();\n  const category = String(row.category == null ? '' : row.category);\n  const prev = byNeedle.get(needle);\n\n  if (!prev) {\n    byNeedle.set(needle, {\n      keyword: String(row.keyword).trim(),\n      needle: needle,\n      tier: tier,\n      category: category,\n      languages: lang ? [lang] : []\n    });\n  } else {\n    if (lang && prev.languages.indexOf(lang) === -1) prev.languages.push(lang);\n    if (TIER_RANK[tier] < TIER_RANK[prev.tier]) {\n      prev.tier = tier;\n      prev.category = category;\n    }\n  }\n}\n\nconst matches = Array.from(byNeedle.values());\n\n// Highest-risk tier first, then longest (most specific) phrase within that tier.\nmatches.sort((a, b) => {\n  const r = TIER_RANK[a.tier] - TIER_RANK[b.tier];\n  if (r !== 0) return r;\n  return b.needle.length - a.needle.length;\n});\n\n// Language suffix for the note. Omitted for English-only keywords so existing\n// notes read exactly as before.\nfunction langSuffix(m) {\n  const l = m.languages;\n  if (!l.length || (l.length === 1 && l[0] === 'en')) return '';\n  const shown = l.length > 5 ? l.slice(0, 5).join(', ') + ' +' + (l.length - 5) : l.join(', ');\n  return ' [' + shown + ']';\n}\n\nconst winner = matches.length ? matches[0] : null;\n\nreturn [{\n  json: {\n    high_risk_matched: matches.length > 0,\n    match_count: matches.length,\n    tier: winner ? winner.tier : null,\n    tier_label: winner ? TIER_LABEL[winner.tier] : null,\n    category: winner ? winner.category : null,\n    queue: winner ? TIER_QUEUE[winner.tier] : null,\n    tag: winner ? TIER_TAG[winner.tier] : null,\n    primary_match: winner ? winner.keyword : null,\n    matched_keywords: matches.map(m => m.keyword),\n    matched_detail: matches.map(m => m.tier + '/' + m.category + ': ' + m.keyword + langSuffix(m)),\n    tiers_matched: matches.map(m => m.tier).filter((t, i, a) => a.indexOf(t) === i),\n    languages_matched: matches.reduce((acc, m) => acc.concat(m.languages), []).filter((l, i, a) => a.indexOf(l) === i),\n    rows_checked: rows.length,\n    matched_comment_id: c.comment_id,\n    comment_from_requester: c.from_requester,\n    haystack_chars: haystack.length\n  }\n}];"
+      }
+    },
+    {
+      "id": "a16b8ff6-72b0-4758-96d7-5e605b112637",
+      "name": "High risk match?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4500,
+        2750
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "hr2-matched",
+              "leftValue": "={{ $json.high_risk_matched }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "93b2f521-b1b9-4182-b0b9-96dae021436b",
+      "name": "Build high risk payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4720,
+        2620
+      ],
+      "parameters": {
+        "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\nconst m = $('Match High Risk Keywords').first().json;\n\nconst ticketId = trig.body['ticket.id'];\n\n// cs_project_config.high_risk_enforce\n//   OFF (default) = monitoring. Tag + internal note only, automation continues.\n//   ON            = tag + note + status open + allow_automation _no_, automation stops.\nconst flag = cfg.high_risk_enforce;\nconst enforce = (flag === true || flag === 1 || flag === 'true' || flag === '1' || flag === 'yes');\n\nconst lines = [\n  'Note: This follow-up message matched the high-risk keyword list.',\n  '',\n  'Tier: ' + m.tier + ' - ' + m.tier_label,\n  'Category: ' + m.category,\n  'Queue: ' + m.queue,\n  'Tag applied: ' + m.tag,\n  'Matched phrase: \"' + m.primary_match + '\"'\n];\n\nif (m.match_count > 1) {\n  lines.push('');\n  lines.push('All ' + m.match_count + ' matches:');\n  for (const d of m.matched_detail) {\n    lines.push('  - ' + d);\n  }\n}\n\nlines.push('');\n\nif (enforce) {\n  lines.push('Automation has been stopped and no reply was sent to the customer.');\n  lines.push('Please pick this ticket up from the ' + m.queue + ' queue and handle it manually.');\n} else {\n  lines.push('MONITORING MODE: the ticket was tagged and this note added, but automation was NOT stopped.');\n  lines.push('The bot may still reply to this customer. No agent action is required unless the reply is wrong.');\n}\n\nconst noteBody = lines.join('\\n');\n\nconst ticket = {\n  comment: { public: false, body: noteBody }\n};\n\n// TAGS. `additional_tags` is ONLY supported on the Update Many Tickets endpoint.\n// On a single-ticket PUT Zendesk silently discards it - 200 response, no tag\n// event in the audit (Personality ticket 687990). A single-ticket PUT only\n// accepts `tags`, which REPLACES the array, so the existing tags are merged in\n// from the live Get ticket status read.\nconst liveTicket = $('Get ticket status').first().json.ticket || {};\nconst existingTags = Array.isArray(liveTicket.tags) ? liveTicket.tags.slice() : [];\n\nif (m.tag && existingTags.indexOf(m.tag) === -1) {\n  existingTags.push(m.tag);\n}\nticket.tags = existingTags;\n\nif (enforce) {\n  // Setting to open is not a solve transition, so Zendesk does not enforce\n  // required custom fields here and the category does not need to ride along.\n  const openStatusId = Number(cfg.ticket_custom_status_open_id);\n  if (Number.isFinite(openStatusId) && openStatusId > 0) {\n    ticket.custom_status_id = openStatusId;\n  }\n\n  // Stop automation re-engaging on any further replies.\n  const allowFieldId = Number(cfg.ticket_field_allow_automation);\n  if (Number.isFinite(allowFieldId) && allowFieldId > 0) {\n    ticket.custom_fields = [{ id: allowFieldId, value: '_no_' }];\n  }\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    enforce: enforce,\n    tier: m.tier,\n    queue: m.queue,\n    tag: m.tag,\n    tags_sent: ticket.tags,\n    primary_match: m.primary_match,\n    match_count: m.match_count,\n    matched_comment_id: m.matched_comment_id,\n    note_body: noteBody,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
+      },
+      "notes": "In monitoring mode only the tag and note are sent - no status change, no allow_automation change, and the ticket continues into automation."
+    },
+    {
+      "id": "af013eed-f496-4747-8163-9d2e88e15145",
+      "name": "Zendesk: Flag high risk",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        4940,
+        2620
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "jsonBody": "={{ JSON.stringify($json.zendesk_body) }}",
+        "method": "PUT",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $json.ticket_id }}"
+      },
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "Oiek4pqYY75QVNcy",
+          "name": "Realchecker Zendesk OAuth"
+        }
+      }
+    },
+    {
+      "id": "db7be9aa-764a-4fb5-97c3-77fb5a66ed76",
+      "name": "High risk enforce?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5160,
+        2620
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "hr2-enforce",
+              "leftValue": "={{ $('Build high risk payload').first().json.enforce }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "notes": "True = stop automation. False = monitoring mode, fall through to the contact-form check and carry on as normal."
+    },
+    {
+      "id": "f75d2e4d-d92c-4338-8465-627cb98407dc",
+      "name": "Do not proceed (high risk)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        5380,
+        2480
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "hr2-dnp-p",
+              "name": "proceedWithAutomation",
+              "type": "boolean",
+              "value": false
+            },
+            {
+              "id": "hr2-dnp-r",
+              "name": "fail_reason",
+              "type": "string",
+              "value": "high_risk_keyword"
+            },
+            {
+              "id": "hr2-dnp-t",
+              "name": "high_risk_tier",
+              "type": "string",
+              "value": "={{ $('Build high risk payload').first().json.tier }}"
+            },
+            {
+              "id": "hr2-dnp-q",
+              "name": "high_risk_queue",
+              "type": "string",
+              "value": "={{ $('Build high risk payload').first().json.queue }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Same return shape as every other terminal. The note, tag and status were already written by Zendesk: Flag high risk, so this does NOT route through the shared loud-fail path."
+    },
+    {
+      "id": "d3400a80-ac3a-4115-860d-68f2171c7f58",
+      "name": "Sticky High Risk",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3380,
+        2960
+      ],
+      "parameters": {
+        "color": 3,
+        "content": "## High-risk keyword check (follow-up path)\n\nRuns after the blocklist and auto-solve tables, before the contact-form check.\n\n**Why here and not later in the 2nd message flow,** where `Return last comment` already has the text: the message-limit threshold, the allow_automation filter and the classification gate all drop tickets SILENTLY further downstream. A safety phrase in message 8 of a long thread would never be seen. Those excluded tickets are disproportionately the long, escalating, repeat-contact threads this check exists for. The price is one extra Zendesk call per follow-up.\n\n**Matches the LATEST CUSTOMER COMMENT, not the ticket description.** On this path the description is still the original first message, which the first-message check already evaluated. Matching the whole thread would also re-flag the same ticket on every reply.\n\n`Extract last customer comment` walks backwards to the newest comment whose `author_id` is the requester, so agent replies and the automation's own internal notes are skipped - otherwise we would match the keyword quoted inside our own note.\n\n**Table:** `cs_high_risk_keywords`. Global, no `project_key`. Rows switched on and off with `active`.\n\n**Matching:** normalise both sides, then token-sequence match anchored with `(^| )needle( |$)`. Tier precedence **C > A > B**. Every match is listed in the note, not just the winner.\n\n**Two switches in cs_project_config:**\n- `high_risk_check_enabled` - master on/off, per project, opt-in\n- `high_risk_enforce` - OFF = monitoring (tag + note only, bot still replies), ON = tag + note + status open + `allow_automation _no_` + automation stops",
+        "height": 560,
+        "width": 460
+      }
+    },
+    {
+      "id": "cd0ff86f-c458-4f68-9eb4-483a1bcbc0e4",
+      "name": "RR: Repeat refusal enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        6560,
+        1760
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "rr-enabled",
+              "leftValue": "={{ $('Get Project Config').first().json.record_checks_enabled === true }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "notes": "cs_project_config.record_checks_enabled. Empty or false = OFF (opt-in), same convention as the high-risk check."
+    },
+    {
+      "id": "4569693b-94eb-4484-8750-586a57865b48",
+      "name": "RR: Evaluate reopens",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6800,
+        1632
+      ],
+      "parameters": {
+        "jsCode": "// === Case 7b: customer repeatedly refuses the automated resolution ===\n//\n// Signal is Zendesk's own `reopens` counter: the number of solved -> open\n// transitions on this ticket. Verified on Personality 2026-09: every reopen\n// examined was caused by the requester replying. The automation never reopens a\n// ticket it has solved.\n//\n// WHY REOPENS AND NOT \"COUNT THE CUSTOMER'S REPLIES\":\n// the automation also sends NON-resolution public replies - the\n// password_account_info macros ask the customer for their account email and\n// leave the ticket PENDING. A customer answering that is cooperating, not\n// refusing. Pending is not a solve, so it produces no reopen, and those\n// customers are excluded for free. Counting replies would have flagged the most\n// cooperative customers we have.\n//\n// KNOWN LIMITATION: a thank-you reply also reopens a solved ticket. At a\n// threshold of 2 this mostly washes out, because gratitude is terminal - people\n// do not thank you twice - whereas refusal repeats. Sampled ticket 688115\n// (1 reopen, a thank-you) correctly does not fire; 688143 (3 reopens, two\n// genuine pushbacks plus a closing thank-you) correctly does.\n//\n// A customer who pushes back once, hard, and then gives up registers a single\n// reopen and will NOT flag. Under-flagging is the intended failure direction.\n\nconst cfg = $('Get Project Config').first().json || {};\nconst resp = $('Get ticket status').first().json || {};\nconst ticket = resp.ticket || {};\n\n// The sideload arrives either inline on the ticket or as a sibling array,\n// depending on endpoint. Accept both.\nlet metricSet = null;\nif (ticket.metric_set) {\n  metricSet = ticket.metric_set;\n} else if (Array.isArray(resp.metric_sets) && resp.metric_sets.length) {\n  metricSet = resp.metric_sets[0];\n}\n\nconst available = !!metricSet;\nconst reopens = available ? Number(metricSet.reopens || 0) : null;\nconst replies = available ? Number(metricSet.replies || 0) : null;\n\nconst rawThreshold = Number(cfg.record_repeat_refusal_threshold);\nconst threshold = (Number.isFinite(rawThreshold) && rawThreshold > 0) ? rawThreshold : 2;\n\nconst matched = available && reopens >= threshold;\n\nreturn [{\n  json: {\n    rr_metrics_available: available,\n    rr_reopens: reopens,\n    rr_replies: replies,\n    rr_threshold: threshold,\n    rr_matched: matched,\n    rr_ticket_id: $('Restore trigger data').first().json.body['ticket.id']\n  }\n}];"
+      },
+      "notes": "No extra API call - the metric set is sideloaded onto the existing Get ticket status read."
+    },
+    {
+      "id": "c0e3dad0-c199-4b0c-978f-e05a58eb939d",
+      "name": "RR: Threshold met?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        7024,
+        1632
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "rr-matched",
+              "leftValue": "={{ $json.rr_matched }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "84f7b1af-59ce-453b-b065-d2857d1180cd",
+      "name": "RR: Build payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7264,
+        1488
+      ],
+      "parameters": {
+        "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\nconst r = $('RR: Evaluate reopens').first().json;\n\nconst ticketId = trig.body['ticket.id'];\n\n// cs_project_config.record_checks_enforce\n//   OFF (default) = monitoring. Tag + internal note only, automation continues.\n//   ON            = tag + note + status open + allow_automation _no_, automation stops.\nconst flag = cfg.record_checks_enforce;\nconst enforce = (flag === true || flag === 1 || flag === 'true' || flag === '1' || flag === 'yes');\n\nconst lines = [\n  'Note: This ticket matched record-based case 7b - the customer repeatedly refuses the automated resolution.',\n  '',\n  'Times the customer reopened this ticket after it was solved: ' + r.rr_reopens,\n  'Threshold: ' + r.rr_threshold,\n  '',\n  'Reopens count only replies that arrived AFTER the ticket was solved, so replies to a pending information request are not included.'\n];\n\nlines.push('');\n\nif (enforce) {\n  lines.push('Automation has been stopped and no reply was sent to the customer.');\n  lines.push('Please review the conversation and handle this ticket manually.');\n} else {\n  lines.push('MONITORING MODE: the ticket was tagged and this note added, but automation was NOT stopped.');\n  lines.push('The bot may still reply to this customer. No agent action is required unless the reply is wrong.');\n}\n\nconst noteBody = lines.join('\\n');\n\nconst ticket = {\n  comment: { public: false, body: noteBody }\n};\n\n// TAGS. `additional_tags` is ONLY supported on the Update Many Tickets endpoint.\n// On a single-ticket PUT Zendesk silently discards it - 200 response, no tag\n// event in the audit. A single-ticket PUT only accepts `tags`, which REPLACES\n// the array, so the existing tags are merged in from the live Get ticket status\n// read.\nconst liveTicket = $('Get ticket status').first().json.ticket || {};\nconst existingTags = Array.isArray(liveTicket.tags) ? liveTicket.tags.slice() : [];\n\nconst TAG = 'record_case_7b';\nif (existingTags.indexOf(TAG) === -1) {\n  existingTags.push(TAG);\n}\nticket.tags = existingTags;\n\nif (enforce) {\n  // Setting to open is not a solve transition, so Zendesk does not enforce\n  // required custom fields here and the category does not need to ride along.\n  const openStatusId = Number(cfg.ticket_custom_status_open_id);\n  if (Number.isFinite(openStatusId) && openStatusId > 0) {\n    ticket.custom_status_id = openStatusId;\n  }\n\n  // Stop automation re-engaging on any further replies.\n  const allowFieldId = Number(cfg.ticket_field_allow_automation);\n  if (Number.isFinite(allowFieldId) && allowFieldId > 0) {\n    ticket.custom_fields = [{ id: allowFieldId, value: '_no_' }];\n  }\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    enforce: enforce,\n    reopens: r.rr_reopens,\n    threshold: r.rr_threshold,\n    tag: TAG,\n    tags_sent: ticket.tags,\n    note_body: noteBody,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
+      },
+      "notes": "In tag-only mode only the tag and note are sent - no status change, no allow_automation change, and the ticket continues into automation."
+    },
+    {
+      "id": "b4cac4d9-1a9c-4d70-980d-da653229373a",
+      "name": "RR: Zendesk flag repeat refusal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        7488,
+        1488
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "jsonBody": "={{ JSON.stringify($json.zendesk_body) }}",
+        "method": "PUT",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $json.ticket_id }}"
+      },
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "Oiek4pqYY75QVNcy",
+          "name": "Realchecker Zendesk OAuth"
+        }
+      }
+    },
+    {
+      "id": "54c5febf-55f2-400c-9cf9-a203f23b3418",
+      "name": "RR: Enforce?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        7712,
+        1488
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "rr-enforce",
+              "leftValue": "={{ $('RR: Build payload').first().json.enforce }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "notes": "True = stop automation. False = monitoring mode, fall through to the contact-form check and carry on as normal."
+    },
+    {
+      "id": "c5f4a0c5-09c0-4946-885b-ca3f1567c556",
+      "name": "Do not proceed (repeat refusal)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        7936,
+        1376
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "rr-dnp-p",
+              "name": "proceedWithAutomation",
+              "type": "boolean",
+              "value": false
+            },
+            {
+              "id": "rr-dnp-r",
+              "name": "fail_reason",
+              "type": "string",
+              "value": "repeat_refusal"
+            },
+            {
+              "id": "rr-dnp-c",
+              "name": "record_case",
+              "type": "string",
+              "value": "7b"
+            },
+            {
+              "id": "rr-dnp-n",
+              "name": "reopens",
+              "type": "number",
+              "value": "={{ $('RR: Build payload').first().json.reopens }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Same return shape as every other terminal. The note, tag and status were already written by RR: Zendesk flag repeat refusal, so this does NOT route through the shared loud-fail path."
+    },
+    {
+      "id": "4a1f44da-791e-454c-b214-736ebe770d7e",
+      "name": "Sticky Repeat Refusal",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        6560,
+        1936
+      ],
+      "parameters": {
+        "color": 3,
+        "content": "## Record-based case 7b - repeated refusal of the automated resolution\n\nRuns after the high-risk keyword check, before the contact-form check. All three\nhigh-risk exits funnel in here, so the check is reached whether or not the\nhigh-risk block ran.\n\n**Signal:** Zendesk's `reopens` counter - solved -> open transitions on this\nticket. Verified on Personality 2026-09: every reopen examined was caused by the\nrequester replying; the automation never reopens a ticket it solved.\n\n**Why not \"count the customer's replies\":** the automation also sends\nNON-resolution public replies. The password_account_info macros ask the customer\nfor their account email and leave the ticket PENDING. A customer answering that\nis cooperating, not refusing. Pending is not a solve, so it produces no reopen\nand those customers are excluded for free.\n\n**Cost:** no extra API call. `?include=metric_sets` was added to the existing\nGet ticket status read.\n\n**Known limitation:** a thank-you also reopens a solved ticket. At a threshold of\n2 this mostly washes out, because gratitude is terminal and refusal repeats.\nA customer who pushes back once and gives up will NOT flag - under-flagging is\nthe intended direction.\n\n**Two switches in cs_project_config:**\n- `record_checks_enabled` - master on/off, per project, opt-in\n- `record_checks_enforce` - OFF = monitoring (tag + note only), ON = tag + note +\n  status open + `allow_automation _no_` + automation stops\n- `record_repeat_refusal_threshold` - reopens needed to fire. Defaults to 2.",
+        "height": 620,
+        "width": 460
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Set project_key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set project_key": {
+      "main": [
+        [
+          {
+            "node": "Get Project Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Project Config": {
+      "main": [
+        [
+          {
+            "node": "Restore trigger data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Email Blocklist": {
+      "main": [
+        [
+          {
+            "node": "Filter Blocked Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Blocked Emails": {
+      "main": [
+        [
+          {
+            "node": "Is Blocked?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Blocked?": {
+      "main": [
+        [
+          {
+            "node": "Note: Blocked email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Auto-solve Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is contact form cancellation": {
+      "main": [
+        [
+          {
+            "node": "Note: Contact form cancellation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Proceed (eligible)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Note: Blocked email": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Note: Contact form cancellation": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Do not proceed": {
+      "main": [
+        [
+          {
+            "node": "Reply to internally and set status to open3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply to internally and set status to open3": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Proceed (eligible)": {
+      "main": [
+        [
+          {
+            "node": "Proceed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore trigger data": {
+      "main": [
+        [
+          {
+            "node": "Get ticket status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get ticket status": {
+      "main": [
+        [
+          {
+            "node": "Ticket not solved or closed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ticket not solved or closed?": {
+      "main": [
+        [
+          {
+            "node": "Get Email Blocklist",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Note: Ticket already solved or closed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Note: Ticket already solved or closed": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Auto-solve Emails": {
+      "main": [
+        [
+          {
+            "node": "Filter Auto-solve Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Auto-solve Emails": {
+      "main": [
+        [
+          {
+            "node": "Is Auto-solve?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Auto-solve?": {
+      "main": [
+        [
+          {
+            "node": "Note: Auto-solve email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "High risk check enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Note: Auto-solve email": {
+      "main": [
+        [
+          {
+            "node": "Build auto-solve payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build auto-solve payload": {
+      "main": [
+        [
+          {
+            "node": "Zendesk: Solve silently",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk: Solve silently": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed (auto-solved)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build high risk payload": {
+      "main": [
+        [
+          {
+            "node": "Zendesk: Flag high risk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract last customer comment": {
+      "main": [
+        [
+          {
+            "node": "Get High Risk Keywords",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get High Risk Keywords": {
+      "main": [
+        [
+          {
+            "node": "Match High Risk Keywords",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get last customer comment": {
+      "main": [
+        [
+          {
+            "node": "Extract last customer comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High risk check enabled?": {
+      "main": [
+        [
+          {
+            "node": "Get last customer comment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "RR: Repeat refusal enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High risk enforce?": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed (high risk)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "RR: Repeat refusal enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High risk match?": {
+      "main": [
+        [
+          {
+            "node": "Build high risk payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "RR: Repeat refusal enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match High Risk Keywords": {
+      "main": [
+        [
+          {
+            "node": "High risk match?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RR: Build payload": {
+      "main": [
+        [
+          {
+            "node": "RR: Zendesk flag repeat refusal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RR: Enforce?": {
+      "main": [
+        [
+          {
+            "node": "Do not proceed (repeat refusal)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is contact form cancellation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RR: Evaluate reopens": {
+      "main": [
+        [
+          {
+            "node": "RR: Threshold met?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RR: Repeat refusal enabled?": {
+      "main": [
+        [
+          {
+            "node": "RR: Evaluate reopens",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is contact form cancellation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RR: Threshold met?": {
+      "main": [
+        [
+          {
+            "node": "RR: Build payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is contact form cancellation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RR: Zendesk flag repeat refusal": {
+      "main": [
+        [
+          {
+            "node": "RR: Enforce?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk: Flag high risk": {
+      "main": [
+        [
+          {
+            "node": "High risk enforce?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "BY3PNiyJJJ9EMdEi",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "headers": {
+            "host": "efuturemedia.app.n8n.cloud",
+            "user-agent": "Zendesk Webhook",
+            "content-length": "322",
+            "accept-encoding": "gzip, br",
+            "cdn-loop": "cloudflare; loops=1; subreqs=1",
+            "cf-connecting-ip": "216.198.17.223",
+            "cf-ew-via": "15",
+            "cf-ipcountry": "IE",
+            "cf-ray": "a06f40fef884c1ec-DUB",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "cf-worker": "n8n.cloud",
+            "content-type": "application/json; charset=utf-8",
+            "traceparent": "00-6a22c40f00000000036c88d0a159c052-036c88d0a159c052-00",
+            "tracestate": "dd=s:-1;p:036c88d0a159c052",
+            "x-forwarded-for": "216.198.17.223, 162.158.6.208",
+            "x-forwarded-host": "efuturemedia.app.n8n.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik-prod-users-gwc-34-68577659cb-5mrk7",
+            "x-is-trusted": "yes",
+            "x-real-ip": "216.198.17.223",
+            "x-request-id": "760ac508-054e-4b05-90c4-28eb39167e6c",
+            "x-zendesk-account-id": "26147041",
+            "x-zendesk-webhook-id": "01KS219405AT0KCR569ZE7Y6J3",
+            "x-zendesk-webhook-invocation-id": "01KTBWVPQ6D0GD43VMHS7RAEV5",
+            "x-zendesk-webhook-signature": "jr4RQdD6oe+zCpYoLbtXwDRnUpzEGFnI7UMvseBHwXE=",
+            "x-zendesk-webhook-signature-timestamp": "2026-06-05T12:41:51Z"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "ticket.title": "Subscription refund",
+            "ticket.description": "----------------------------------------------\n\nIonut, Jun 5, 2026, 15:41\n\nPlease refund",
+            "ticket.url": "efuturechatbot.zendesk.com/agent/tickets/382",
+            "ticket.id": "382",
+            "ticket.requester.email": "ionutqa2@atomicmail.io",
+            "ticket.ticket_field_34358154126749": ""
+          },
+          "webhookUrl": "https://efuturemedia.app.n8n.cloud/webhook/908bb9e9-d7dd-408d-a32e-7b7c649b5771",
+          "executionMode": "production"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "xol77ZCjU0nD2JzJ",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "updatedAt": "2025-09-16T08:57:49.000Z"
+      },
+      "createdAt": "2026-07-29T09:04:49.325Z",
+      "updatedAt": "2026-07-29T09:04:49.325Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "efe71d7f-1a0a-476b-87bd-baeb9b5e1245",
+    "workflowId": "xol77ZCjU0nD2JzJ",
+    "nodes": [
+      {
+        "parameters": {
+          "inputSource": "passthrough"
+        },
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          1184,
+          704
+        ],
+        "id": "2d1211cc-2961-4c7c-ad24-fc3bd9ceeaf5",
+        "name": "When Executed by Another Workflow"
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "5d3b1e8a-1111-4a01-9a01-000000000001",
+                "name": "project_key",
+                "value": "realchecker_prod",
+                "type": "string"
+              }
+            ]
+          },
+          "includeOtherFields": true,
+          "options": {}
+        },
+        "id": "6f7dca14-bcb1-400c-918d-96c2cd3f9b2c",
+        "name": "Set project_key",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          1408,
+          704
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "get",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "IRxwFN8iBhHLFQxQ",
+            "cachedResultName": "cs_project_config"
+          },
+          "matchType": "allConditions",
+          "filters": {
+            "conditions": [
+              {
+                "keyName": "project_key",
+                "keyValue": "={{ $('Set project_key').first().json.project_key }}"
+              }
+            ]
+          },
+          "limit": 1
+        },
+        "id": "ef2362e2-3376-49ea-98a2-e5140daf8cea",
+        "name": "Get Project Config",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          1632,
+          704
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Re-emit the original passthrough payload from the execute-workflow trigger.\n// Get Project Config replaces the incoming item with the config row, so we\n// restore the ticket data here for every downstream check to reference via\n// $('Restore trigger data').\nreturn $('When Executed by Another Workflow').all();\n"
+        },
+        "id": "88b4ebca-f84a-4e4f-a5ee-4345cd63fd06",
+        "name": "Restore trigger data",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1856,
+          704
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "get",
+          "dataTableId": {
+            "__rl": true,
+            "value": "VKJxPTkYWhZaXFqW",
+            "mode": "list",
+            "cachedResultName": "cs_email_blocklist",
+            "cachedResultUrl": "/projects/CH8lyrRTH2IOvQOj/datatables/VKJxPTkYWhZaXFqW"
+          },
+          "returnAll": true
+        },
+        "id": "7325a19a-170f-44d2-b83c-ab0cb4a10ec9",
+        "name": "Get Email Blocklist",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1,
+        "position": [
+          2736,
+          704
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// === Email blocklist filter ===\n// Mode: \"Run Once for All Items\".\n// Input to this node = rows from the \"Get Email Blocklist\" Data Table node.\n\n// 1) Requester email, from the restored trigger payload.\nconst email = String(\n  $('Restore trigger data').first()?.json?.body?.['ticket.requester.email'] ?? ''\n).trim().toLowerCase();\n\n// 2) Blocklist rows (each input item = one row from the data table).\nconst rows = $input.all();\n\n// 3) First active rule whose match_value is contained in the email wins.\nlet matched = null;\nif (email) {\n  for (const r of rows) {\n    const row = r.json || {};\n    const isActive = !(row.active === false || row.active === 0\n      || row.active === 'false' || row.active === '0' || row.active === 'no');\n    if (!isActive) continue;\n    const needle = String(row.match_value ?? '').trim().toLowerCase();\n    if (!needle) continue;\n    if (email.includes(needle)) { matched = row; break; }\n  }\n}\n\n// 4) One decision item out.\nreturn [{\n  json: {\n    email,\n    blocked: matched !== null,\n    matched_value: matched ? matched.match_value : null,\n    matched_reason: (matched && matched.reason != null) ? matched.reason : null,\n  },\n}];\n"
+        },
+        "id": "0ad2942d-5e5e-4edf-9a84-8840b12a7cd4",
+        "name": "Filter Blocked Emails",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2960,
+          704
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "f4c0cc20-8c15-4297-bdf9-b51546e1508d",
+                "leftValue": "={{ $json.blocked }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "3f194695-6be1-4cf2-9664-5c2c9e609a8a",
+        "name": "Is Blocked?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          3184,
+          704
+        ]
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "74965532-52ce-4b5e-8e39-5787b53d7770",
+                "name": "fail_reason",
+                "value": "blocked_email",
+                "type": "string"
+              },
+              {
+                "id": "f3cc563d-c6e1-4a1c-be65-9684ceed39ff",
+                "name": "note_body",
+                "value": "=Note: The requester {{ $('Restore trigger data').first().json.body['ticket.requester.email'] }} is on the automation blocklist because: {{ $json.matched_reason ? $json.matched_reason : \"no reason provided\" }}. If this requester shouldn't be blocked, please report it to the Operations Department.\n\nAutomation was skipped — please handle this ticket manually.",
+                "type": "string"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "cdda5025-7acd-4417-90dc-a870080e540b",
+        "name": "Note: Blocked email",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          5440,
+          656
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "044aee42-6466-4dca-b7c8-ef99f10b8148",
+                "leftValue": "={{ $('Restore trigger data').first().json.body[\"ticket.ticket_field_\" + $('Get Project Config').first().json.ticket_field_contact_form_classification_id] }}",
+                "rightValue": "cancellation",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "2d23813d-2219-4ad4-8fc5-b5703dad90b0",
+        "name": "Is contact form cancellation",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          5136,
+          1056
+        ]
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "2abe7692-4f7c-4aaf-88e4-0703cd5f3dc5",
+                "name": "fail_reason",
+                "value": "contact_form_cancellation",
+                "type": "string"
+              },
+              {
+                "id": "14b886c2-7beb-4655-a701-932b72e5da21",
+                "name": "note_body",
+                "value": "=Note: This ticket (#{{ $('Restore trigger data').first().json.body['ticket.id'] }}) was submitted through the contact form as a cancellation request. Automation was skipped.\n\nPlease handle this ticket manually.",
+                "type": "string"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "f27dc3eb-6559-4e71-bb8e-b96014ce3e94",
+        "name": "Note: Contact form cancellation",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          5440,
+          848
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "2ba34ef1-5c68-432b-88ad-5252e3929865",
+        "name": "Do not proceed",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          5760,
+          800
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "96712c40-7267-4a55-88b5-bea246f215d9",
+        "name": "Proceed (eligible)",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          5760,
+          1056
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PUT",
+          "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $('Restore trigger data').first().json.body['ticket.id'] }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "zendeskOAuth2Api",
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "ticket.comment.public",
+                "value": "false"
+              },
+              {
+                "name": "ticket.comment.body",
+                "value": "=User eligibility failed:\nFail reason: {{ $json.fail_reason }}\nNote: {{ $json.note_body }}\n\nPlease handle this request manually. "
+              },
+              {
+                "name": "ticket.custom_status_id",
+                "value": "={{ $(\"Get Project Config\").first().json.ticket_custom_status_open_id }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "9685297f-ab63-463b-a771-cfbfcc5de25f",
+        "name": "Reply to internally and set status to open3",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          6032,
+          800
+        ],
+        "retryOnFail": true,
+        "credentials": {
+          "zendeskOAuth2Api": {
+            "id": "Oiek4pqYY75QVNcy",
+            "name": "Realchecker Zendesk OAuth"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "content": "## 1) Check for blocked emails",
+          "height": 120,
+          "width": 420,
+          "color": 7
+        },
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          2720,
+          560
+        ],
+        "id": "0dec15c7-8d27-4554-8756-ad5ebd8f2210",
+        "name": "Sticky Blocked"
+      },
+      {
+        "parameters": {
+          "content": "## 3) Check for contact form cancellations",
+          "height": 120,
+          "width": 230,
+          "color": 7
+        },
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          4992,
+          912
+        ],
+        "id": "38bc980a-6011-414f-890c-571fbbeebcaf",
+        "name": "Sticky Cancel"
+      },
+      {
+        "parameters": {
+          "content": "# Do not proceed\nAll three fail notes merge here (note_body + fail_reason). Wire your single fail action after this node.",
+          "height": 200,
+          "width": 300,
+          "color": 7
+        },
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          5760,
+          576
+        ],
+        "id": "5017c331-6e03-421e-9da8-df855348caff",
+        "name": "Sticky Fail"
+      },
+      {
+        "parameters": {
+          "content": "# Proceed\nAll three checks passed. Wire the main automation after this node.",
+          "height": 208,
+          "width": 300,
+          "color": 4
+        },
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          5760,
+          1200
+        ],
+        "id": "ca1c8f88-aa27-44fe-96a8-5a7a1fe6b017",
+        "name": "Sticky Proceed"
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "03853d94-c29e-4385-a2b9-eedb5596cb7c",
+                "name": "proceedWithAutomation",
+                "value": false,
+                "type": "boolean"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          6240,
+          800
+        ],
+        "id": "57c5a2de-8d60-4f95-9dfe-54305efe4a45",
+        "name": "Do not proceed1"
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "03853d94-c29e-4385-a2b9-eedb5596cb7c",
+                "name": "proceedWithAutomation",
+                "value": true,
+                "type": "boolean"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          6240,
+          1056
+        ],
+        "id": "b28f924b-f8d1-4df0-8d0f-12c379661841",
+        "name": "Proceed"
+      },
+      {
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "zendeskOAuth2Api",
+          "options": {},
+          "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $('Restore trigger data').first().json.body['ticket.id'] + \"?include=metric_sets\" }}"
+        },
+        "id": "140e5b09-892f-4d1b-8597-d9287ac0c64c",
+        "name": "Get ticket status",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          2080,
+          704
+        ],
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 2000,
+        "credentials": {
+          "zendeskOAuth2Api": {
+            "id": "Oiek4pqYY75QVNcy",
+            "name": "Realchecker Zendesk OAuth"
+          }
+        },
+        "notes": "Live re-read of the ticket. Runs before the blocklist read and requester lookup so a duplicate delivery costs one GET, not the whole pipeline."
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "c2d5f8b3-a042-4d99-9e32-6b8f4a1c2d01",
+                "leftValue": "={{ $json.ticket.status }}",
+                "rightValue": "solved",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEquals"
+                }
+              },
+              {
+                "id": "c2d5f8b3-a042-4d99-9e32-6b8f4a1c2d02",
+                "leftValue": "={{ $json.ticket.status }}",
+                "rightValue": "closed",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEquals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "ec5e2be5-99b3-42b0-8a87-2ee82bd15188",
+        "name": "Ticket not solved or closed?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          2304,
+          704
+        ],
+        "notes": "True (continue): new, open, pending, hold. False (stop): solved, closed."
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "c2d5f8b3-a042-4d99-9e32-6b8f4a1c2d03",
+                "name": "fail_reason",
+                "value": "already_solved_or_closed",
+                "type": "string"
+              },
+              {
+                "id": "c2d5f8b3-a042-4d99-9e32-6b8f4a1c2d04",
+                "name": "note_body",
+                "value": "=Note: Ticket #{{ $('Restore trigger data').first().json.body['ticket.id'] }} is already in status \"{{ $json.ticket.status }}\", so the automation had already finished with it. This run was almost certainly a duplicate or replayed Zendesk webhook. Automation was skipped and no reply was sent. No agent action needed.",
+                "type": "string"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "85cebdcc-fdd2-41a2-8223-ff9c1079a670",
+        "name": "Note: Ticket already solved or closed",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          2640,
+          912
+        ],
+        "notes": "Execution log only - deliberately not written to Zendesk."
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "c2d5f8b3-a042-4d99-9e32-6b8f4a1c2d05",
+                "name": "proceedWithAutomation",
+                "value": false,
+                "type": "boolean"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "3626a0f3-6af4-4c7c-9f17-d236d51bb17b",
+        "name": "Do not proceed2",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          2864,
+          912
+        ],
+        "notes": "Same output shape as Do not proceed1, so the caller needs no change."
+      },
+      {
+        "parameters": {
+          "color": 3,
+          "content": "## 0) Check the ticket is not already solved or closed\n\nRuns first, and on purpose does NOT post an internal note or reopen the ticket.\n\nWhy the guard: on 2026-07-23 Zendesk redelivered a `ticket created` webhook 8h37m late. The automation re-ran on the original first email, found the refundable charges already consumed, and emailed the customer a refund rejection after having already granted the refund.\n\nWhy no internal note here: the shared `Do not proceed` path sets the ticket back to `open`. On a solved ticket that would re-queue it for agents and could re-fire the 2nd-message trigger.\n\nWhy base `status` and not a `cs_project_config` id: the ticket API always returns `status` as a plain string, so no new column is needed and `closed` is covered for free.",
+          "height": 340,
+          "width": 460
+        },
+        "id": "97bd4b14-d094-49b3-a78d-23b0c5082187",
+        "name": "Sticky Status Guard",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          2464,
+          1072
+        ]
+      },
+      {
+        "id": "ec7a4b86-adf3-431d-9340-ac48d7bea088",
+        "name": "Get Auto-solve Emails",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1,
+        "position": [
+          3400,
+          2000
+        ],
+        "parameters": {
+          "dataTableId": {
+            "__rl": true,
+            "cachedResultName": "cs_email_autosolve",
+            "mode": "list",
+            "value": "akdSwJgEUUpbgHrE"
+          },
+          "operation": "get",
+          "returnAll": true
+        }
+      },
+      {
+        "id": "a422a3c3-492f-431f-86c8-e632c2569853",
+        "name": "Filter Auto-solve Emails",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3620,
+          2000
+        ],
+        "parameters": {
+          "jsCode": "const email = String($('Restore trigger data').first()?.json?.body?.['ticket.requester.email'] ?? '').trim().toLowerCase();\n\nconst rows = $input.all();\n\nlet matched = null;\nif (email) {\n  for (const r of rows) {\n    const row = r.json || {};\n    const isActive = !(row.active === false || row.active === 0 || row.active === 'false' || row.active === '0' || row.active === 'no');\n    if (!isActive) continue;\n    const needle = String(row.match_value ?? '').trim().toLowerCase();\n    if (!needle) continue;\n    if (email.includes(needle)) { matched = row; break; }\n  }\n}\n\nreturn [{\n  json: {\n    email,\n    autosolve: matched !== null,\n    matched_value: matched ? matched.match_value : null,\n    matched_reason: (matched && matched.reason != null) ? matched.reason : null\n  }\n}];"
+        }
+      },
+      {
+        "id": "0c9904f7-8f68-4aca-a0c5-18195c5f7fc5",
+        "name": "Is Auto-solve?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          3840,
+          2000
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "ec-autosolve",
+                "leftValue": "={{ $json.autosolve }}",
+                "operator": {
+                  "operation": "true",
+                  "singleValue": true,
+                  "type": "boolean"
+                },
+                "rightValue": ""
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            }
+          },
+          "options": {}
+        },
+        "notes": "True = requester email is on the auto-solve list. Solve silently, no customer-facing reply."
+      },
+      {
+        "id": "8af59b34-523c-4b83-8129-b2dbb6ade3fe",
+        "name": "Note: Auto-solve email",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          4060,
+          1860
+        ],
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "ec-as-reason",
+                "name": "fail_reason",
+                "type": "string",
+                "value": "autosolve_email"
+              },
+              {
+                "id": "ec-as-note",
+                "name": "note_body",
+                "type": "string",
+                "value": "=Note: The requester {{ $('Restore trigger data').first().json.body['ticket.requester.email'] }} has been identified as an auto-solve email{{ $json.matched_reason ? \" because: \" + $json.matched_reason : \"\" }}. This ticket was solved automatically. No reply was sent to the customer and no agent action is needed."
+              }
+            ]
+          },
+          "includeOtherFields": false,
+          "mode": "manual"
+        }
+      },
+      {
+        "id": "4d9352be-b23a-405c-91f1-8530b828fe7a",
+        "name": "Build auto-solve payload",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          4280,
+          1860
+        ],
+        "parameters": {
+          "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\n\nconst ticketId = trig.body['ticket.id'];\nconst noteBody = $('Note: Auto-solve email').first().json.note_body;\n\nconst ticket = {\n  status: 'solved',\n  comment: { public: false, body: noteBody }\n};\n\n// TAGS. `additional_tags` is ONLY supported on the Update Many Tickets endpoint.\n// On a single-ticket PUT Zendesk silently discards it - 200 response, no tag\n// event in the audit. This tag was never actually being applied. A single-ticket\n// PUT only accepts `tags`, which replaces the array, so merge the existing ones.\nconst liveTicket = $('Get ticket status').first().json.ticket || {};\nconst tags = Array.isArray(liveTicket.tags) ? liveTicket.tags.slice() : [];\nif (tags.indexOf('autosolve_email') === -1) {\n  tags.push('autosolve_email');\n}\nticket.tags = tags;\n\n// Zendesk enforces required custom fields on the solve transition and validates\n// against the INCOMING payload, not the stored ticket:\n//   422 RecordInvalid - \"Language: is required when solving a ticket\"\n// So every required field has to ride along in this one PUT.\nconst fields = [];\n\nconst catFieldId = Number(cfg.ticket_custom_field_category);\nconst catValue = cfg.category_value_duplicate_contact;\nif (Number.isFinite(catFieldId) && catFieldId > 0\n    && catValue !== null && catValue !== undefined && String(catValue).trim() !== '') {\n  fields.push({ id: catFieldId, value: String(catValue) });\n}\n\nconst langFieldId = Number(cfg.ticket_field_language_id);\nconst langValue = cfg.language_value_english;\nif (Number.isFinite(langFieldId) && langFieldId > 0\n    && langValue !== null && langValue !== undefined && String(langValue).trim() !== '') {\n  fields.push({ id: langFieldId, value: String(langValue) });\n}\n\n// Rejection Complaint (record-based case 2) - required to solve on Personality.\n// This path never sends a refund rejection, so it writes \"no\". STICKY: a ticket\n// that already carries \"yes\" keeps it - same rule as the Zendesk ticket update\n// request sub-workflow, so an earlier rejection is never erased.\nlet rcValue = null;\nconst rcFieldId = Number(cfg.ticket_field_rejection_complaint);\nif (Number.isFinite(rcFieldId) && rcFieldId > 0) {\n  const liveFields = Array.isArray(liveTicket.custom_fields) ? liveTicket.custom_fields : [];\n  const rcCurrent = liveFields.find(f => Number(f.id) === rcFieldId);\n  // Option values from cs_project_config (empty = yes / no).\n  const rcYes = String(cfg.rejection_complaint_value_yes || 'yes');\n  const rcNo = String(cfg.rejection_complaint_value_no || 'no');\n  rcValue = (rcCurrent && rcCurrent.value === rcYes) ? rcYes : rcNo;\n  fields.push({ id: rcFieldId, value: rcValue });\n}\n\nif (fields.length > 0) {\n  ticket.custom_fields = fields;\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    note_body: noteBody,\n    fields_applied: fields.length,\n    rejection_complaint: rcValue,\n    tags_sent: ticket.tags,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
+        },
+        "notes": "Builds the PUT body natively so the category field can be set alongside status."
+      },
+      {
+        "id": "73f58b9e-8f77-41d6-9232-3750a0aab028",
+        "name": "Zendesk: Solve silently",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          4500,
+          1860
+        ],
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "jsonBody": "={{ JSON.stringify($json.zendesk_body) }}",
+          "method": "PUT",
+          "nodeCredentialType": "zendeskOAuth2Api",
+          "options": {},
+          "sendBody": true,
+          "specifyBody": "json",
+          "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $json.ticket_id }}"
+        },
+        "notes": "Private note + status solved + tag autosolve_email + Duplicate contact category. No public comment, so the customer is never notified.",
+        "credentials": {
+          "zendeskOAuth2Api": {
+            "id": "Oiek4pqYY75QVNcy",
+            "name": "Realchecker Zendesk OAuth"
+          }
+        }
+      },
+      {
+        "id": "754cf4ef-0002-48ba-8361-127ccb685eef",
+        "name": "Do not proceed (auto-solved)",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          4720,
+          1860
+        ],
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "ec-asf-p",
+                "name": "proceedWithAutomation",
+                "type": "boolean",
+                "value": false
+              },
+              {
+                "id": "ec-asf-r",
+                "name": "fail_reason",
+                "type": "string",
+                "value": "autosolve_email"
+              }
+            ]
+          },
+          "includeOtherFields": false,
+          "mode": "manual"
+        },
+        "notes": "Same return shape as the other terminals - the calling workflow needs no change."
+      },
+      {
+        "id": "d848dac8-1f8e-47b4-9139-05ce7bd6b8c4",
+        "name": "Sticky Followup Scope",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          3380,
+          2180
+        ],
+        "parameters": {
+          "color": 5,
+          "content": "# Second message / follow-up path\n\nThis check runs on customer REPLIES inside an existing ticket, not on first contact.\n\n**Deliberately NOT here** (all of them belong to first contact only, and are handled by `Request eligibility check with merging (first message)`):\n- requester lookup + requested-tickets fetch\n- the active-ticket guard and duplicate merge - by definition the customer is replying inside an active ticket, so merging could close the very ticket they are conversing in\n- the AI spam check - already cleared on message one, and a terse follow-up (\"ANY UPDATE???\") is its worst false-positive shape\n\n**Bug removed 2026-08-27:** the old `Evaluate Open Ticket Guard` counted ANY other requester ticket regardless of status, including solved and closed ones for 120 days. It suppressed automation for essentially every repeat customer, wrote an internal note calling closed tickets \"unhandled (new)\", and flipped pending tickets back to open. Every label on it said \"new tickets\" - only the code disagreed.\n\n**What remains:** status guard, blocklist, auto-solve list, contact-form cancellation. Four cheap checks, no AI, no user lookup.",
+          "height": 460,
+          "width": 460
+        }
+      },
+      {
+        "id": "3cbe5cf4-317a-476c-a785-6f8cfb380cdf",
+        "name": "High risk check enabled?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          3400,
+          2750
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "hr2-enabled",
+                "leftValue": "={{ $('Get Project Config').first().json.high_risk_check_enabled === true }}",
+                "operator": {
+                  "operation": "true",
+                  "singleValue": true,
+                  "type": "boolean"
+                },
+                "rightValue": ""
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            }
+          },
+          "options": {}
+        },
+        "notes": "cs_project_config.high_risk_check_enabled. Empty or false = OFF (opt-in)."
+      },
+      {
+        "id": "d3a7ca53-f397-4265-95ca-fee5aa44ef18",
+        "name": "Get last customer comment",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          3620,
+          2750
+        ],
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "zendeskOAuth2Api",
+          "options": {},
+          "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $('Restore trigger data').first().json.body['ticket.id'] + \"/comments.json\" }}"
+        },
+        "credentials": {
+          "zendeskOAuth2Api": {
+            "id": "Oiek4pqYY75QVNcy",
+            "name": "Realchecker Zendesk OAuth"
+          }
+        },
+        "notes": "On the follow-up path the ticket's description is still the ORIGINAL message, so it cannot be used for matching. The new text lives in the latest customer comment and has to be fetched. This runs here rather than later in the 2nd message flow so that tickets dropped by the message-limit and classification gates are still covered."
+      },
+      {
+        "id": "b5384e72-628d-4965-abc2-255ecb3ba491",
+        "name": "Extract last customer comment",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3840,
+          2750
+        ],
+        "parameters": {
+          "jsCode": "const liveTicket = $('Get ticket status').first().json.ticket || {};\nconst requesterId = Number(liveTicket.requester_id);\n\nconst comments = $input.first().json.comments || [];\n\n// Walk backwards to the newest comment written by the requester. Agent replies\n// and the automation's own internal notes are skipped - matching those would\n// flag our own wording back at us, and the note text itself contains the\n// matched keyword.\nlet target = null;\nfor (let i = comments.length - 1; i >= 0; i--) {\n  if (Number(comments[i].author_id) === requesterId) {\n    target = comments[i];\n    break;\n  }\n}\n\nconst fromRequester = target !== null;\n\n// Fall back to the newest comment of any author rather than checking nothing at\n// all. Over-matching is the preferred failure mode for a duty-of-care check.\nif (!target && comments.length) {\n  target = comments[comments.length - 1];\n}\n\nreturn [{\n  json: {\n    comment_id: target ? target.id : null,\n    comment_text: target ? String(target.body == null ? '' : target.body) : '',\n    from_requester: fromRequester,\n    comment_count: comments.length\n  }\n}];"
+        },
+        "notes": "Newest comment authored by the requester. Matching only the NEW text is deliberate: matching the whole thread would re-flag the same ticket on every follow-up, and the original message was already checked by the first-message eligibility check."
+      },
+      {
+        "id": "87ca23f6-1de6-4d11-9802-dfaa784e0a8e",
+        "name": "Get High Risk Keywords",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          4060,
+          2750
+        ],
+        "parameters": {
+          "dataTableId": {
+            "__rl": true,
+            "cachedResultName": "cs_high_risk_keywords",
+            "mode": "list",
+            "value": "H0oFIJNTlQgUVrk5"
+          },
+          "operation": "get",
+          "returnAll": true
+        },
+        "notes": "cs_high_risk_keywords. GLOBAL - no project_key column. One phrase list for every brand; only the check itself is per-project."
+      },
+      {
+        "id": "1efbcd19-8d58-4e3f-ac75-531442b1c240",
+        "name": "Match High Risk Keywords",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          4280,
+          2750
+        ],
+        "parameters": {
+          "jsCode": "// === High risk keyword matching (follow-up path) ===\n// Mode: \"Run Once for All Items\". Input = rows from Get High Risk Keywords.\n//\n// Matches ONLY the latest customer comment, not the ticket description. On this\n// path the description is still the original first message, which the\n// first-message eligibility check already evaluated.\n\nconst c = $('Extract last customer comment').first().json;\n\n// Tier precedence. Lower rank wins. C (safety) outranks A (commercial threat),\n// which outranks B (conduct). This mirrors the queue urgency: safety-review,\n// then Priority, then Standard. A ticket matching several tiers is labelled with\n// the highest-risk one.\nconst TIER_RANK = { C: 0, A: 1, B: 2 };\n\nconst TIER_TAG = {\n  A: 'high-risk-legal-financial',\n  B: 'high-risk-conduct',\n  C: 'high-risk-safety-critical'\n};\n\nconst TIER_QUEUE = {\n  A: 'Priority',\n  B: 'Standard',\n  C: 'safety-review'\n};\n\nconst TIER_LABEL = {\n  A: 'Commercial threat',\n  B: 'Hostility / repeat / account',\n  C: 'Safety / duty of care'\n};\n\n// MATCHING RULE (October 2026). Letters are never changed, only their case.\n//  - Both sides are lowercased. Accents, umlauts, Greek tonos, Vietnamese tone\n//    marks and Thai vowel/tone marks are kept exactly as written: \"llame\" in the\n//    table does not match \"llamé\" in a ticket and vice versa.\n//  - Any run of spaces, line breaks, tabs or punctuation counts as ONE space, on\n//    both sides. So \"can't\" matches \"can’t\" (iPhone apostrophe), \"self harm\"\n//    matches \"self-harm\", and a phrase split by a line break or a double space\n//    still matches. Only characters that are not a letter, mark or digit in any\n//    alphabet are affected.\n//  - The keyword must be bordered by the start/end of the text or by such a\n//    space: \"sue\" never fires inside \"issue\", \"sud\" never inside \"sudbina\",\n//    \"24 hours\" never inside \"124 hours\".\n//  - Unicode NFC runs first. It does not change how the text looks and does not\n//    remove accents. It only makes sure an accented letter is stored the same\n//    way on both sides - some mail clients send \"é\" as \"e\" plus a separate\n//    accent character, which would otherwise never compare equal.\n//  - JavaScript lowercases the Turkish capital \"İ\" to \"i\" plus a combining dot.\n//    The dot is dropped so \"İADE\" matches \"iade\".\n//  - A keyword with no letters or digits at all (an emoji, \"!!!\") is matched\n//    exactly as written instead of being skipped.\n//\n// Replaces the old a-z normaliser, which deleted every non-English letter and\n// collapsed localized keywords into fragments such as \"1\", \"24\" or \"t\".\n//\n// Do NOT add space-insensitive fallback matching. A despaced variant of this\n// caused two customers to be publicly told our product was not ours on\n// 2026-09-09 (Personality tickets 685429 and 685459).\nconst WORD_CHAR = /[\\p{L}\\p{M}\\p{N}]/u;\n\nfunction lower(text) {\n  return String(text == null ? '' : text).normalize('NFC').toLowerCase().replace(/i̇/g, 'i');\n}\n\nfunction prepare(text) {\n  return lower(text).replace(/[^\\p{L}\\p{M}\\p{N}]+/gu, ' ').trim();\n}\n\n// Character immediately before index i, surrogate-pair safe.\nfunction charBefore(s, i) {\n  if (i <= 0) return '';\n  const c = s.charCodeAt(i - 1);\n  if (c >= 0xDC00 && c <= 0xDFFF && i >= 2) return s.slice(i - 2, i);\n  return s[i - 1];\n}\n\n// Character starting at index j, surrogate-pair safe.\nfunction charAfter(s, j) {\n  if (j >= s.length) return '';\n  return String.fromCodePoint(s.codePointAt(j));\n}\n\n// True when needle occurs in hay with no letter or digit directly before or\n// after it. Checks every occurrence, not just the first.\nfunction containsWhole(hay, needle) {\n  let from = 0;\n  for (;;) {\n    const i = hay.indexOf(needle, from);\n    if (i === -1) return false;\n    const b = charBefore(hay, i);\n    const a = charAfter(hay, i + needle.length);\n    if (!(b && WORD_CHAR.test(b)) && !(a && WORD_CHAR.test(a))) return true;\n    from = i + 1;\n  }\n}\n\n// Deliberately NOT stripping quoted history. This is a duty-of-care check and\n// over-matching is the preferred failure mode.\nconst haystack = prepare(c.comment_text);\n// Only used for keywords that contain no letters or digits at all.\nconst haystackRaw = lower(c.comment_text);\n\nconst rows = $input.all();\n\n// One entry per distinct keyword. The localized lists repeat many terms across\n// languages (chargeback, gdpr, trustpilot ...), so a keyword is listed once in\n// the note, with every language it came from, and keeps its highest-risk tier.\nconst byNeedle = new Map();\n\nfor (const r of rows) {\n  const row = r.json || {};\n\n  // Fail-open on active: only an explicit negative disables a row, so a null\n  // (never set) counts as active.\n  const isActive = !(row.active === false || row.active === 0\n    || row.active === 'false' || row.active === '0' || row.active === 'no');\n  if (!isActive) continue;\n\n  let needle = prepare(row.keyword);\n  let hay = haystack;\n  if (!needle) {\n    needle = lower(row.keyword).trim();\n    hay = haystackRaw;\n  }\n  if (!needle) continue;\n\n  const tier = String(row.tier == null ? '' : row.tier).trim().toUpperCase();\n  if (!(tier in TIER_RANK)) continue;\n\n  if (!containsWhole(hay, needle)) continue;\n\n  const lang = String(row.language == null ? '' : row.language).trim().toLowerCase();\n  const category = String(row.category == null ? '' : row.category);\n  const prev = byNeedle.get(needle);\n\n  if (!prev) {\n    byNeedle.set(needle, {\n      keyword: String(row.keyword).trim(),\n      needle: needle,\n      tier: tier,\n      category: category,\n      languages: lang ? [lang] : []\n    });\n  } else {\n    if (lang && prev.languages.indexOf(lang) === -1) prev.languages.push(lang);\n    if (TIER_RANK[tier] < TIER_RANK[prev.tier]) {\n      prev.tier = tier;\n      prev.category = category;\n    }\n  }\n}\n\nconst matches = Array.from(byNeedle.values());\n\n// Highest-risk tier first, then longest (most specific) phrase within that tier.\nmatches.sort((a, b) => {\n  const r = TIER_RANK[a.tier] - TIER_RANK[b.tier];\n  if (r !== 0) return r;\n  return b.needle.length - a.needle.length;\n});\n\n// Language suffix for the note. Omitted for English-only keywords so existing\n// notes read exactly as before.\nfunction langSuffix(m) {\n  const l = m.languages;\n  if (!l.length || (l.length === 1 && l[0] === 'en')) return '';\n  const shown = l.length > 5 ? l.slice(0, 5).join(', ') + ' +' + (l.length - 5) : l.join(', ');\n  return ' [' + shown + ']';\n}\n\nconst winner = matches.length ? matches[0] : null;\n\nreturn [{\n  json: {\n    high_risk_matched: matches.length > 0,\n    match_count: matches.length,\n    tier: winner ? winner.tier : null,\n    tier_label: winner ? TIER_LABEL[winner.tier] : null,\n    category: winner ? winner.category : null,\n    queue: winner ? TIER_QUEUE[winner.tier] : null,\n    tag: winner ? TIER_TAG[winner.tier] : null,\n    primary_match: winner ? winner.keyword : null,\n    matched_keywords: matches.map(m => m.keyword),\n    matched_detail: matches.map(m => m.tier + '/' + m.category + ': ' + m.keyword + langSuffix(m)),\n    tiers_matched: matches.map(m => m.tier).filter((t, i, a) => a.indexOf(t) === i),\n    languages_matched: matches.reduce((acc, m) => acc.concat(m.languages), []).filter((l, i, a) => a.indexOf(l) === i),\n    rows_checked: rows.length,\n    matched_comment_id: c.comment_id,\n    comment_from_requester: c.from_requester,\n    haystack_chars: haystack.length\n  }\n}];"
+        }
+      },
+      {
+        "id": "a16b8ff6-72b0-4758-96d7-5e605b112637",
+        "name": "High risk match?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          4500,
+          2750
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "hr2-matched",
+                "leftValue": "={{ $json.high_risk_matched }}",
+                "operator": {
+                  "operation": "true",
+                  "singleValue": true,
+                  "type": "boolean"
+                },
+                "rightValue": ""
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            }
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "93b2f521-b1b9-4182-b0b9-96dae021436b",
+        "name": "Build high risk payload",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          4720,
+          2620
+        ],
+        "parameters": {
+          "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\nconst m = $('Match High Risk Keywords').first().json;\n\nconst ticketId = trig.body['ticket.id'];\n\n// cs_project_config.high_risk_enforce\n//   OFF (default) = monitoring. Tag + internal note only, automation continues.\n//   ON            = tag + note + status open + allow_automation _no_, automation stops.\nconst flag = cfg.high_risk_enforce;\nconst enforce = (flag === true || flag === 1 || flag === 'true' || flag === '1' || flag === 'yes');\n\nconst lines = [\n  'Note: This follow-up message matched the high-risk keyword list.',\n  '',\n  'Tier: ' + m.tier + ' - ' + m.tier_label,\n  'Category: ' + m.category,\n  'Queue: ' + m.queue,\n  'Tag applied: ' + m.tag,\n  'Matched phrase: \"' + m.primary_match + '\"'\n];\n\nif (m.match_count > 1) {\n  lines.push('');\n  lines.push('All ' + m.match_count + ' matches:');\n  for (const d of m.matched_detail) {\n    lines.push('  - ' + d);\n  }\n}\n\nlines.push('');\n\nif (enforce) {\n  lines.push('Automation has been stopped and no reply was sent to the customer.');\n  lines.push('Please pick this ticket up from the ' + m.queue + ' queue and handle it manually.');\n} else {\n  lines.push('MONITORING MODE: the ticket was tagged and this note added, but automation was NOT stopped.');\n  lines.push('The bot may still reply to this customer. No agent action is required unless the reply is wrong.');\n}\n\nconst noteBody = lines.join('\\n');\n\nconst ticket = {\n  comment: { public: false, body: noteBody }\n};\n\n// TAGS. `additional_tags` is ONLY supported on the Update Many Tickets endpoint.\n// On a single-ticket PUT Zendesk silently discards it - 200 response, no tag\n// event in the audit (Personality ticket 687990). A single-ticket PUT only\n// accepts `tags`, which REPLACES the array, so the existing tags are merged in\n// from the live Get ticket status read.\nconst liveTicket = $('Get ticket status').first().json.ticket || {};\nconst existingTags = Array.isArray(liveTicket.tags) ? liveTicket.tags.slice() : [];\n\nif (m.tag && existingTags.indexOf(m.tag) === -1) {\n  existingTags.push(m.tag);\n}\nticket.tags = existingTags;\n\nif (enforce) {\n  // Setting to open is not a solve transition, so Zendesk does not enforce\n  // required custom fields here and the category does not need to ride along.\n  const openStatusId = Number(cfg.ticket_custom_status_open_id);\n  if (Number.isFinite(openStatusId) && openStatusId > 0) {\n    ticket.custom_status_id = openStatusId;\n  }\n\n  // Stop automation re-engaging on any further replies.\n  const allowFieldId = Number(cfg.ticket_field_allow_automation);\n  if (Number.isFinite(allowFieldId) && allowFieldId > 0) {\n    ticket.custom_fields = [{ id: allowFieldId, value: '_no_' }];\n  }\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    enforce: enforce,\n    tier: m.tier,\n    queue: m.queue,\n    tag: m.tag,\n    tags_sent: ticket.tags,\n    primary_match: m.primary_match,\n    match_count: m.match_count,\n    matched_comment_id: m.matched_comment_id,\n    note_body: noteBody,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
+        },
+        "notes": "In monitoring mode only the tag and note are sent - no status change, no allow_automation change, and the ticket continues into automation."
+      },
+      {
+        "id": "af013eed-f496-4747-8163-9d2e88e15145",
+        "name": "Zendesk: Flag high risk",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          4940,
+          2620
+        ],
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "jsonBody": "={{ JSON.stringify($json.zendesk_body) }}",
+          "method": "PUT",
+          "nodeCredentialType": "zendeskOAuth2Api",
+          "options": {},
+          "sendBody": true,
+          "specifyBody": "json",
+          "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $json.ticket_id }}"
+        },
+        "credentials": {
+          "zendeskOAuth2Api": {
+            "id": "Oiek4pqYY75QVNcy",
+            "name": "Realchecker Zendesk OAuth"
+          }
+        }
+      },
+      {
+        "id": "db7be9aa-764a-4fb5-97c3-77fb5a66ed76",
+        "name": "High risk enforce?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          5160,
+          2620
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "hr2-enforce",
+                "leftValue": "={{ $('Build high risk payload').first().json.enforce }}",
+                "operator": {
+                  "operation": "true",
+                  "singleValue": true,
+                  "type": "boolean"
+                },
+                "rightValue": ""
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            }
+          },
+          "options": {}
+        },
+        "notes": "True = stop automation. False = monitoring mode, fall through to the contact-form check and carry on as normal."
+      },
+      {
+        "id": "f75d2e4d-d92c-4338-8465-627cb98407dc",
+        "name": "Do not proceed (high risk)",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          5380,
+          2480
+        ],
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "hr2-dnp-p",
+                "name": "proceedWithAutomation",
+                "type": "boolean",
+                "value": false
+              },
+              {
+                "id": "hr2-dnp-r",
+                "name": "fail_reason",
+                "type": "string",
+                "value": "high_risk_keyword"
+              },
+              {
+                "id": "hr2-dnp-t",
+                "name": "high_risk_tier",
+                "type": "string",
+                "value": "={{ $('Build high risk payload').first().json.tier }}"
+              },
+              {
+                "id": "hr2-dnp-q",
+                "name": "high_risk_queue",
+                "type": "string",
+                "value": "={{ $('Build high risk payload').first().json.queue }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "notes": "Same return shape as every other terminal. The note, tag and status were already written by Zendesk: Flag high risk, so this does NOT route through the shared loud-fail path."
+      },
+      {
+        "id": "d3400a80-ac3a-4115-860d-68f2171c7f58",
+        "name": "Sticky High Risk",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          3380,
+          2960
+        ],
+        "parameters": {
+          "color": 3,
+          "content": "## High-risk keyword check (follow-up path)\n\nRuns after the blocklist and auto-solve tables, before the contact-form check.\n\n**Why here and not later in the 2nd message flow,** where `Return last comment` already has the text: the message-limit threshold, the allow_automation filter and the classification gate all drop tickets SILENTLY further downstream. A safety phrase in message 8 of a long thread would never be seen. Those excluded tickets are disproportionately the long, escalating, repeat-contact threads this check exists for. The price is one extra Zendesk call per follow-up.\n\n**Matches the LATEST CUSTOMER COMMENT, not the ticket description.** On this path the description is still the original first message, which the first-message check already evaluated. Matching the whole thread would also re-flag the same ticket on every reply.\n\n`Extract last customer comment` walks backwards to the newest comment whose `author_id` is the requester, so agent replies and the automation's own internal notes are skipped - otherwise we would match the keyword quoted inside our own note.\n\n**Table:** `cs_high_risk_keywords`. Global, no `project_key`. Rows switched on and off with `active`.\n\n**Matching:** normalise both sides, then token-sequence match anchored with `(^| )needle( |$)`. Tier precedence **C > A > B**. Every match is listed in the note, not just the winner.\n\n**Two switches in cs_project_config:**\n- `high_risk_check_enabled` - master on/off, per project, opt-in\n- `high_risk_enforce` - OFF = monitoring (tag + note only, bot still replies), ON = tag + note + status open + `allow_automation _no_` + automation stops",
+          "height": 560,
+          "width": 460
+        }
+      },
+      {
+        "id": "cd0ff86f-c458-4f68-9eb4-483a1bcbc0e4",
+        "name": "RR: Repeat refusal enabled?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          6560,
+          1760
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "rr-enabled",
+                "leftValue": "={{ $('Get Project Config').first().json.record_checks_enabled === true }}",
+                "operator": {
+                  "operation": "true",
+                  "singleValue": true,
+                  "type": "boolean"
+                },
+                "rightValue": ""
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            }
+          },
+          "options": {}
+        },
+        "notes": "cs_project_config.record_checks_enabled. Empty or false = OFF (opt-in), same convention as the high-risk check."
+      },
+      {
+        "id": "4569693b-94eb-4484-8750-586a57865b48",
+        "name": "RR: Evaluate reopens",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          6800,
+          1632
+        ],
+        "parameters": {
+          "jsCode": "// === Case 7b: customer repeatedly refuses the automated resolution ===\n//\n// Signal is Zendesk's own `reopens` counter: the number of solved -> open\n// transitions on this ticket. Verified on Personality 2026-09: every reopen\n// examined was caused by the requester replying. The automation never reopens a\n// ticket it has solved.\n//\n// WHY REOPENS AND NOT \"COUNT THE CUSTOMER'S REPLIES\":\n// the automation also sends NON-resolution public replies - the\n// password_account_info macros ask the customer for their account email and\n// leave the ticket PENDING. A customer answering that is cooperating, not\n// refusing. Pending is not a solve, so it produces no reopen, and those\n// customers are excluded for free. Counting replies would have flagged the most\n// cooperative customers we have.\n//\n// KNOWN LIMITATION: a thank-you reply also reopens a solved ticket. At a\n// threshold of 2 this mostly washes out, because gratitude is terminal - people\n// do not thank you twice - whereas refusal repeats. Sampled ticket 688115\n// (1 reopen, a thank-you) correctly does not fire; 688143 (3 reopens, two\n// genuine pushbacks plus a closing thank-you) correctly does.\n//\n// A customer who pushes back once, hard, and then gives up registers a single\n// reopen and will NOT flag. Under-flagging is the intended failure direction.\n\nconst cfg = $('Get Project Config').first().json || {};\nconst resp = $('Get ticket status').first().json || {};\nconst ticket = resp.ticket || {};\n\n// The sideload arrives either inline on the ticket or as a sibling array,\n// depending on endpoint. Accept both.\nlet metricSet = null;\nif (ticket.metric_set) {\n  metricSet = ticket.metric_set;\n} else if (Array.isArray(resp.metric_sets) && resp.metric_sets.length) {\n  metricSet = resp.metric_sets[0];\n}\n\nconst available = !!metricSet;\nconst reopens = available ? Number(metricSet.reopens || 0) : null;\nconst replies = available ? Number(metricSet.replies || 0) : null;\n\nconst rawThreshold = Number(cfg.record_repeat_refusal_threshold);\nconst threshold = (Number.isFinite(rawThreshold) && rawThreshold > 0) ? rawThreshold : 2;\n\nconst matched = available && reopens >= threshold;\n\nreturn [{\n  json: {\n    rr_metrics_available: available,\n    rr_reopens: reopens,\n    rr_replies: replies,\n    rr_threshold: threshold,\n    rr_matched: matched,\n    rr_ticket_id: $('Restore trigger data').first().json.body['ticket.id']\n  }\n}];"
+        },
+        "notes": "No extra API call - the metric set is sideloaded onto the existing Get ticket status read."
+      },
+      {
+        "id": "c0e3dad0-c199-4b0c-978f-e05a58eb939d",
+        "name": "RR: Threshold met?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          7024,
+          1632
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "rr-matched",
+                "leftValue": "={{ $json.rr_matched }}",
+                "operator": {
+                  "operation": "true",
+                  "singleValue": true,
+                  "type": "boolean"
+                },
+                "rightValue": ""
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            }
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "84f7b1af-59ce-453b-b065-d2857d1180cd",
+        "name": "RR: Build payload",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          7264,
+          1488
+        ],
+        "parameters": {
+          "jsCode": "const cfg = $('Get Project Config').first().json;\nconst trig = $('Restore trigger data').first().json;\nconst r = $('RR: Evaluate reopens').first().json;\n\nconst ticketId = trig.body['ticket.id'];\n\n// cs_project_config.record_checks_enforce\n//   OFF (default) = monitoring. Tag + internal note only, automation continues.\n//   ON            = tag + note + status open + allow_automation _no_, automation stops.\nconst flag = cfg.record_checks_enforce;\nconst enforce = (flag === true || flag === 1 || flag === 'true' || flag === '1' || flag === 'yes');\n\nconst lines = [\n  'Note: This ticket matched record-based case 7b - the customer repeatedly refuses the automated resolution.',\n  '',\n  'Times the customer reopened this ticket after it was solved: ' + r.rr_reopens,\n  'Threshold: ' + r.rr_threshold,\n  '',\n  'Reopens count only replies that arrived AFTER the ticket was solved, so replies to a pending information request are not included.'\n];\n\nlines.push('');\n\nif (enforce) {\n  lines.push('Automation has been stopped and no reply was sent to the customer.');\n  lines.push('Please review the conversation and handle this ticket manually.');\n} else {\n  lines.push('MONITORING MODE: the ticket was tagged and this note added, but automation was NOT stopped.');\n  lines.push('The bot may still reply to this customer. No agent action is required unless the reply is wrong.');\n}\n\nconst noteBody = lines.join('\\n');\n\nconst ticket = {\n  comment: { public: false, body: noteBody }\n};\n\n// TAGS. `additional_tags` is ONLY supported on the Update Many Tickets endpoint.\n// On a single-ticket PUT Zendesk silently discards it - 200 response, no tag\n// event in the audit. A single-ticket PUT only accepts `tags`, which REPLACES\n// the array, so the existing tags are merged in from the live Get ticket status\n// read.\nconst liveTicket = $('Get ticket status').first().json.ticket || {};\nconst existingTags = Array.isArray(liveTicket.tags) ? liveTicket.tags.slice() : [];\n\nconst TAG = 'record_case_7b';\nif (existingTags.indexOf(TAG) === -1) {\n  existingTags.push(TAG);\n}\nticket.tags = existingTags;\n\nif (enforce) {\n  // Setting to open is not a solve transition, so Zendesk does not enforce\n  // required custom fields here and the category does not need to ride along.\n  const openStatusId = Number(cfg.ticket_custom_status_open_id);\n  if (Number.isFinite(openStatusId) && openStatusId > 0) {\n    ticket.custom_status_id = openStatusId;\n  }\n\n  // Stop automation re-engaging on any further replies.\n  const allowFieldId = Number(cfg.ticket_field_allow_automation);\n  if (Number.isFinite(allowFieldId) && allowFieldId > 0) {\n    ticket.custom_fields = [{ id: allowFieldId, value: '_no_' }];\n  }\n}\n\nreturn [{\n  json: {\n    ticket_id: ticketId,\n    enforce: enforce,\n    reopens: r.rr_reopens,\n    threshold: r.rr_threshold,\n    tag: TAG,\n    tags_sent: ticket.tags,\n    note_body: noteBody,\n    zendesk_body: { ticket: ticket }\n  }\n}];"
+        },
+        "notes": "In tag-only mode only the tag and note are sent - no status change, no allow_automation change, and the ticket continues into automation."
+      },
+      {
+        "id": "b4cac4d9-1a9c-4d70-980d-da653229373a",
+        "name": "RR: Zendesk flag repeat refusal",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          7488,
+          1488
+        ],
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "jsonBody": "={{ JSON.stringify($json.zendesk_body) }}",
+          "method": "PUT",
+          "nodeCredentialType": "zendeskOAuth2Api",
+          "options": {},
+          "sendBody": true,
+          "specifyBody": "json",
+          "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $json.ticket_id }}"
+        },
+        "credentials": {
+          "zendeskOAuth2Api": {
+            "id": "Oiek4pqYY75QVNcy",
+            "name": "Realchecker Zendesk OAuth"
+          }
+        }
+      },
+      {
+        "id": "54c5febf-55f2-400c-9cf9-a203f23b3418",
+        "name": "RR: Enforce?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          7712,
+          1488
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "rr-enforce",
+                "leftValue": "={{ $('RR: Build payload').first().json.enforce }}",
+                "operator": {
+                  "operation": "true",
+                  "singleValue": true,
+                  "type": "boolean"
+                },
+                "rightValue": ""
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            }
+          },
+          "options": {}
+        },
+        "notes": "True = stop automation. False = monitoring mode, fall through to the contact-form check and carry on as normal."
+      },
+      {
+        "id": "c5f4a0c5-09c0-4946-885b-ca3f1567c556",
+        "name": "Do not proceed (repeat refusal)",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          7936,
+          1376
+        ],
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "rr-dnp-p",
+                "name": "proceedWithAutomation",
+                "type": "boolean",
+                "value": false
+              },
+              {
+                "id": "rr-dnp-r",
+                "name": "fail_reason",
+                "type": "string",
+                "value": "repeat_refusal"
+              },
+              {
+                "id": "rr-dnp-c",
+                "name": "record_case",
+                "type": "string",
+                "value": "7b"
+              },
+              {
+                "id": "rr-dnp-n",
+                "name": "reopens",
+                "type": "number",
+                "value": "={{ $('RR: Build payload').first().json.reopens }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "notes": "Same return shape as every other terminal. The note, tag and status were already written by RR: Zendesk flag repeat refusal, so this does NOT route through the shared loud-fail path."
+      },
+      {
+        "id": "4a1f44da-791e-454c-b214-736ebe770d7e",
+        "name": "Sticky Repeat Refusal",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          6560,
+          1936
+        ],
+        "parameters": {
+          "color": 3,
+          "content": "## Record-based case 7b - repeated refusal of the automated resolution\n\nRuns after the high-risk keyword check, before the contact-form check. All three\nhigh-risk exits funnel in here, so the check is reached whether or not the\nhigh-risk block ran.\n\n**Signal:** Zendesk's `reopens` counter - solved -> open transitions on this\nticket. Verified on Personality 2026-09: every reopen examined was caused by the\nrequester replying; the automation never reopens a ticket it solved.\n\n**Why not \"count the customer's replies\":** the automation also sends\nNON-resolution public replies. The password_account_info macros ask the customer\nfor their account email and leave the ticket PENDING. A customer answering that\nis cooperating, not refusing. Pending is not a solve, so it produces no reopen\nand those customers are excluded for free.\n\n**Cost:** no extra API call. `?include=metric_sets` was added to the existing\nGet ticket status read.\n\n**Known limitation:** a thank-you also reopens a solved ticket. At a threshold of\n2 this mostly washes out, because gratitude is terminal and refusal repeats.\nA customer who pushes back once and gives up will NOT flag - under-flagging is\nthe intended direction.\n\n**Two switches in cs_project_config:**\n- `record_checks_enabled` - master on/off, per project, opt-in\n- `record_checks_enforce` - OFF = monitoring (tag + note only), ON = tag + note +\n  status open + `allow_automation _no_` + automation stops\n- `record_repeat_refusal_threshold` - reopens needed to fire. Defaults to 2.",
+          "height": 620,
+          "width": 460
+        }
+      }
+    ],
+    "connections": {
+      "When Executed by Another Workflow": {
+        "main": [
+          [
+            {
+              "node": "Set project_key",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Set project_key": {
+        "main": [
+          [
+            {
+              "node": "Get Project Config",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Project Config": {
+        "main": [
+          [
+            {
+              "node": "Restore trigger data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Email Blocklist": {
+        "main": [
+          [
+            {
+              "node": "Filter Blocked Emails",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Filter Blocked Emails": {
+        "main": [
+          [
+            {
+              "node": "Is Blocked?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is Blocked?": {
+        "main": [
+          [
+            {
+              "node": "Note: Blocked email",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Get Auto-solve Emails",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is contact form cancellation": {
+        "main": [
+          [
+            {
+              "node": "Note: Contact form cancellation",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Proceed (eligible)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Note: Blocked email": {
+        "main": [
+          [
+            {
+              "node": "Do not proceed",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Note: Contact form cancellation": {
+        "main": [
+          [
+            {
+              "node": "Do not proceed",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Do not proceed": {
+        "main": [
+          [
+            {
+              "node": "Reply to internally and set status to open3",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Reply to internally and set status to open3": {
+        "main": [
+          [
+            {
+              "node": "Do not proceed1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Proceed (eligible)": {
+        "main": [
+          [
+            {
+              "node": "Proceed",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Restore trigger data": {
+        "main": [
+          [
+            {
+              "node": "Get ticket status",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get ticket status": {
+        "main": [
+          [
+            {
+              "node": "Ticket not solved or closed?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Ticket not solved or closed?": {
+        "main": [
+          [
+            {
+              "node": "Get Email Blocklist",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Note: Ticket already solved or closed",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Note: Ticket already solved or closed": {
+        "main": [
+          [
+            {
+              "node": "Do not proceed2",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Auto-solve Emails": {
+        "main": [
+          [
+            {
+              "node": "Filter Auto-solve Emails",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Filter Auto-solve Emails": {
+        "main": [
+          [
+            {
+              "node": "Is Auto-solve?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is Auto-solve?": {
+        "main": [
+          [
+            {
+              "node": "Note: Auto-solve email",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "High risk check enabled?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Note: Auto-solve email": {
+        "main": [
+          [
+            {
+              "node": "Build auto-solve payload",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build auto-solve payload": {
+        "main": [
+          [
+            {
+              "node": "Zendesk: Solve silently",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Zendesk: Solve silently": {
+        "main": [
+          [
+            {
+              "node": "Do not proceed (auto-solved)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build high risk payload": {
+        "main": [
+          [
+            {
+              "node": "Zendesk: Flag high risk",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract last customer comment": {
+        "main": [
+          [
+            {
+              "node": "Get High Risk Keywords",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get High Risk Keywords": {
+        "main": [
+          [
+            {
+              "node": "Match High Risk Keywords",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get last customer comment": {
+        "main": [
+          [
+            {
+              "node": "Extract last customer comment",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "High risk check enabled?": {
+        "main": [
+          [
+            {
+              "node": "Get last customer comment",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "RR: Repeat refusal enabled?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "High risk enforce?": {
+        "main": [
+          [
+            {
+              "node": "Do not proceed (high risk)",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "RR: Repeat refusal enabled?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "High risk match?": {
+        "main": [
+          [
+            {
+              "node": "Build high risk payload",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "RR: Repeat refusal enabled?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Match High Risk Keywords": {
+        "main": [
+          [
+            {
+              "node": "High risk match?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "RR: Build payload": {
+        "main": [
+          [
+            {
+              "node": "RR: Zendesk flag repeat refusal",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "RR: Enforce?": {
+        "main": [
+          [
+            {
+              "node": "Do not proceed (repeat refusal)",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Is contact form cancellation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "RR: Evaluate reopens": {
+        "main": [
+          [
+            {
+              "node": "RR: Threshold met?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "RR: Repeat refusal enabled?": {
+        "main": [
+          [
+            {
+              "node": "RR: Evaluate reopens",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Is contact form cancellation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "RR: Threshold met?": {
+        "main": [
+          [
+            {
+              "node": "RR: Build payload",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Is contact form cancellation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "RR: Zendesk flag repeat refusal": {
+        "main": [
+          [
+            {
+              "node": "RR: Enforce?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Zendesk: Flag high risk": {
+        "main": [
+          [
+            {
+              "node": "High risk enforce?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Antonio antonio.marusic@efuturemedia.com",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "createdAt": "2026-10-19T20:58:03.561Z",
+    "updatedAt": "2026-10-19T20:58:03.561Z",
+    "workflowPublishHistory": [
+      {
+        "id": 2883,
+        "workflowId": "xol77ZCjU0nD2JzJ",
+        "versionId": "efe71d7f-1a0a-476b-87bd-baeb9b5e1245",
+        "event": "activated",
+        "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e",
+        "createdAt": "2026-10-20T08:55:03.467Z"
+      }
+    ]
+  }
+}
