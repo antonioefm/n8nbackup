@@ -3,12 +3,12 @@
   "name": "JSM SLA Daily Digest",
   "description": null,
   "active": true,
-  "activeVersionId": "9b43b6f3-bc74-43ba-8d9e-5de472e5bdfb",
+  "activeVersionId": "32cd8694-6460-4329-b290-5ea3357bbff2",
   "createdAt": "2026-03-30T07:18:38.010Z",
-  "updatedAt": "2026-03-31T06:50:25.468Z",
+  "updatedAt": "2026-09-25T08:02:24.939Z",
   "isArchived": false,
-  "versionId": "9b43b6f3-bc74-43ba-8d9e-5de472e5bdfb",
-  "versionCounter": 90,
+  "versionId": "32cd8694-6460-4329-b290-5ea3357bbff2",
+  "versionCounter": 94,
   "sourceWorkflowId": null,
   "triggerCount": 1,
   "nodes": [
@@ -120,7 +120,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const output = [];\n\nconst slackItems = $('Slack lookup by email').all();\nconst assigneeItems = $('Split Out').all();\n\nfor (let i = 0; i < slackItems.length; i++) {\n  const slackResponse = slackItems[i].json;\n  const assignee = assigneeItems[i].json;\n\n  if (!slackResponse.ok || !slackResponse.user?.id) {\n    console.log(`Slack lookup failed for ${assignee.email}: ${slackResponse.error || JSON.stringify(slackResponse)}`);\n    continue;\n  }\n\n  const slackUserId = slackResponse.user.id;\n  const firstName = assignee.displayName.split(' ')[0];\n\n  const sections = [];\n\n  if (assignee.breached.length > 0) {\n    const lines = assignee.breached.map(t =>\n      `• <${t.url}|${t.key}> — ${t.summary} _(${t.priority})_`\n    ).join('\\n');\n    sections.push(`:red_circle: *Breached SLA — Time to Resolution*\\n${lines}`);\n  }\n\n  if (assignee.inactive.length > 0) {\n    const lines = assignee.inactive.map(t =>\n      `• <${t.url}|${t.key}> — ${t.summary} _(${t.priority})_`\n    ).join('\\n');\n    sections.push(`:large_yellow_circle: *No activity in the last 24h*\\n${lines}`);\n  }\n\n  if (sections.length === 0) continue;\n\n  const message = `Hello ${firstName}, here is your daily IT ticket digest:\\n\\n` + sections.join('\\n\\n') + '\\n\\n_Please review and action these tickets today._';\n\n  output.push({ json: { slackUserId, message } });\n}\n\nreturn output;"
+        "jsCode": "const output = [];\n\nconst PRIORITY_RANK = { highest: 0, high: 1, medium: 2, low: 3, lowest: 4 };\nconst rank = t => PRIORITY_RANK[String(t.priority || '').toLowerCase()] ?? 99;\nconst byPriority = (a, b) => rank(a) - rank(b);\n\nconst slackItems = $('Slack lookup by email').all();\nconst assigneeItems = $('Split Out').all();\n\nfor (let i = 0; i < slackItems.length; i++) {\n  const slackResponse = slackItems[i].json;\n  const assignee = assigneeItems[i].json;\n\n  if (!slackResponse.ok || !slackResponse.user?.id) {\n    console.log(`Slack lookup failed for ${assignee.email}: ${slackResponse.error || JSON.stringify(slackResponse)}`);\n    continue;\n  }\n\n  const slackUserId = slackResponse.user.id;\n  const firstName = assignee.displayName.split(' ')[0];\n\n  const breached = [...(assignee.breached || [])].sort(byPriority);\n  const inactive = [...(assignee.inactive || [])].sort(byPriority);\n\n  const sections = [];\n\n  if (breached.length > 0) {\n    const lines = breached.map(t =>\n      `• <${t.url}|${t.key}> — ${t.summary} _(${t.priority})_`\n    ).join('\\n');\n    sections.push(`:red_circle: *Breached SLA — Time to Resolution*\\n${lines}`);\n  }\n\n  if (inactive.length > 0) {\n    const lines = inactive.map(t =>\n      `• <${t.url}|${t.key}> — ${t.summary} _(${t.priority})_`\n    ).join('\\n');\n    sections.push(`:large_yellow_circle: *No activity in the last 24h*\\n${lines}`);\n  }\n\n  if (sections.length === 0) continue;\n\n  const message = `Hello ${firstName}, here is your daily IT ticket digest:\\n\\n` + sections.join('\\n\\n') + '\\n\\n_Please review and action these tickets today._';\n\n  output.push({ json: { slackUserId, message } });\n}\n\nreturn output;"
       },
       "id": "8b4a1cd1-e8c0-4729-a519-173a8a1f325d",
       "name": "Build DM message",
@@ -163,7 +163,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const data = $input.first().json;\nconst unassignedBreached = data.unassignedBreached || [];\nconst unassignedInactive = data.unassignedInactive || [];\n\nif (unassignedBreached.length === 0 && unassignedInactive.length === 0) {\n  return [{ json: { skip: true, message: '' } }];\n}\n\nconst sections = [];\n\nif (unassignedBreached.length > 0) {\n  const lines = unassignedBreached.map(t =>\n    `• <${t.url}|${t.key}> — ${t.summary} _(${t.priority})_`\n  ).join('\\n');\n  sections.push(`:red_circle: *Unassigned — Breached SLA*\\n${lines}`);\n}\n\nif (unassignedInactive.length > 0) {\n  const lines = unassignedInactive.map(t =>\n    `• <${t.url}|${t.key}> — ${t.summary} _(${t.priority})_`\n  ).join('\\n');\n  sections.push(`:large_yellow_circle: *Unassigned — No activity in the last 24h*\\n${lines}`);\n}\n\nconst message = `Daily IT ticket digest — unassigned tickets needing attention:\\n\\n` + sections.join('\\n\\n') + '\\n\\n_Please assign and action these tickets._';\n\nreturn [{ json: { skip: false, message } }];"
+        "jsCode": "const data = $input.first().json;\n\nconst PRIORITY_RANK = { highest: 0, high: 1, medium: 2, low: 3, lowest: 4 };\nconst rank = t => PRIORITY_RANK[String(t.priority || '').toLowerCase()] ?? 99;\nconst byPriority = (a, b) => rank(a) - rank(b);\n\nconst unassignedBreached = [...(data.unassignedBreached || [])].sort(byPriority);\nconst unassignedInactive = [...(data.unassignedInactive || [])].sort(byPriority);\n\nif (unassignedBreached.length === 0 && unassignedInactive.length === 0) {\n  return [{ json: { skip: true, message: '' } }];\n}\n\nconst sections = [];\n\nif (unassignedBreached.length > 0) {\n  const lines = unassignedBreached.map(t =>\n    `• <${t.url}|${t.key}> — ${t.summary} _(${t.priority})_`\n  ).join('\\n');\n  sections.push(`:red_circle: *Unassigned — Breached SLA*\\n${lines}`);\n}\n\nif (unassignedInactive.length > 0) {\n  const lines = unassignedInactive.map(t =>\n    `• <${t.url}|${t.key}> — ${t.summary} _(${t.priority})_`\n  ).join('\\n');\n  sections.push(`:large_yellow_circle: *Unassigned — No activity in the last 24h*\\n${lines}`);\n}\n\nconst message = `Daily IT ticket digest — unassigned tickets needing attention:\\n\\n` + sections.join('\\n\\n') + '\\n\\n_Please assign and action these tickets._';\n\nreturn [{ json: { skip: false, message } }];"
       },
       "id": "799fb2a3-97e8-43ba-8048-8d19e6be84a6",
       "name": "Build channel message",
@@ -186,7 +186,14 @@
                 "operation": "notEquals"
               }
             }
-          ]
+          ],
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          }
         },
         "options": {}
       },
@@ -223,68 +230,6 @@
         560
       ],
       "webhookId": "dbdd1fe5-3c88-4fa7-9065-8fa60c0fe171",
-      "credentials": {
-        "slackOAuth2Api": {
-          "id": "tSpUlRaNhgWKbKN4",
-          "name": "Automations Slack account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "authentication": "oAuth2",
-        "select": "user",
-        "user": {
-          "__rl": true,
-          "value": "U091LRPLQD6",
-          "mode": "list",
-          "cachedResultName": "antonio.marusic"
-        },
-        "text": "={{ $json.message }}",
-        "otherOptions": {
-          "mrkdwn": true
-        }
-      },
-      "id": "d1312f74-d9dd-4b0a-82cb-48101ddbb833",
-      "name": "Send DM to assignee1",
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 2.1,
-      "position": [
-        480,
-        224
-      ],
-      "webhookId": "ebdec591-eb4e-4100-9a14-b9de1d77d500",
-      "credentials": {
-        "slackOAuth2Api": {
-          "id": "tSpUlRaNhgWKbKN4",
-          "name": "Automations Slack account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "authentication": "oAuth2",
-        "select": "user",
-        "user": {
-          "__rl": true,
-          "value": "U091LRPLQD6",
-          "mode": "list",
-          "cachedResultName": "antonio.marusic"
-        },
-        "text": "={{ $json.message }}",
-        "otherOptions": {
-          "mrkdwn": true
-        }
-      },
-      "id": "0eac71ac-688a-4804-b9b1-cc2336d06d50",
-      "name": "Send DM to assignee2",
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 2.1,
-      "position": [
-        256,
-        704
-      ],
-      "webhookId": "ebdec591-eb4e-4100-9a14-b9de1d77d500",
       "credentials": {
         "slackOAuth2Api": {
           "id": "tSpUlRaNhgWKbKN4",
@@ -487,7 +432,7 @@
     "timeSavedMode": "fixed",
     "errorWorkflow": "QzwinCVQAJOMqjh2",
     "callerPolicy": "workflowsFromSameOwner",
-    "availableInMCP": false
+    "availableInMCP": true
   },
   "staticData": {
     "node:Schedule Trigger": {
@@ -500,7 +445,10 @@
     }
   },
   "pinData": {},
-  "meta": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
   "tags": [],
   "shared": [
     {
@@ -526,7 +474,7 @@
     }
   ],
   "activeVersion": {
-    "versionId": "9b43b6f3-bc74-43ba-8d9e-5de472e5bdfb",
+    "versionId": "32cd8694-6460-4329-b290-5ea3357bbff2",
     "workflowId": "tDAciAap2ezCo8mm",
     "nodes": [
       {
@@ -637,7 +585,7 @@
       },
       {
         "parameters": {
-          "jsCode": "const output = [];\n\nconst slackItems = $('Slack lookup by email').all();\nconst assigneeItems = $('Split Out').all();\n\nfor (let i = 0; i < slackItems.length; i++) {\n  const slackResponse = slackItems[i].json;\n  const assignee = assigneeItems[i].json;\n\n  if (!slackResponse.ok || !slackResponse.user?.id) {\n    console.log(`Slack lookup failed for ${assignee.email}: ${slackResponse.error || JSON.stringify(slackResponse)}`);\n    continue;\n  }\n\n  const slackUserId = slackResponse.user.id;\n  const firstName = assignee.displayName.split(' ')[0];\n\n  const sections = [];\n\n  if (assignee.breached.length > 0) {\n    const lines = assignee.breached.map(t =>\n      `• <${t.url}|${t.key}> — ${t.summary} _(${t.priority})_`\n    ).join('\\n');\n    sections.push(`:red_circle: *Breached SLA — Time to Resolution*\\n${lines}`);\n  }\n\n  if (assignee.inactive.length > 0) {\n    const lines = assignee.inactive.map(t =>\n      `• <${t.url}|${t.key}> — ${t.summary} _(${t.priority})_`\n    ).join('\\n');\n    sections.push(`:large_yellow_circle: *No activity in the last 24h*\\n${lines}`);\n  }\n\n  if (sections.length === 0) continue;\n\n  const message = `Hello ${firstName}, here is your daily IT ticket digest:\\n\\n` + sections.join('\\n\\n') + '\\n\\n_Please review and action these tickets today._';\n\n  output.push({ json: { slackUserId, message } });\n}\n\nreturn output;"
+          "jsCode": "const output = [];\n\nconst PRIORITY_RANK = { highest: 0, high: 1, medium: 2, low: 3, lowest: 4 };\nconst rank = t => PRIORITY_RANK[String(t.priority || '').toLowerCase()] ?? 99;\nconst byPriority = (a, b) => rank(a) - rank(b);\n\nconst slackItems = $('Slack lookup by email').all();\nconst assigneeItems = $('Split Out').all();\n\nfor (let i = 0; i < slackItems.length; i++) {\n  const slackResponse = slackItems[i].json;\n  const assignee = assigneeItems[i].json;\n\n  if (!slackResponse.ok || !slackResponse.user?.id) {\n    console.log(`Slack lookup failed for ${assignee.email}: ${slackResponse.error || JSON.stringify(slackResponse)}`);\n    continue;\n  }\n\n  const slackUserId = slackResponse.user.id;\n  const firstName = assignee.displayName.split(' ')[0];\n\n  const breached = [...(assignee.breached || [])].sort(byPriority);\n  const inactive = [...(assignee.inactive || [])].sort(byPriority);\n\n  const sections = [];\n\n  if (breached.length > 0) {\n    const lines = breached.map(t =>\n      `• <${t.url}|${t.key}> — ${t.summary} _(${t.priority})_`\n    ).join('\\n');\n    sections.push(`:red_circle: *Breached SLA — Time to Resolution*\\n${lines}`);\n  }\n\n  if (inactive.length > 0) {\n    const lines = inactive.map(t =>\n      `• <${t.url}|${t.key}> — ${t.summary} _(${t.priority})_`\n    ).join('\\n');\n    sections.push(`:large_yellow_circle: *No activity in the last 24h*\\n${lines}`);\n  }\n\n  if (sections.length === 0) continue;\n\n  const message = `Hello ${firstName}, here is your daily IT ticket digest:\\n\\n` + sections.join('\\n\\n') + '\\n\\n_Please review and action these tickets today._';\n\n  output.push({ json: { slackUserId, message } });\n}\n\nreturn output;"
         },
         "id": "8b4a1cd1-e8c0-4729-a519-173a8a1f325d",
         "name": "Build DM message",
@@ -680,7 +628,7 @@
       },
       {
         "parameters": {
-          "jsCode": "const data = $input.first().json;\nconst unassignedBreached = data.unassignedBreached || [];\nconst unassignedInactive = data.unassignedInactive || [];\n\nif (unassignedBreached.length === 0 && unassignedInactive.length === 0) {\n  return [{ json: { skip: true, message: '' } }];\n}\n\nconst sections = [];\n\nif (unassignedBreached.length > 0) {\n  const lines = unassignedBreached.map(t =>\n    `• <${t.url}|${t.key}> — ${t.summary} _(${t.priority})_`\n  ).join('\\n');\n  sections.push(`:red_circle: *Unassigned — Breached SLA*\\n${lines}`);\n}\n\nif (unassignedInactive.length > 0) {\n  const lines = unassignedInactive.map(t =>\n    `• <${t.url}|${t.key}> — ${t.summary} _(${t.priority})_`\n  ).join('\\n');\n  sections.push(`:large_yellow_circle: *Unassigned — No activity in the last 24h*\\n${lines}`);\n}\n\nconst message = `Daily IT ticket digest — unassigned tickets needing attention:\\n\\n` + sections.join('\\n\\n') + '\\n\\n_Please assign and action these tickets._';\n\nreturn [{ json: { skip: false, message } }];"
+          "jsCode": "const data = $input.first().json;\n\nconst PRIORITY_RANK = { highest: 0, high: 1, medium: 2, low: 3, lowest: 4 };\nconst rank = t => PRIORITY_RANK[String(t.priority || '').toLowerCase()] ?? 99;\nconst byPriority = (a, b) => rank(a) - rank(b);\n\nconst unassignedBreached = [...(data.unassignedBreached || [])].sort(byPriority);\nconst unassignedInactive = [...(data.unassignedInactive || [])].sort(byPriority);\n\nif (unassignedBreached.length === 0 && unassignedInactive.length === 0) {\n  return [{ json: { skip: true, message: '' } }];\n}\n\nconst sections = [];\n\nif (unassignedBreached.length > 0) {\n  const lines = unassignedBreached.map(t =>\n    `• <${t.url}|${t.key}> — ${t.summary} _(${t.priority})_`\n  ).join('\\n');\n  sections.push(`:red_circle: *Unassigned — Breached SLA*\\n${lines}`);\n}\n\nif (unassignedInactive.length > 0) {\n  const lines = unassignedInactive.map(t =>\n    `• <${t.url}|${t.key}> — ${t.summary} _(${t.priority})_`\n  ).join('\\n');\n  sections.push(`:large_yellow_circle: *Unassigned — No activity in the last 24h*\\n${lines}`);\n}\n\nconst message = `Daily IT ticket digest — unassigned tickets needing attention:\\n\\n` + sections.join('\\n\\n') + '\\n\\n_Please assign and action these tickets._';\n\nreturn [{ json: { skip: false, message } }];"
         },
         "id": "799fb2a3-97e8-43ba-8048-8d19e6be84a6",
         "name": "Build channel message",
@@ -703,7 +651,14 @@
                   "operation": "notEquals"
                 }
               }
-            ]
+            ],
+            "combinator": "and",
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 1
+            }
           },
           "options": {}
         },
@@ -740,68 +695,6 @@
           560
         ],
         "webhookId": "dbdd1fe5-3c88-4fa7-9065-8fa60c0fe171",
-        "credentials": {
-          "slackOAuth2Api": {
-            "id": "tSpUlRaNhgWKbKN4",
-            "name": "Automations Slack account"
-          }
-        }
-      },
-      {
-        "parameters": {
-          "authentication": "oAuth2",
-          "select": "user",
-          "user": {
-            "__rl": true,
-            "value": "U091LRPLQD6",
-            "mode": "list",
-            "cachedResultName": "antonio.marusic"
-          },
-          "text": "={{ $json.message }}",
-          "otherOptions": {
-            "mrkdwn": true
-          }
-        },
-        "id": "d1312f74-d9dd-4b0a-82cb-48101ddbb833",
-        "name": "Send DM to assignee1",
-        "type": "n8n-nodes-base.slack",
-        "typeVersion": 2.1,
-        "position": [
-          480,
-          224
-        ],
-        "webhookId": "ebdec591-eb4e-4100-9a14-b9de1d77d500",
-        "credentials": {
-          "slackOAuth2Api": {
-            "id": "tSpUlRaNhgWKbKN4",
-            "name": "Automations Slack account"
-          }
-        }
-      },
-      {
-        "parameters": {
-          "authentication": "oAuth2",
-          "select": "user",
-          "user": {
-            "__rl": true,
-            "value": "U091LRPLQD6",
-            "mode": "list",
-            "cachedResultName": "antonio.marusic"
-          },
-          "text": "={{ $json.message }}",
-          "otherOptions": {
-            "mrkdwn": true
-          }
-        },
-        "id": "0eac71ac-688a-4804-b9b1-cc2336d06d50",
-        "name": "Send DM to assignee2",
-        "type": "n8n-nodes-base.slack",
-        "typeVersion": 2.1,
-        "position": [
-          256,
-          704
-        ],
-        "webhookId": "ebdec591-eb4e-4100-9a14-b9de1d77d500",
         "credentials": {
           "slackOAuth2Api": {
             "id": "tSpUlRaNhgWKbKN4",
@@ -998,20 +891,20 @@
       }
     },
     "nodeGroups": [],
-    "authors": "Antonio antonio.marusic@efuturemedia.com",
-    "name": "Version 9b43b6f3",
-    "description": "",
-    "autosaved": true,
-    "createdAt": "2026-03-31T06:50:25.469Z",
-    "updatedAt": "2026-03-31T06:50:28.000Z",
+    "authors": "Antonio antonio.marusic@efuturemedia.com (via MCP)",
+    "name": "Sort assignee DM tickets by priority",
+    "description": "Build DM message: sort each assignee's breached and inactive lists by Jira priority (Highest > High > Medium > Low > Lowest > unknown), same ranking as the channel message.",
+    "autosaved": false,
+    "createdAt": "2026-09-25T08:02:24.948Z",
+    "updatedAt": "2026-09-25T08:02:52.000Z",
     "workflowPublishHistory": [
       {
-        "id": 411,
+        "id": 2045,
         "workflowId": "tDAciAap2ezCo8mm",
-        "versionId": "9b43b6f3-bc74-43ba-8d9e-5de472e5bdfb",
+        "versionId": "32cd8694-6460-4329-b290-5ea3357bbff2",
         "event": "activated",
         "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e",
-        "createdAt": "2026-03-31T06:50:28.728Z"
+        "createdAt": "2026-09-25T08:02:52.304Z"
       }
     ]
   }
