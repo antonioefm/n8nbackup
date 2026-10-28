@@ -1,0 +1,327 @@
+{
+  "id": "pg8jT4gHgY7Cj9eT",
+  "name": "i18n QA sweep – code scan – ChatbotOnline (READ ONLY)",
+  "description": "Read-only i18n code scan of QR-CODE-App/aichat-frontend and aichat-backend for the i18n QA sweep. Fetches the repo tree and files via GitHub and runs code_scan.js inside n8n.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-27T11:14:54.256Z",
+  "updatedAt": "2026-10-28T11:37:20.807Z",
+  "isArchived": false,
+  "versionId": "fb84e74a-b1e8-4713-9d82-60c5a7009207",
+  "versionCounter": 6,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "1d672612-5cd0-489a-97a1-27e86611fc98",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "81651f42-ec4c-4d32-a2e2-a626ae009ae1",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        192
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\"repo\": \"aichat-backend\", \"branch\": \"develop\", \"subdir\": \"\", \"dnt\": [\"ChatbotOnline\", \"Chatbot Online\", \"chatbotonline.ai\", \"Chat AI\", \"Nano Banana\", \"Gemini\", \"Google\", \"Stripe\", \"PayPal\", \"Apple Pay\", \"Google Pay\", \"Visa\", \"Mastercard\", \"American Express\", \"PostHog\", \"JPG\", \"JPEG\", \"PNG\", \"WEBP\", \"HEIC\"]}"
+      }
+    },
+    {
+      "id": "4900d28a-a23f-4df8-b42d-c661d7c4c964",
+      "name": "Get Repo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/QR-CODE-App/{{ $json.repo }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi"
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "eba88361-5b5f-4572-a57a-2fcafaf6efe8",
+      "name": "Get Tree",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/QR-CODE-App/{{ $('Config').item.json.repo }}/git/trees/{{ $('Config').item.json.branch || $json.default_branch }}?recursive=1",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi"
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "e3fc9fc1-185a-4f29-aeed-7d41c2d8e394",
+      "name": "Filter Tree",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const res = $input.first().json;\nconst tree = res.tree || [];\nconst cfg = $('Config').first().json;\nconst branch = cfg.branch || $('Get Repo').first().json.default_branch;\nconst repo = cfg.repo;\nconst sub = (cfg.subdir || '').replace(/\\/$/, '');\nconst EXT = /\\.(js|jsx|ts|tsx|vue|svelte|html|hbs|mjml|njk|ejs|json|svg|py|ya?ml)$/i;\nconst SKIP = /(^|\\/)(node_modules|dist|build|\\.next|coverage|__tests__|__mocks__|mocks?|fixtures|storybook|\\.storybook|e2e|cypress|playwright|tests?|migrations|\\.github)(\\/|$)|\\.(test|spec|stories)\\.[jt]sx?$|\\.d\\.ts$|(package-lock|yarn\\.lock|pnpm-lock)|(^|\\/)package\\.json$|(^|\\/)tsconfig[^/]*$/i;\nconst isEn = p => /(^|\\/)(en|en-US|en_US)(\\.json|\\/[^/]+\\.json)$/.test(p);\nlet files = tree.filter(t => t.type === 'blob' && EXT.test(t.path) && !SKIP.test(t.path) && (t.size || 0) < 600000 && (!sub || t.path.startsWith(sub + '/')));\nfiles = files.filter(t => !/\\.json$/i.test(t.path) || isEn(t.path) || /(^|\\/)(locales?|i18n|messages|translations?)\\/[^/]*\\.json$/i.test(t.path));\nfiles = files.slice(0, 1500);\nif (!files.length) return [{ json: { skip: true, tree_truncated: !!res.truncated } }];\nreturn files.map(f => ({ json: { repo, branch, path: f.path } }));\n"
+      }
+    },
+    {
+      "id": "4e0351ba-bee8-4c15-b8e5-283698c66c6a",
+      "name": "Scan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Pass-through mode: return the light/color-correction funnel files and locale JSON so the scan runs in the container with code_scan.js.\nconst RE = /light[_-]?colou?r|colou?r[_-]?correct|lightColou?r|colou?rCorrection/i;\nconst items = $input.all().map(i => i.json).filter(j => j && j.path && typeof j.content === 'string');\nconst keep = items.filter(j => RE.test(j.path) || RE.test(j.content) || /(^|\\/)(en|en-US|en_US)(\\.json|\\/[^/]+\\.json)$/.test(j.path) || /(^|\\/)(locales?|i18n|messages|translations?)\\/[^/]*\\.json$/i.test(j.path));\nconst other = items.filter(j => !keep.includes(j)).map(j => j.path);\nreturn [{ json: { repo: $('Config').first().json.repo, branch: $('Config').first().json.branch, total_files: items.length, other_paths: other, files: keep.map(j => ({ path: j.path, content: j.content })) } }];\n"
+      }
+    },
+    {
+      "id": "c3886409-a8e4-4bac-8fd2-cfe0b16dfc7c",
+      "name": "Get File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/QR-CODE-App/{{ $json.repo }}/contents/{{ encodeURI($json.path) }}?ref={{ $json.branch }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.raw"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "data"
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 10,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "08c0b6f4-5c83-4d96-8678-46af9a907c42",
+      "name": "Emit File",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        272
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const src = $('Loop Files').itemMatching($itemIndex).json;\nconst c = $json.data;\nif (src.skip) return { json: { skip: true } };\nreturn { json: { repo: src.repo, path: src.path, content: typeof c === 'string' ? c : (c == null ? null : JSON.stringify(c)), dnt: $('Config').first().json.dnt } };"
+      }
+    },
+    {
+      "id": "53dcbad1-b535-4821-999f-21b3200897aa",
+      "name": "Loop Files",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1120,
+        192
+      ],
+      "parameters": {
+        "batchSize": 10
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Get Repo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Repo": {
+      "main": [
+        [
+          {
+            "node": "Get Tree",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Tree": {
+      "main": [
+        [
+          {
+            "node": "Filter Tree",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Tree": {
+      "main": [
+        [
+          {
+            "node": "Loop Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get File": {
+      "main": [
+        [
+          {
+            "node": "Emit File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emit File": {
+      "main": [
+        [
+          {
+            "node": "Loop Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Files": {
+      "main": [
+        [
+          {
+            "node": "Scan",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "pg8jT4gHgY7Cj9eT",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-27T11:14:54.259Z",
+      "updatedAt": "2026-10-27T11:14:54.259Z"
+    }
+  ],
+  "activeVersion": null
+}
