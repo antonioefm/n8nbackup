@@ -1,0 +1,1154 @@
+{
+  "id": "XMaQOIYvwsgtsFMM",
+  "name": "VinReady prod - Duplicate ticket handler",
+  "description": null,
+  "active": true,
+  "activeVersionId": "979dda37-8084-47d6-8867-0634c3349bfa",
+  "createdAt": "2026-09-21T11:03:52.116Z",
+  "updatedAt": "2026-10-19T20:58:47.151Z",
+  "isArchived": false,
+  "versionId": "979dda37-8084-47d6-8867-0634c3349bfa",
+  "versionCounter": 4,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "578658d8-61b3-41d5-a11a-a7b35ef9d593",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -320,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "dh-project-key",
+              "name": "project_key",
+              "value": "vinready_prod",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "01270391-52f4-4b2d-b8b3-4b740e85b77a",
+      "name": "Set project_key",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -96,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "IRxwFN8iBhHLFQxQ",
+          "cachedResultName": "cs_project_config"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "project_key",
+              "keyValue": "={{ $(\"Set project_key\").first().json.project_key }}"
+            }
+          ]
+        }
+      },
+      "id": "5c023a0a-ce3b-431b-bc0a-aab67599dd06",
+      "name": "Get Project Config",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        128,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $('When Executed by Another Workflow').all();"
+      },
+      "id": "ee8a5910-e7e6-4fc7-9188-6ac25c254bf6",
+      "name": "Restore trigger data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        352,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/show_many.json?ids=\" + $(\"Restore trigger data\").first().json.keeper_ticket_id + \",\" + $(\"Restore trigger data\").first().json.loser_ticket_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {}
+      },
+      "id": "0e8f9c17-2439-45ea-846a-8de3a91cc158",
+      "name": "Zendesk: Get both tickets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        576,
+        16
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "fJeStlnAYKtxvgKU",
+          "name": "Vinready Zendesk OAuth"
+        }
+      },
+      "notes": "One call for keeper + loser. Live state is authoritative - the caller view may be seconds stale."
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $(\"Restore trigger data\").first().json.loser_ticket_id + \"/comments.json\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {}
+      },
+      "id": "225c2af1-68dd-4d40-baf6-ffabb87fbe31",
+      "name": "Zendesk: Get loser comments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        800,
+        16
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "fJeStlnAYKtxvgKU",
+          "name": "Vinready Zendesk OAuth"
+        }
+      },
+      "notes": "Used to detect whether a human agent has already replied on the duplicate."
+    },
+    {
+      "parameters": {
+        "jsCode": "// === Merge safety checks ===\n// Mode: \"Run Once for All Items\".\n// Input = the loser ticket's comments (from \"Zendesk: Get loser comments\").\n//\n// Re-verifies everything live before writing. Safe to call twice for the same\n// pair - the second call will find the loser closed and skip.\n\nconst ACTIVE = new Set(['new', 'open', 'pending', 'hold']);\n\nconst cfg = $('Get Project Config').first().json;\nconst input = $('Restore trigger data').first().json;\n\nconst keeperId = Number(input.keeper_ticket_id);\nconst loserId = Number(input.loser_ticket_id);\nconst automationAgentId = Number(cfg.automation_agent_id || 0);\n\nconst tickets = $('Zendesk: Get both tickets').first().json.tickets || [];\nconst keeper = tickets.find(t => Number(t.id) === keeperId) || null;\nconst loser = tickets.find(t => Number(t.id) === loserId) || null;\n\nconst comments = $input.first().json.comments || [];\n\nconst reasons = [];\n\nif (!keeperId || !loserId) reasons.push('missing_ticket_id');\nif (keeperId === loserId) reasons.push('same_ticket');\nif (!keeper) reasons.push('keeper_not_found');\nif (!loser) reasons.push('loser_not_found');\n\nif (keeper && !ACTIVE.has(String(keeper.status).toLowerCase())) reasons.push('keeper_no_longer_active');\nif (loser && !ACTIVE.has(String(loser.status).toLowerCase())) reasons.push('loser_no_longer_active');\n\nif (keeper && loser && Number(keeper.requester_id) !== Number(loser.requester_id)) reasons.push('different_requester');\n\nif (loser && loser.assignee_id) reasons.push('loser_has_assignee');\nif (loser) {\n  const touchedByAgent = comments.some(c => {\n    const author = Number(c.author_id);\n    return author !== Number(loser.requester_id) && author !== automationAgentId;\n  });\n  if (touchedByAgent) reasons.push('loser_touched_by_agent');\n}\n\nconst safe = reasons.length === 0;\n\nlet mergeBody = null;\nif (safe) {\n  const subject = String(loser.subject == null ? '' : loser.subject).trim();\n  const description = String(loser.description == null ? '' : loser.description).trim();\n\n  mergeBody = {\n    ids: [loserId],\n    target_comment: 'Duplicate ticket #' + loserId + ' from the same requester was merged into this ticket automatically and closed.\\n\\nSubject: ' + subject + '\\n\\nMessage from #' + loserId + ':\\n' + description,\n    target_comment_is_public: false,\n    source_comment: 'This ticket was merged into #' + keeperId + ' automatically, because the requester already had an active ticket.',\n    source_comment_is_public: false\n  };\n}\n\n// Set the Duplicate contact category AND the Language field on the loser BEFORE\n// merging. Merge closes the loser and a closed ticket cannot be updated, so this\n// is the only chance. Language is included because most brands mark it required\n// and Zendesk rejects the transition without it:\n//   422 RecordInvalid - \"Language: is required when solving a ticket\"\n// Each field is only sent when both its id and its per-brand value are set.\nconst preMergeFields = [];\n\nconst catFieldId = Number(cfg.ticket_custom_field_category);\nconst dupValue = cfg.category_value_duplicate_contact;\nif (Number.isFinite(catFieldId) && catFieldId > 0\n    && dupValue !== null && dupValue !== undefined && String(dupValue).trim() !== '') {\n  preMergeFields.push({ id: catFieldId, value: String(dupValue) });\n}\n\nconst langFieldId = Number(cfg.ticket_field_language_id);\nconst langValue = cfg.language_value_english;\nif (Number.isFinite(langFieldId) && langFieldId > 0\n    && langValue !== null && langValue !== undefined && String(langValue).trim() !== '') {\n  preMergeFields.push({ id: langFieldId, value: String(langValue) });\n}\n\nlet duplicateLabelBody = null;\nif (safe && preMergeFields.length > 0) {\n  duplicateLabelBody = { ticket: { custom_fields: preMergeFields } };\n}\n\nreturn [{\n  json: {\n    safe,\n    skip_reasons: reasons,\n    keeper_ticket_id: keeperId,\n    loser_ticket_id: loserId,\n    keeper_status: keeper ? keeper.status : null,\n    loser_status: loser ? loser.status : null,\n    merge_body: mergeBody,\n    duplicate_label_body: duplicateLabelBody,\n    pre_merge_fields_applied: preMergeFields.length\n  }\n}];"
+      },
+      "id": "d563134c-1672-444c-8fa3-c9e25a93a080",
+      "name": "Evaluate merge safety",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "dh-safe-check",
+              "leftValue": "={{ $json.safe }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "485e0d60-7449-448c-b03e-ecb3968fe224",
+      "name": "Safe to merge?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1248,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "jsonBody": "={{ JSON.stringify($('Evaluate merge safety').first().json.merge_body) }}",
+        "method": "POST",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $('Evaluate merge safety').first().json.keeper_ticket_id + \"/merge\" }}"
+      },
+      "id": "d2629993-7e35-43d4-a2a4-9eee0b04d37c",
+      "name": "Zendesk: Merge duplicate into keeper",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1920,
+        -80
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "fJeStlnAYKtxvgKU",
+          "name": "Vinready Zendesk OAuth"
+        }
+      },
+      "notes": "Both merge comments are PRIVATE. Returns a job_status object - the merge runs as a background job."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "dh-merged",
+              "name": "merged",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "dh-keeper",
+              "name": "keeper_ticket_id",
+              "value": "={{ $(\"Evaluate merge safety\").first().json.keeper_ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "dh-loser",
+              "name": "loser_ticket_id",
+              "value": "={{ $(\"Evaluate merge safety\").first().json.loser_ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "dh-job",
+              "name": "job_status_url",
+              "value": "={{ $json.job_status ? $json.job_status.url : null }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c98f90bf-b91e-40ac-b414-87ace8d50f50",
+      "name": "Merge submitted",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2144,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "dh-skip-merged",
+              "name": "merged",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "id": "dh-skip-reasons",
+              "name": "skip_reasons",
+              "value": "={{ $json.skip_reasons.join(\", \") }}",
+              "type": "string"
+            },
+            {
+              "id": "dh-skip-keeper",
+              "name": "keeper_ticket_id",
+              "value": "={{ $json.keeper_ticket_id }}",
+              "type": "number"
+            },
+            {
+              "id": "dh-skip-loser",
+              "name": "loser_ticket_id",
+              "value": "={{ $json.loser_ticket_id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ae11a332-c819-412f-87da-64a8983b63c3",
+      "name": "Skip: not safe to merge",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1472,
+        112
+      ],
+      "notes": "Recorded in the execution log only. Nothing is written to Zendesk."
+    },
+    {
+      "parameters": {
+        "content": "# CS - Duplicate ticket handler\n\nCalled fire-and-forget by \"CS - User eligibility check - first message\" when the incoming ticket is NOT the oldest active ticket for that requester.\n\n**Input:** project_key, keeper_ticket_id, loser_ticket_id\n\nMerges the loser into the keeper via POST /tickets/{keeper}/merge. Zendesk sets the loser to **closed** (permanent, not reopenable) and tags it closed_by_merge.\n\nBoth merge comments are **private** - the customer is not notified, and the keeper is not bumped out of its current status.",
+        "height": 320,
+        "width": 420,
+        "color": 4
+      },
+      "id": "aa6a35ce-b4e7-4be9-8761-a061a1f4f4bb",
+      "name": "Sticky Note f503ee8c",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -336,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Safety re-checks (live)\n\nSkips the merge if any of these hold:\n- keeper or loser no longer active\n- different requesters\n- loser has an assignee\n- loser has a comment from anyone other than the requester or the automation agent\n\nThis makes the handler idempotent and safe to call from the scheduled sweep later.",
+        "height": 240,
+        "width": 400,
+        "color": 7
+      },
+      "id": "6c107900-35e8-4a29-bbc7-dbf1bccae2d8",
+      "name": "Sticky Note 341c4953",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        960,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## The merge call\n\nBody is built in the Code node and serialised with JSON.stringify so ticket descriptions containing quotes or newlines cannot break the payload.\n\nMerge runs as a **background job** - the response is a job_status, not a finished merge. Poll job_status.url if you ever need confirmation.",
+        "height": 180,
+        "width": 400,
+        "color": 6
+      },
+      "id": "7832bfbf-e3c5-41f9-a1d3-c5db0c500fb8",
+      "name": "Sticky Note 8d841cd5",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1520,
+        272
+      ]
+    },
+    {
+      "id": "510352be-1313-4794-af03-2167366cf552",
+      "name": "Apply duplicate label?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1472,
+        -80
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "dh-dup-label",
+              "leftValue": "={{ !!$json.duplicate_label_body }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "notes": "True only when ticket_custom_field_category AND category_value_duplicate_contact are both configured for this brand. Otherwise merge without labelling."
+    },
+    {
+      "id": "aa6eb8ca-abe3-4bc2-b55a-069993501e60",
+      "name": "Zendesk: Label loser as duplicate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1696,
+        -160
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "jsonBody": "={{ JSON.stringify($('Evaluate merge safety').first().json.duplicate_label_body) }}",
+        "method": "PUT",
+        "nodeCredentialType": "zendeskOAuth2Api",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $('Evaluate merge safety').first().json.loser_ticket_id }}"
+      },
+      "credentials": {
+        "zendeskOAuth2Api": {
+          "id": "fJeStlnAYKtxvgKU",
+          "name": "Vinready Zendesk OAuth"
+        }
+      },
+      "notes": "Sets the category field on the LOSER to Duplicate contact, before the merge closes it. onError is continueRegularOutput so a failure here never blocks the merge.",
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Set project_key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set project_key": {
+      "main": [
+        [
+          {
+            "node": "Get Project Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Project Config": {
+      "main": [
+        [
+          {
+            "node": "Restore trigger data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore trigger data": {
+      "main": [
+        [
+          {
+            "node": "Zendesk: Get both tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk: Get both tickets": {
+      "main": [
+        [
+          {
+            "node": "Zendesk: Get loser comments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk: Get loser comments": {
+      "main": [
+        [
+          {
+            "node": "Evaluate merge safety",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate merge safety": {
+      "main": [
+        [
+          {
+            "node": "Safe to merge?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Safe to merge?": {
+      "main": [
+        [
+          {
+            "node": "Apply duplicate label?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip: not safe to merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk: Merge duplicate into keeper": {
+      "main": [
+        [
+          {
+            "node": "Merge submitted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply duplicate label?": {
+      "main": [
+        [
+          {
+            "node": "Zendesk: Label loser as duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zendesk: Merge duplicate into keeper",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk: Label loser as duplicate": {
+      "main": [
+        [
+          {
+            "node": "Zendesk: Merge duplicate into keeper",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "BY3PNiyJJJ9EMdEi",
+    "callerPolicy": "workflowsFromSameOwner",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed"
+  },
+  "staticData": null,
+  "pinData": {},
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "XMaQOIYvwsgtsFMM",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "updatedAt": "2025-09-16T08:57:49.000Z"
+      },
+      "createdAt": "2026-09-21T11:03:52.118Z",
+      "updatedAt": "2026-09-21T11:03:52.118Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "979dda37-8084-47d6-8867-0634c3349bfa",
+    "workflowId": "XMaQOIYvwsgtsFMM",
+    "nodes": [
+      {
+        "parameters": {
+          "inputSource": "passthrough"
+        },
+        "id": "578658d8-61b3-41d5-a11a-a7b35ef9d593",
+        "name": "When Executed by Another Workflow",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          -320,
+          16
+        ]
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "dh-project-key",
+                "name": "project_key",
+                "value": "vinready_prod",
+                "type": "string"
+              }
+            ]
+          },
+          "includeOtherFields": true,
+          "options": {}
+        },
+        "id": "01270391-52f4-4b2d-b8b3-4b740e85b77a",
+        "name": "Set project_key",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          -96,
+          16
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "get",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "IRxwFN8iBhHLFQxQ",
+            "cachedResultName": "cs_project_config"
+          },
+          "matchType": "allConditions",
+          "filters": {
+            "conditions": [
+              {
+                "keyName": "project_key",
+                "keyValue": "={{ $(\"Set project_key\").first().json.project_key }}"
+              }
+            ]
+          }
+        },
+        "id": "5c023a0a-ce3b-431b-bc0a-aab67599dd06",
+        "name": "Get Project Config",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          128,
+          16
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "return $('When Executed by Another Workflow').all();"
+        },
+        "id": "ee8a5910-e7e6-4fc7-9188-6ac25c254bf6",
+        "name": "Restore trigger data",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          352,
+          16
+        ]
+      },
+      {
+        "parameters": {
+          "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/show_many.json?ids=\" + $(\"Restore trigger data\").first().json.keeper_ticket_id + \",\" + $(\"Restore trigger data\").first().json.loser_ticket_id }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "zendeskOAuth2Api",
+          "options": {}
+        },
+        "id": "0e8f9c17-2439-45ea-846a-8de3a91cc158",
+        "name": "Zendesk: Get both tickets",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          576,
+          16
+        ],
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 2000,
+        "credentials": {
+          "zendeskOAuth2Api": {
+            "id": "fJeStlnAYKtxvgKU",
+            "name": "Vinready Zendesk OAuth"
+          }
+        },
+        "notes": "One call for keeper + loser. Live state is authoritative - the caller view may be seconds stale."
+      },
+      {
+        "parameters": {
+          "url": "={{ \"https://\" + $(\"Get Project Config\").first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $(\"Restore trigger data\").first().json.loser_ticket_id + \"/comments.json\" }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "zendeskOAuth2Api",
+          "options": {}
+        },
+        "id": "225c2af1-68dd-4d40-baf6-ffabb87fbe31",
+        "name": "Zendesk: Get loser comments",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          800,
+          16
+        ],
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 2000,
+        "credentials": {
+          "zendeskOAuth2Api": {
+            "id": "fJeStlnAYKtxvgKU",
+            "name": "Vinready Zendesk OAuth"
+          }
+        },
+        "notes": "Used to detect whether a human agent has already replied on the duplicate."
+      },
+      {
+        "parameters": {
+          "jsCode": "// === Merge safety checks ===\n// Mode: \"Run Once for All Items\".\n// Input = the loser ticket's comments (from \"Zendesk: Get loser comments\").\n//\n// Re-verifies everything live before writing. Safe to call twice for the same\n// pair - the second call will find the loser closed and skip.\n\nconst ACTIVE = new Set(['new', 'open', 'pending', 'hold']);\n\nconst cfg = $('Get Project Config').first().json;\nconst input = $('Restore trigger data').first().json;\n\nconst keeperId = Number(input.keeper_ticket_id);\nconst loserId = Number(input.loser_ticket_id);\nconst automationAgentId = Number(cfg.automation_agent_id || 0);\n\nconst tickets = $('Zendesk: Get both tickets').first().json.tickets || [];\nconst keeper = tickets.find(t => Number(t.id) === keeperId) || null;\nconst loser = tickets.find(t => Number(t.id) === loserId) || null;\n\nconst comments = $input.first().json.comments || [];\n\nconst reasons = [];\n\nif (!keeperId || !loserId) reasons.push('missing_ticket_id');\nif (keeperId === loserId) reasons.push('same_ticket');\nif (!keeper) reasons.push('keeper_not_found');\nif (!loser) reasons.push('loser_not_found');\n\nif (keeper && !ACTIVE.has(String(keeper.status).toLowerCase())) reasons.push('keeper_no_longer_active');\nif (loser && !ACTIVE.has(String(loser.status).toLowerCase())) reasons.push('loser_no_longer_active');\n\nif (keeper && loser && Number(keeper.requester_id) !== Number(loser.requester_id)) reasons.push('different_requester');\n\nif (loser && loser.assignee_id) reasons.push('loser_has_assignee');\nif (loser) {\n  const touchedByAgent = comments.some(c => {\n    const author = Number(c.author_id);\n    return author !== Number(loser.requester_id) && author !== automationAgentId;\n  });\n  if (touchedByAgent) reasons.push('loser_touched_by_agent');\n}\n\nconst safe = reasons.length === 0;\n\nlet mergeBody = null;\nif (safe) {\n  const subject = String(loser.subject == null ? '' : loser.subject).trim();\n  const description = String(loser.description == null ? '' : loser.description).trim();\n\n  mergeBody = {\n    ids: [loserId],\n    target_comment: 'Duplicate ticket #' + loserId + ' from the same requester was merged into this ticket automatically and closed.\\n\\nSubject: ' + subject + '\\n\\nMessage from #' + loserId + ':\\n' + description,\n    target_comment_is_public: false,\n    source_comment: 'This ticket was merged into #' + keeperId + ' automatically, because the requester already had an active ticket.',\n    source_comment_is_public: false\n  };\n}\n\n// Set the Duplicate contact category AND the Language field on the loser BEFORE\n// merging. Merge closes the loser and a closed ticket cannot be updated, so this\n// is the only chance. Language is included because most brands mark it required\n// and Zendesk rejects the transition without it:\n//   422 RecordInvalid - \"Language: is required when solving a ticket\"\n// Each field is only sent when both its id and its per-brand value are set.\nconst preMergeFields = [];\n\nconst catFieldId = Number(cfg.ticket_custom_field_category);\nconst dupValue = cfg.category_value_duplicate_contact;\nif (Number.isFinite(catFieldId) && catFieldId > 0\n    && dupValue !== null && dupValue !== undefined && String(dupValue).trim() !== '') {\n  preMergeFields.push({ id: catFieldId, value: String(dupValue) });\n}\n\nconst langFieldId = Number(cfg.ticket_field_language_id);\nconst langValue = cfg.language_value_english;\nif (Number.isFinite(langFieldId) && langFieldId > 0\n    && langValue !== null && langValue !== undefined && String(langValue).trim() !== '') {\n  preMergeFields.push({ id: langFieldId, value: String(langValue) });\n}\n\nlet duplicateLabelBody = null;\nif (safe && preMergeFields.length > 0) {\n  duplicateLabelBody = { ticket: { custom_fields: preMergeFields } };\n}\n\nreturn [{\n  json: {\n    safe,\n    skip_reasons: reasons,\n    keeper_ticket_id: keeperId,\n    loser_ticket_id: loserId,\n    keeper_status: keeper ? keeper.status : null,\n    loser_status: loser ? loser.status : null,\n    merge_body: mergeBody,\n    duplicate_label_body: duplicateLabelBody,\n    pre_merge_fields_applied: preMergeFields.length\n  }\n}];"
+        },
+        "id": "d563134c-1672-444c-8fa3-c9e25a93a080",
+        "name": "Evaluate merge safety",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1024,
+          16
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "dh-safe-check",
+                "leftValue": "={{ $json.safe }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "485e0d60-7449-448c-b03e-ecb3968fe224",
+        "name": "Safe to merge?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1248,
+          16
+        ]
+      },
+      {
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "jsonBody": "={{ JSON.stringify($('Evaluate merge safety').first().json.merge_body) }}",
+          "method": "POST",
+          "nodeCredentialType": "zendeskOAuth2Api",
+          "options": {},
+          "sendBody": true,
+          "specifyBody": "json",
+          "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $('Evaluate merge safety').first().json.keeper_ticket_id + \"/merge\" }}"
+        },
+        "id": "d2629993-7e35-43d4-a2a4-9eee0b04d37c",
+        "name": "Zendesk: Merge duplicate into keeper",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          1920,
+          -80
+        ],
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 3000,
+        "credentials": {
+          "zendeskOAuth2Api": {
+            "id": "fJeStlnAYKtxvgKU",
+            "name": "Vinready Zendesk OAuth"
+          }
+        },
+        "notes": "Both merge comments are PRIVATE. Returns a job_status object - the merge runs as a background job."
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "dh-merged",
+                "name": "merged",
+                "value": true,
+                "type": "boolean"
+              },
+              {
+                "id": "dh-keeper",
+                "name": "keeper_ticket_id",
+                "value": "={{ $(\"Evaluate merge safety\").first().json.keeper_ticket_id }}",
+                "type": "number"
+              },
+              {
+                "id": "dh-loser",
+                "name": "loser_ticket_id",
+                "value": "={{ $(\"Evaluate merge safety\").first().json.loser_ticket_id }}",
+                "type": "number"
+              },
+              {
+                "id": "dh-job",
+                "name": "job_status_url",
+                "value": "={{ $json.job_status ? $json.job_status.url : null }}",
+                "type": "string"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "c98f90bf-b91e-40ac-b414-87ace8d50f50",
+        "name": "Merge submitted",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          2144,
+          -80
+        ]
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "dh-skip-merged",
+                "name": "merged",
+                "value": false,
+                "type": "boolean"
+              },
+              {
+                "id": "dh-skip-reasons",
+                "name": "skip_reasons",
+                "value": "={{ $json.skip_reasons.join(\", \") }}",
+                "type": "string"
+              },
+              {
+                "id": "dh-skip-keeper",
+                "name": "keeper_ticket_id",
+                "value": "={{ $json.keeper_ticket_id }}",
+                "type": "number"
+              },
+              {
+                "id": "dh-skip-loser",
+                "name": "loser_ticket_id",
+                "value": "={{ $json.loser_ticket_id }}",
+                "type": "number"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "ae11a332-c819-412f-87da-64a8983b63c3",
+        "name": "Skip: not safe to merge",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          1472,
+          112
+        ],
+        "notes": "Recorded in the execution log only. Nothing is written to Zendesk."
+      },
+      {
+        "parameters": {
+          "content": "# CS - Duplicate ticket handler\n\nCalled fire-and-forget by \"CS - User eligibility check - first message\" when the incoming ticket is NOT the oldest active ticket for that requester.\n\n**Input:** project_key, keeper_ticket_id, loser_ticket_id\n\nMerges the loser into the keeper via POST /tickets/{keeper}/merge. Zendesk sets the loser to **closed** (permanent, not reopenable) and tags it closed_by_merge.\n\nBoth merge comments are **private** - the customer is not notified, and the keeper is not bumped out of its current status.",
+          "height": 320,
+          "width": 420,
+          "color": 4
+        },
+        "id": "aa6a35ce-b4e7-4be9-8761-a061a1f4f4bb",
+        "name": "Sticky Note f503ee8c",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -336,
+          512
+        ]
+      },
+      {
+        "parameters": {
+          "content": "## Safety re-checks (live)\n\nSkips the merge if any of these hold:\n- keeper or loser no longer active\n- different requesters\n- loser has an assignee\n- loser has a comment from anyone other than the requester or the automation agent\n\nThis makes the handler idempotent and safe to call from the scheduled sweep later.",
+          "height": 240,
+          "width": 400,
+          "color": 7
+        },
+        "id": "6c107900-35e8-4a29-bbc7-dbf1bccae2d8",
+        "name": "Sticky Note 341c4953",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          960,
+          512
+        ]
+      },
+      {
+        "parameters": {
+          "content": "## The merge call\n\nBody is built in the Code node and serialised with JSON.stringify so ticket descriptions containing quotes or newlines cannot break the payload.\n\nMerge runs as a **background job** - the response is a job_status, not a finished merge. Poll job_status.url if you ever need confirmation.",
+          "height": 180,
+          "width": 400,
+          "color": 6
+        },
+        "id": "7832bfbf-e3c5-41f9-a1d3-c5db0c500fb8",
+        "name": "Sticky Note 8d841cd5",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          1520,
+          272
+        ]
+      },
+      {
+        "id": "510352be-1313-4794-af03-2167366cf552",
+        "name": "Apply duplicate label?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1472,
+          -80
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "dh-dup-label",
+                "leftValue": "={{ !!$json.duplicate_label_body }}",
+                "operator": {
+                  "operation": "true",
+                  "singleValue": true,
+                  "type": "boolean"
+                },
+                "rightValue": ""
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            }
+          },
+          "options": {}
+        },
+        "notes": "True only when ticket_custom_field_category AND category_value_duplicate_contact are both configured for this brand. Otherwise merge without labelling."
+      },
+      {
+        "id": "aa6eb8ca-abe3-4bc2-b55a-069993501e60",
+        "name": "Zendesk: Label loser as duplicate",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          1696,
+          -160
+        ],
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "jsonBody": "={{ JSON.stringify($('Evaluate merge safety').first().json.duplicate_label_body) }}",
+          "method": "PUT",
+          "nodeCredentialType": "zendeskOAuth2Api",
+          "options": {},
+          "sendBody": true,
+          "specifyBody": "json",
+          "url": "={{ \"https://\" + $('Get Project Config').first().json.zendesk_domain + \".zendesk.com/api/v2/tickets/\" + $('Evaluate merge safety').first().json.loser_ticket_id }}"
+        },
+        "credentials": {
+          "zendeskOAuth2Api": {
+            "id": "fJeStlnAYKtxvgKU",
+            "name": "Vinready Zendesk OAuth"
+          }
+        },
+        "notes": "Sets the category field on the LOSER to Duplicate contact, before the merge closes it. onError is continueRegularOutput so a failure here never blocks the merge.",
+        "onError": "continueRegularOutput"
+      }
+    ],
+    "connections": {
+      "When Executed by Another Workflow": {
+        "main": [
+          [
+            {
+              "node": "Set project_key",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Set project_key": {
+        "main": [
+          [
+            {
+              "node": "Get Project Config",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Project Config": {
+        "main": [
+          [
+            {
+              "node": "Restore trigger data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Restore trigger data": {
+        "main": [
+          [
+            {
+              "node": "Zendesk: Get both tickets",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Zendesk: Get both tickets": {
+        "main": [
+          [
+            {
+              "node": "Zendesk: Get loser comments",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Zendesk: Get loser comments": {
+        "main": [
+          [
+            {
+              "node": "Evaluate merge safety",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Evaluate merge safety": {
+        "main": [
+          [
+            {
+              "node": "Safe to merge?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Safe to merge?": {
+        "main": [
+          [
+            {
+              "node": "Apply duplicate label?",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Skip: not safe to merge",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Zendesk: Merge duplicate into keeper": {
+        "main": [
+          [
+            {
+              "node": "Merge submitted",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Apply duplicate label?": {
+        "main": [
+          [
+            {
+              "node": "Zendesk: Label loser as duplicate",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Zendesk: Merge duplicate into keeper",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Zendesk: Label loser as duplicate": {
+        "main": [
+          [
+            {
+              "node": "Zendesk: Merge duplicate into keeper",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Antonio antonio.marusic@efuturemedia.com",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "createdAt": "2026-10-19T20:58:47.152Z",
+    "updatedAt": "2026-10-19T20:58:47.152Z",
+    "workflowPublishHistory": [
+      {
+        "id": 2826,
+        "workflowId": "XMaQOIYvwsgtsFMM",
+        "versionId": "979dda37-8084-47d6-8867-0634c3349bfa",
+        "event": "activated",
+        "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e",
+        "createdAt": "2026-10-20T08:18:46.420Z"
+      }
+    ]
+  }
+}
