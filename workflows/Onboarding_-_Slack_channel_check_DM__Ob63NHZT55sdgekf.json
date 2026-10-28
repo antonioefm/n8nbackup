@@ -1,0 +1,440 @@
+{
+  "id": "Ob63NHZT55sdgekf",
+  "name": "Onboarding - Slack channel check DM",
+  "description": "Called by the employee-onboarding Claude skill via n8n MCP (chatInput = JSON with name, email, role, projects, channels, test). DMs the onboarding_settings recipients (Raul) from the Automations Slack account, asking them to check the newcomer's Slack cha",
+  "active": true,
+  "activeVersionId": "694038f6-0416-4380-b543-dc1ea845514d",
+  "createdAt": "2026-10-21T09:26:26.081Z",
+  "updatedAt": "2026-10-21T09:26:26.081Z",
+  "isArchived": false,
+  "versionId": "694038f6-0416-4380-b543-dc1ea845514d",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "3087a4d7-16f8-4e53-96fa-622394b11755",
+      "name": "Called by onboarding skill",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.5,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "public": false,
+        "options": {
+          "responseMode": "lastNode"
+        }
+      },
+      "webhookId": "14ba3e71-5795-4965-b846-7214b1c70314"
+    },
+    {
+      "id": "bf85c466-8398-4932-a151-793d593be047",
+      "name": "Get onboarding settings",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "fJ83uDRQoLgHauhH",
+          "cachedResultName": "onboarding_settings"
+        },
+        "returnAll": true
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "65a06b2d-7251-451d-8f4e-6c06f43c38a7",
+      "name": "Build channel-check message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Input arrives as a JSON string in chatInput, sent by the onboarding skill via the n8n MCP.\n// Expected: { \"name\": \"Full Name\", \"email\": \"x@efuturemedia.com\", \"role\": \"Role\",\n//             \"projects\": \"Realchecker\" or [\"A\",\"B\"], \"channels\": [\"cross-devops\", ...],\n//             \"firstName\": \"optional\", \"test\": false }\nconst raw = $('Called by onboarding skill').first().json.chatInput;\nlet input;\ntry { input = JSON.parse(raw); } catch (e) { throw new Error('chatInput is not valid JSON: ' + raw); }\n\nfunction str(v) { return v === null || v === undefined ? '' : String(v).trim(); }\nconst name = str(input.name);\nconst email = str(input.email);\nconst role = str(input.role);\nconst projects = Array.isArray(input.projects) ? input.projects.map(str).filter(Boolean).join(', ') : str(input.projects);\nif (!name) { throw new Error('Missing \"name\"'); }\nif (!email || email.indexOf('@') < 0) { throw new Error('Missing or invalid \"email\"'); }\nif (!role) { throw new Error('Missing \"role\"'); }\nif (!Array.isArray(input.channels)) { throw new Error('\"channels\" must be an array of channel names (can be empty)'); }\nconst channels = input.channels.map(function (c) { return str(c).replace(/^#/, ''); }).filter(Boolean);\nconst firstName = str(input.firstName) || name.split(/\\s+/)[0];\nconst isTest = input.test === true;\n\n// Settings live in the onboarding_settings data table so recipients can change without editing this workflow.\nconst settings = {};\nconst rows = $input.all();\nfor (let i = 0; i < rows.length; i++) {\n  const r = rows[i].json;\n  if (r && r.setting_key) { settings[r.setting_key] = str(r.setting_value); }\n}\nconst recipientSetting = isTest ? settings.test_recipient : settings.channel_check_recipients;\nif (!recipientSetting) { throw new Error('onboarding_settings has no value for ' + (isTest ? 'test_recipient' : 'channel_check_recipients')); }\nconst recipients = recipientSetting.split(',').map(str).filter(Boolean);\n\nlet text = (isTest ? '[TEST] ' : '') + 'A Slack account for *' + name + '* (' + email + ') has been created. Please check that they have access to the needed Slack channels.\\n';\ntext += 'Role: ' + role + (projects ? ' · Projects: ' + projects : '') + '\\n';\ntext += 'Based on the channels Antonio is part of, these were the channels suggested for ' + firstName + ':\\n';\nif (channels.length === 0) {\n  text += '- none of Antonio\\'s channels matched';\n} else {\n  text += channels.map(function (c) { return '- #' + c; }).join('\\n');\n}\n\nreturn recipients.map(function (r) { return { json: { recipientEmail: r, text: text, test: isTest, newcomer: name } }; });"
+      }
+    },
+    {
+      "id": "cd2daa72-84bf-4e6a-8629-cd905652c840",
+      "name": "Look up recipient on Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "resource": "user",
+        "operation": "lookupByEmail",
+        "authentication": "oAuth2",
+        "email": "={{ $json.recipientEmail }}"
+      },
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "tSpUlRaNhgWKbKN4",
+          "name": "Automations Slack account"
+        }
+      },
+      "webhookId": "af51b416-5750-49b0-a1d5-2d7b4d5b5dda"
+    },
+    {
+      "id": "c58a52e3-d4ac-4fb1-9929-e3e6c68e0e07",
+      "name": "Send DM from Automations",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "authentication": "oAuth2",
+        "select": "user",
+        "user": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.id }}"
+        },
+        "messageType": "text",
+        "text": "={{ $('Build channel-check message').item.json.text }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false,
+          "mrkdwn": true
+        }
+      },
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "tSpUlRaNhgWKbKN4",
+          "name": "Automations Slack account"
+        }
+      },
+      "webhookId": "68087bfc-efcf-465d-a200-4b8cae640a35"
+    },
+    {
+      "id": "39276549-a310-4893-bb1f-7b45c7e57537",
+      "name": "Reply to caller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const sent = $input.all();\nconst built = $('Build channel-check message').all();\nconst lines = [];\nfor (let i = 0; i < sent.length; i++) {\n  const s = sent[i].json;\n  const b = built[i] ? built[i].json : {};\n  if (!s.ok) { throw new Error('Slack did not confirm the DM to ' + (b.recipientEmail || 'recipient ' + i)); }\n  lines.push('Sent to ' + b.recipientEmail + ' (channel ' + s.channel + ', ts ' + s.message_timestamp + ')');\n}\nreturn [{ json: { output: (built[0] && built[0].json.test ? '[TEST] ' : '') + lines.join('; ') } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Called by onboarding skill": {
+      "main": [
+        [
+          {
+            "node": "Get onboarding settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get onboarding settings": {
+      "main": [
+        [
+          {
+            "node": "Build channel-check message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build channel-check message": {
+      "main": [
+        [
+          {
+            "node": "Look up recipient on Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Look up recipient on Slack": {
+      "main": [
+        [
+          {
+            "node": "Send DM from Automations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send DM from Automations": {
+      "main": [
+        [
+          {
+            "node": "Reply to caller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "Ob63NHZT55sdgekf",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "updatedAt": "2025-09-16T08:57:49.000Z"
+      },
+      "createdAt": "2026-10-21T09:26:26.094Z",
+      "updatedAt": "2026-10-21T09:26:26.094Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "694038f6-0416-4380-b543-dc1ea845514d",
+    "workflowId": "Ob63NHZT55sdgekf",
+    "nodes": [
+      {
+        "id": "3087a4d7-16f8-4e53-96fa-622394b11755",
+        "name": "Called by onboarding skill",
+        "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+        "typeVersion": 1.5,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "public": false,
+          "options": {
+            "responseMode": "lastNode"
+          }
+        },
+        "webhookId": "14ba3e71-5795-4965-b846-7214b1c70314"
+      },
+      {
+        "id": "bf85c466-8398-4932-a151-793d593be047",
+        "name": "Get onboarding settings",
+        "type": "n8n-nodes-base.dataTable",
+        "typeVersion": 1.1,
+        "position": [
+          224,
+          0
+        ],
+        "parameters": {
+          "resource": "row",
+          "operation": "get",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "fJ83uDRQoLgHauhH",
+            "cachedResultName": "onboarding_settings"
+          },
+          "returnAll": true
+        },
+        "executeOnce": true
+      },
+      {
+        "id": "65a06b2d-7251-451d-8f4e-6c06f43c38a7",
+        "name": "Build channel-check message",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          448,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "// Input arrives as a JSON string in chatInput, sent by the onboarding skill via the n8n MCP.\n// Expected: { \"name\": \"Full Name\", \"email\": \"x@efuturemedia.com\", \"role\": \"Role\",\n//             \"projects\": \"Realchecker\" or [\"A\",\"B\"], \"channels\": [\"cross-devops\", ...],\n//             \"firstName\": \"optional\", \"test\": false }\nconst raw = $('Called by onboarding skill').first().json.chatInput;\nlet input;\ntry { input = JSON.parse(raw); } catch (e) { throw new Error('chatInput is not valid JSON: ' + raw); }\n\nfunction str(v) { return v === null || v === undefined ? '' : String(v).trim(); }\nconst name = str(input.name);\nconst email = str(input.email);\nconst role = str(input.role);\nconst projects = Array.isArray(input.projects) ? input.projects.map(str).filter(Boolean).join(', ') : str(input.projects);\nif (!name) { throw new Error('Missing \"name\"'); }\nif (!email || email.indexOf('@') < 0) { throw new Error('Missing or invalid \"email\"'); }\nif (!role) { throw new Error('Missing \"role\"'); }\nif (!Array.isArray(input.channels)) { throw new Error('\"channels\" must be an array of channel names (can be empty)'); }\nconst channels = input.channels.map(function (c) { return str(c).replace(/^#/, ''); }).filter(Boolean);\nconst firstName = str(input.firstName) || name.split(/\\s+/)[0];\nconst isTest = input.test === true;\n\n// Settings live in the onboarding_settings data table so recipients can change without editing this workflow.\nconst settings = {};\nconst rows = $input.all();\nfor (let i = 0; i < rows.length; i++) {\n  const r = rows[i].json;\n  if (r && r.setting_key) { settings[r.setting_key] = str(r.setting_value); }\n}\nconst recipientSetting = isTest ? settings.test_recipient : settings.channel_check_recipients;\nif (!recipientSetting) { throw new Error('onboarding_settings has no value for ' + (isTest ? 'test_recipient' : 'channel_check_recipients')); }\nconst recipients = recipientSetting.split(',').map(str).filter(Boolean);\n\nlet text = (isTest ? '[TEST] ' : '') + 'A Slack account for *' + name + '* (' + email + ') has been created. Please check that they have access to the needed Slack channels.\\n';\ntext += 'Role: ' + role + (projects ? ' · Projects: ' + projects : '') + '\\n';\ntext += 'Based on the channels Antonio is part of, these were the channels suggested for ' + firstName + ':\\n';\nif (channels.length === 0) {\n  text += '- none of Antonio\\'s channels matched';\n} else {\n  text += channels.map(function (c) { return '- #' + c; }).join('\\n');\n}\n\nreturn recipients.map(function (r) { return { json: { recipientEmail: r, text: text, test: isTest, newcomer: name } }; });"
+        }
+      },
+      {
+        "id": "cd2daa72-84bf-4e6a-8629-cd905652c840",
+        "name": "Look up recipient on Slack",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.7,
+        "position": [
+          672,
+          0
+        ],
+        "parameters": {
+          "resource": "user",
+          "operation": "lookupByEmail",
+          "authentication": "oAuth2",
+          "email": "={{ $json.recipientEmail }}"
+        },
+        "credentials": {
+          "slackOAuth2Api": {
+            "id": "tSpUlRaNhgWKbKN4",
+            "name": "Automations Slack account"
+          }
+        },
+        "webhookId": "af51b416-5750-49b0-a1d5-2d7b4d5b5dda"
+      },
+      {
+        "id": "c58a52e3-d4ac-4fb1-9929-e3e6c68e0e07",
+        "name": "Send DM from Automations",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.7,
+        "position": [
+          896,
+          0
+        ],
+        "parameters": {
+          "resource": "message",
+          "operation": "post",
+          "authentication": "oAuth2",
+          "select": "user",
+          "user": {
+            "__rl": true,
+            "mode": "id",
+            "value": "={{ $json.id }}"
+          },
+          "messageType": "text",
+          "text": "={{ $('Build channel-check message').item.json.text }}",
+          "otherOptions": {
+            "includeLinkToWorkflow": false,
+            "mrkdwn": true
+          }
+        },
+        "credentials": {
+          "slackOAuth2Api": {
+            "id": "tSpUlRaNhgWKbKN4",
+            "name": "Automations Slack account"
+          }
+        },
+        "webhookId": "68087bfc-efcf-465d-a200-4b8cae640a35"
+      },
+      {
+        "id": "39276549-a310-4893-bb1f-7b45c7e57537",
+        "name": "Reply to caller",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1120,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "const sent = $input.all();\nconst built = $('Build channel-check message').all();\nconst lines = [];\nfor (let i = 0; i < sent.length; i++) {\n  const s = sent[i].json;\n  const b = built[i] ? built[i].json : {};\n  if (!s.ok) { throw new Error('Slack did not confirm the DM to ' + (b.recipientEmail || 'recipient ' + i)); }\n  lines.push('Sent to ' + b.recipientEmail + ' (channel ' + s.channel + ', ts ' + s.message_timestamp + ')');\n}\nreturn [{ json: { output: (built[0] && built[0].json.test ? '[TEST] ' : '') + lines.join('; ') } }];"
+        }
+      }
+    ],
+    "connections": {
+      "Called by onboarding skill": {
+        "main": [
+          [
+            {
+              "node": "Get onboarding settings",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get onboarding settings": {
+        "main": [
+          [
+            {
+              "node": "Build channel-check message",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build channel-check message": {
+        "main": [
+          [
+            {
+              "node": "Look up recipient on Slack",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Look up recipient on Slack": {
+        "main": [
+          [
+            {
+              "node": "Send DM from Automations",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send DM from Automations": {
+        "main": [
+          [
+            {
+              "node": "Reply to caller",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Antonio antonio.marusic@efuturemedia.com (via MCP)",
+    "name": "Initial channel-check DM",
+    "description": "Created with 6 nodes: Called by onboarding skill, Get onboarding settings, Build channel-check message, Look up recipient on Slack, Send DM from Automations and 1 more",
+    "autosaved": false,
+    "createdAt": "2026-10-21T09:26:26.095Z",
+    "updatedAt": "2026-10-21T09:26:26.095Z",
+    "workflowPublishHistory": [
+      {
+        "id": 3024,
+        "workflowId": "Ob63NHZT55sdgekf",
+        "versionId": "694038f6-0416-4380-b543-dc1ea845514d",
+        "event": "activated",
+        "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e",
+        "createdAt": "2026-10-21T09:43:36.096Z"
+      }
+    ]
+  }
+}
