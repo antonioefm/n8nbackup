@@ -1,0 +1,236 @@
+{
+  "id": "u25PFLUopy6qEMXd",
+  "name": "Lokalise - BrainIQtest ES fetch",
+  "description": "Read-only: fetches BrainIQtest keys from apps/frontend/messages/en.json (new vs existing) and the shared glossary, for the ES translation sample.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-16T10:55:01.032Z",
+  "updatedAt": "2026-10-16T10:56:01.759Z",
+  "isArchived": false,
+  "versionId": "f5bafdb9-bb31-40a0-bbb6-5f4d43f56a06",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "b8fe5f7a-c01c-4b99-b5a5-3fb966b96bc1",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "917552c7-8656-4dd8-acd5-acc04b58189f",
+      "name": "Fetch Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/185916266aa3d6649ca6f7.57851232/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "include_translations",
+              "value": "1"
+            },
+            {
+              "name": "disable_references",
+              "value": "1"
+            },
+            {
+              "name": "limit",
+              "value": "500"
+            },
+            {
+              "name": "pagination",
+              "value": "cursor"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 50,
+              "requestInterval": 250
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "d2c61c38-3372-4447-b046-85ede0fe5a2a",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const CUT = 1792145000;\nconst rows = [];\nconst ref = [];\nlet seen = 0; const errors = [];\nconst langs = {};\nfor (const it of $input.all()) {\n  const r = it.json || {};\n  if (r.statusCode && r.statusCode !== 200) { errors.push(r.statusCode); }\n  for (const k of ((r.body || {}).keys || [])) {\n    seen++;\n    if (k.is_archived) { continue; }\n    const kn = (typeof k.key_name === 'object') ? (k.key_name.web || k.key_name.other || '') : k.key_name;\n    const t = {};\n    for (const tr of (k.translations || [])) {\n      langs[tr.language_iso] = 1;\n      let v = tr.translation; if (typeof v !== 'string') { v = JSON.stringify(v); }\n      t[tr.language_iso] = v;\n    }\n    const row = { id: k.key_id, k: kn, en: t.en || '', es: t.es || '', d: String(k.description || '').slice(0, 300), tg: k.tags || [], pl: k.is_plural ? 1 : 0, ts: k.created_at_timestamp };\n    if (k.created_at_timestamp >= CUT) { rows.push(row); } else { ref.push(row); }\n  }\n}\nreturn [{ json: { keys_seen: seen, new_count: rows.length, ref_count: ref.length, errors: errors, langs: Object.keys(langs), new_empty_es: rows.filter(function(x){return !x.es;}).length, rows: rows, ref: ref } }];\n"
+      }
+    },
+    {
+      "id": "893e99d0-59fa-46e6-83d9-c0817af2b069",
+      "name": "Fetch Glossary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "pagination": {
+            "pagination": {
+              "completeExpression": "={{ !$response.body.meta.hasMore }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20,
+              "paginationCompleteWhen": "other",
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "name": "cursor",
+                    "type": "qs",
+                    "value": "={{ $response.body.meta.nextCursor }}"
+                  }
+                ]
+              },
+              "requestInterval": 250
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "executeOnce": true,
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Keys": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape": {
+      "main": [
+        [
+          {
+            "node": "Fetch Glossary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "u25PFLUopy6qEMXd",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-16T10:55:01.035Z",
+      "updatedAt": "2026-10-16T10:55:01.035Z"
+    }
+  ],
+  "activeVersion": null
+}
