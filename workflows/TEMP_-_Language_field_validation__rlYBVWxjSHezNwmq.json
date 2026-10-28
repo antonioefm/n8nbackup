@@ -1,0 +1,248 @@
+{
+  "id": "rlYBVWxjSHezNwmq",
+  "name": "TEMP - Language field validation",
+  "description": "Temporary read-only workflow measuring how completely the language ticket field is populated on Personality and MyQRCode tickets from the previous full UTC day, before any report changes are built.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-09T11:31:58.511Z",
+  "updatedAt": "2026-10-09T11:32:03.852Z",
+  "isArchived": false,
+  "versionId": "531432be-30c1-4464-bbb3-a9d737561506",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "f7627183-030c-4085-98f8-a9e59a022f9b",
+      "name": "Run language sample",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -600,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a80f2f6a-5541-4ade-ac48-a33a1d0a37e5",
+      "name": "personality tickets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -380,
+        300
+      ],
+      "parameters": {
+        "url": "=https://personalitytest.zendesk.com/api/v2/search/export.json?filter%5Btype%5D=ticket&page%5Bsize%5D=1000&query={{ encodeURIComponent('created>=' + $now.toUTC().startOf('day').minus({ days: 1 }).toISO({ suppressMilliseconds: true }) + ' created<' + $now.toUTC().startOf('day').toISO({ suppressMilliseconds: true })) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {}
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      }
+    },
+    {
+      "id": "b6ee6a3e-e6d9-41b7-89a8-37ee9af3f83c",
+      "name": "personality fields",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -160,
+        300
+      ],
+      "parameters": {
+        "url": "https://personalitytest.zendesk.com/api/v2/ticket_fields.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {}
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "zendeskApi": {
+          "id": "z41y1j8bbsyi2W61",
+          "name": "Personality Zendesk prod account"
+        }
+      }
+    },
+    {
+      "id": "d7b582d9-742f-4830-bbe4-fd84feabf7a5",
+      "name": "myqrcode tickets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        60,
+        300
+      ],
+      "parameters": {
+        "url": "=https://myqrcode.zendesk.com/api/v2/search/export.json?filter%5Btype%5D=ticket&page%5Bsize%5D=1000&query={{ encodeURIComponent('created>=' + $now.toUTC().startOf('day').minus({ days: 1 }).toISO({ suppressMilliseconds: true }) + ' created<' + $now.toUTC().startOf('day').toISO({ suppressMilliseconds: true })) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {}
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "zendeskApi": {
+          "id": "xuMSyZRuUvHoUthd",
+          "name": "MyQRCode Zendesk account"
+        }
+      }
+    },
+    {
+      "id": "c2f11b9f-3d79-4ff7-a6bf-9fefcfff5c63",
+      "name": "myqrcode fields",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        280,
+        300
+      ],
+      "parameters": {
+        "url": "https://myqrcode.zendesk.com/api/v2/ticket_fields.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi",
+        "options": {}
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "zendeskApi": {
+          "id": "xuMSyZRuUvHoUthd",
+          "name": "MyQRCode Zendesk account"
+        }
+      }
+    },
+    {
+      "id": "75f8233b-8946-47e8-a62c-1b16ac8ef391",
+      "name": "Summarise",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function top(map, n) { return Object.keys(map).map(function (k) { return [k, map[k]]; }).sort(function (a, b) { return b[1] - a[1]; }).slice(0, n); }\nfunction pc(a, b) { return b ? Math.round(a / b * 1000) / 10 + '%' : '-'; }\nvar end = new Date(); end.setUTCHours(0, 0, 0, 0);\nvar start = new Date(end.getTime() - 86400000);\nfunction cfVal(t, id) {\n  var f = (t.custom_fields || []).filter(function (x) { return Number(x.id) === Number(id); })[0];\n  if (!f || f.value === null || f.value === undefined || f.value === '' || f.value === false) return null;\n  return String(f.value);\n}\nfunction analyse(brand, ticketsNode, fieldsNode) {\n  var tj = $(ticketsNode).first().json || {};\n  var tickets = (tj.results || []).filter(function (t) { return t && t.id; });\n  var fields = (($(fieldsNode).first().json || {}).ticket_fields) || [];\n  var cat = fields.filter(function (f) { return /categor/i.test(String(f.title || '')) && f.active && f.type === 'tagger'; })[0];\n  var langFields = fields.filter(function (f) { return /lang/i.test(String(f.title || '')); });\n  var res = {\n    brand: brand,\n    window_utc: start.toISOString().slice(0, 16) + ' to ' + end.toISOString().slice(0, 16),\n    sampled: tickets.length,\n    more_than_one_page: !!(tj.meta && tj.meta.has_more),\n    tickets_carry_custom_fields: tickets.filter(function (t) { return Array.isArray(t.custom_fields) && t.custom_fields.length; }).length,\n    fetch_error: tj.error ? String(JSON.stringify(tj.error)).slice(0, 200) : '',\n    category_field_for_gap_analysis: cat ? cat.id + ': ' + cat.title : 'none found',\n    language_fields: []\n  };\n  langFields.forEach(function (f) {\n    var names = {};\n    (f.custom_field_options || []).forEach(function (o) { names[o.value] = o.name; });\n    var set = 0, byCh = {}, byStatus = {}, values = {}, missCat = {};\n    tickets.forEach(function (t) {\n      var ch = (t.via && t.via.channel) || 'unknown';\n      var b = byCh[ch] = byCh[ch] || { n: 0, set: 0 };\n      var s = byStatus[t.status] = byStatus[t.status] || { n: 0, set: 0 };\n      b.n++; s.n++;\n      var v = cfVal(t, f.id);\n      if (v !== null) { set++; b.set++; s.set++; values[v] = (values[v] || 0) + 1; }\n      else { var c = cat ? (cfVal(t, cat.id) || '(no category)') : '(n/a)'; missCat[c] = (missCat[c] || 0) + 1; }\n    });\n    var chOut = {}; Object.keys(byCh).forEach(function (k) { chOut[k] = byCh[k].set + '/' + byCh[k].n + ' (' + pc(byCh[k].set, byCh[k].n) + ')'; });\n    var stOut = {}; Object.keys(byStatus).forEach(function (k) { stOut[k] = byStatus[k].set + '/' + byStatus[k].n + ' (' + pc(byStatus[k].set, byStatus[k].n) + ')'; });\n    res.language_fields.push({\n      id: f.id, title: f.title, type: f.type, active: f.active, options: (f.custom_field_options || []).length,\n      coverage: set + '/' + tickets.length + ' (' + pc(set, tickets.length) + ')',\n      coverage_by_channel: chOut,\n      coverage_by_status: stOut,\n      distinct_values: Object.keys(values).length,\n      top_values: top(values, 15).map(function (x) { return [x[0], names[x[0]] || '(not an option)', x[1]]; }),\n      ambiguous_values: top(values, 100).filter(function (x) { return /other|unknown|undetermin|n\\/a|none|^-$/i.test(x[0] + ' ' + (names[x[0]] || '')); }),\n      missing_by_category: top(missCat, 10)\n    });\n  });\n  return res;\n}\nreturn [\n  { json: analyse('personality', 'personality tickets', 'personality fields') },\n  { json: analyse('myqrcode', 'myqrcode tickets', 'myqrcode fields') }\n];"
+      }
+    },
+    {
+      "id": "08fd79f6-7ab4-47ef-9a77-ab5e777da078",
+      "name": "Sticky Note a0138879",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        100,
+        300
+      ],
+      "parameters": {
+        "content": "## TEMPORARY - language field validation\n\nRead-only. Takes every ticket created in the previous full UTC day - the same window the daily report uses - and measures how often each language-like ticket field is filled, by channel, status and category, plus the value distribution.\n\nDelete once the language source has been decided.",
+        "color": 3
+      }
+    }
+  ],
+  "connections": {
+    "Run language sample": {
+      "main": [
+        [
+          {
+            "node": "personality tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "personality tickets": {
+      "main": [
+        [
+          {
+            "node": "personality fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "personality fields": {
+      "main": [
+        [
+          {
+            "node": "myqrcode tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "myqrcode tickets": {
+      "main": [
+        [
+          {
+            "node": "myqrcode fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "myqrcode fields": {
+      "main": [
+        [
+          {
+            "node": "Summarise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "rlYBVWxjSHezNwmq",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "updatedAt": "2025-09-16T08:57:49.000Z"
+      },
+      "createdAt": "2026-10-09T11:31:58.515Z",
+      "updatedAt": "2026-10-09T11:31:58.515Z"
+    }
+  ],
+  "activeVersion": null
+}
