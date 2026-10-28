@@ -1,0 +1,282 @@
+{
+  "id": "FYa4oNAVGMU3Sbgp",
+  "name": "Lokalise key tags + descriptions (WRITES to Lokalise)",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-20T10:07:13.939Z",
+  "updatedAt": "2026-10-26T12:12:39.385Z",
+  "isArchived": false,
+  "versionId": "eace72a2-1e6b-4311-a2b1-07fa67b9572a",
+  "versionCounter": 21,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "57901601-cad4-46c4-ab30-96f3a7fdba6e",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "bd7153db-195b-4a94-9541-6879b379e5df",
+      "name": "Params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Chat AI - frontend, 26 Oct 2026: descriptions for the 4 tag-2610 image style titles. Written only where the live description is empty.\nconst DESCS = {\n  \"965509844\": \"Landing page, 'Image styles' section: title on a style card showing a photo turned into a portrait painted in watercolor by the AI image generator. Short card title: no final period, use your language's capitalization (no English title case), keep about as short as the English.\",\n  \"965509845\": \"Landing page, 'Image styles' section: title on a style card showing a photo converted into a black-and-white (single-colour) image by the AI image generator. Short card title: no final period, use your language's capitalization (no English title case), keep about as short as the English.\",\n  \"965509846\": \"Landing page, 'Image styles' section: title on a style card showing a photo turned into a chibi illustration (Japanese anime/manga style with a small body and an oversized head) by the AI image generator. 'Chibi' is normally kept as is. Short card title: no final period.\",\n  \"965509847\": \"Landing page, 'Image styles' section: title on a style card for the style that shows the person's face with suggested makeup looks (AI makeup suggestions/try-on). 'Guide' means suggestions/how-to, not a person. Short card title: no final period, use your language's capitalization (no English title case), keep about as short as the English.\"\n};\nreturn [{ json: { project_id: '691331356a3b9a68428ab3.43540470', descs: DESCS, key_ids: Object.keys(DESCS) } }];"
+      }
+    },
+    {
+      "id": "9df747bf-871d-40d6-8de6-04f6b1b1c9be",
+      "name": "Get Current",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?limit=500&include_translations=1&filter_key_ids={{ $json.key_ids.join(\",\") }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "b4064924-845f-4892-bb44-232986616f4e",
+      "name": "Build",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Guards: skip archived; description written only where the live description is empty (never overwrite an existing one).\nconst p = $('Params').first().json; const keys = ($input.first().json.keys) || [];\nconst byId = {}; for (const k of keys) { byId[k.key_id] = k; }\nconst out = []; const skipped = []; const before = [];\nfor (const id of p.key_ids) {\n  const k = byId[id]; if (!k || k.is_archived) { skipped.push({ id: id, why: 'missing/archived' }); continue; }\n  before.push({ id: k.key_id, description: k.description || '' });\n  if (String(k.description || '').trim()) { skipped.push({ id: id, why: 'description already set', now: k.description }); continue; }\n  out.push({ key_id: Number(id), description: p.descs[id] });\n}\nif (out.length === 0) { throw new Error('Nothing to write: ' + JSON.stringify(skipped)); }\nreturn [{ json: { body: { keys: out }, skipped: skipped, before: before, plan: out.map(function (x) { return x.key_id; }) } }];"
+      }
+    },
+    {
+      "id": "85e0ff9b-482e-4a7b-8172-886391a073a1",
+      "name": "Write Tags",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $('Params').first().json.project_id }}/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchInterval": 1500,
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "disabled": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "304927e6-8408-437b-9c11-843b6410b269",
+      "name": "Read Back",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $('Params').first().json.project_id }}/keys?limit=500&include_translations=1&filter_key_ids={{ $('Params').first().json.key_ids.join(',') }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "6fc3c2f7-19e6-49fa-84a3-47d55630333b",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const p = $('Params').first().json; const B = $('Build').first().json; const keys = ($input.first().json.keys) || [];\nconst byId = {}; for (const k of keys) { byId[k.key_id] = k; }\nconst res = B.plan.map(function (id) { const k = byId[id] || {}; return { id: id, ok: k.description === p.descs[String(id)], description: k.description, tags: k.tags }; });\nconst bad = res.filter(function (x) { return !x.ok; });\nreturn [{ json: { ok: bad.length === 0, results: res, skipped: B.skipped, bad: bad } }];"
+      }
+    },
+    {
+      "id": "3aa6ccae-5ca3-4e69-a210-89ad24d8a425",
+      "name": "Rechunk",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Lokalise returned 500 on a 40-key PUT: send 10 keys per call.\nconst out = [];\nfor (const it of $input.all()) { const ks = it.json.body.keys; for (let i = 0; i < ks.length; i += 10) { out.push({ json: { body: { keys: ks.slice(i, i + 10) } } }); } }\nreturn out;",
+        "mode": "runOnceForAllItems"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Params": {
+      "main": [
+        [
+          {
+            "node": "Get Current",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Current": {
+      "main": [
+        [
+          {
+            "node": "Build",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Tags": {
+      "main": [
+        [
+          {
+            "node": "Read Back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Back": {
+      "main": [
+        [
+          {
+            "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build": {
+      "main": [
+        [
+          {
+            "node": "Rechunk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rechunk": {
+      "main": [
+        [
+          {
+            "node": "Write Tags",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "FYa4oNAVGMU3Sbgp",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-20T10:07:13.943Z",
+      "updatedAt": "2026-10-20T10:07:13.943Z"
+    }
+  ],
+  "activeVersion": null
+}
