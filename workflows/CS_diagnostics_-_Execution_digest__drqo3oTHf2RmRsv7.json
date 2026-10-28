@@ -1,0 +1,245 @@
+{
+  "id": "drqo3oTHf2RmRsv7",
+  "name": "CS diagnostics - Execution digest",
+  "description": "Read-only digest of one n8n execution (error, inputs, ticket, parent link, draft status) for CS diagnostics. Called by the daily incident pack.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-22T10:22:43.807Z",
+  "updatedAt": "2026-10-22T11:08:11.829Z",
+  "isArchived": false,
+  "versionId": "3bfdf91a-8de4-4183-b9ba-fd5a3252d970",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "2645084f-973a-4928-87aa-485c32ca79e8",
+      "name": "When called by another workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "workflow_id",
+              "type": "string"
+            },
+            {
+              "name": "execution_id",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "53f03a9c-3a01-46e1-bb08-adf1ffc3141a",
+      "name": "Has execution id",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.execution_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "ee356d55-fc2b-4928-9b37-22978a477029",
+      "name": "Get execution",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://efuturemedia.app.n8n.cloud/api/v1/executions/{{ $json.execution_id }}?includeData=true",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "n8nApi": {
+          "id": "infJA7C3IYva1zHz",
+          "name": "n8n api"
+        }
+      }
+    },
+    {
+      "id": "1173e8a0-f717-44b7-800b-8faa51e99de5",
+      "name": "Get workflow",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        720,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://efuturemedia.app.n8n.cloud/api/v1/workflows/{{ $(\"Has execution id\").item.json.workflow_id || $json.workflowId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "n8nApi": {
+          "id": "infJA7C3IYva1zHz",
+          "name": "n8n api"
+        }
+      }
+    },
+    {
+      "id": "197bbfc6-f73e-4422-8b6a-be68cd6daa67",
+      "name": "Build digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const BASE = 'https://efuturemedia.app.n8n.cloud';\nconst input = $('Has execution id').first().json;\nconst ex = $('Get execution').first().json || {};\nlet wf = {};\ntry { wf = $('Get workflow').first().json || {}; } catch (e) { wf = {}; }\nconst cut = (v, n) => {\n  if (v === undefined || v === null) return null;\n  let s;\n  try { s = typeof v === 'string' ? v : JSON.stringify(v); } catch (e) { s = String(v); }\n  if (s === undefined) return null;\n  return s.length > n ? s.slice(0, n) + ' [...+' + (s.length - n) + ' chars]' : s;\n};\nconst subset = (d, r) => {\n  if (d === r) return true;\n  if (d === null || r === null || typeof d !== 'object' || typeof r !== 'object') return JSON.stringify(d) === JSON.stringify(r);\n  if (Array.isArray(d)) { if (!Array.isArray(r) || d.length !== r.length) return false; return d.every((x, i) => subset(x, r[i])); }\n  return Object.keys(d).every(k => subset(d[k], r[k]));\n};\nconst exId = String(input.execution_id || ex.id || '');\nconst wfId = String(input.workflow_id || ex.workflowId || '');\nconst out = {\n  execution_id: exId,\n  workflow_id: wfId,\n  workflow_name: wf.name || null,\n  execution_url: BASE + '/workflow/' + wfId + '/executions/' + exId,\n  workflow_url: BASE + '/workflow/' + wfId\n};\nif (wf.id) {\n  out.workflow_active = !!wf.active;\n  out.has_unpublished_draft = !!(wf.activeVersionId && wf.versionId && wf.activeVersionId !== wf.versionId);\n}\nif (!ex.id) {\n  out.available = false;\n  out.note = 'Execution not returned by the n8n API (most likely pruned by retention). ' + (cut(ex.message || ex, 200) || '');\n  return [{ json: out }];\n}\nout.available = true;\nout.status = ex.status;\nout.mode = ex.mode;\nout.started_at = ex.startedAt;\nout.stopped_at = ex.stoppedAt;\nconst data = ex.data || {};\nconst rd = data.resultData || {};\nconst runData = rd.runData || {};\nconst err = rd.error || null;\nconst exd = data.executionData || {};\nconst nodes = Object.keys(runData).map(name => {\n  const runs = runData[name] || [];\n  const f = runs[0] || {};\n  return { name: name, idx: typeof f.executionIndex === 'number' ? f.executionIndex : 999999, start: f.startTime || 0, runs: runs };\n}).sort((a, b) => (a.idx - b.idx) || (a.start - b.start));\nout.nodes_executed = nodes.length;\nout.path_tail = nodes.slice(-30).map(n => n.name);\nout.last_node_executed = rd.lastNodeExecuted || null;\nconst firstJson = n => { try { return n.runs[n.runs.length - 1].data.main[0][0].json; } catch (e) { return null; } };\nconst trig = nodes[0] || null;\nconst trigJson = trig ? firstJson(trig) : null;\nlet parent = data.parentExecution || null;\nif (!parent && trig && trig.runs[0] && trig.runs[0].metadata && trig.runs[0].metadata.parentExecution) parent = trig.runs[0].metadata.parentExecution;\nif (!parent && exd.runtimeData && exd.runtimeData.parentExecutionId) parent = { executionId: exd.runtimeData.parentExecutionId };\nout.parent_execution = parent ? { execution_id: String(parent.executionId), workflow_id: parent.workflowId ? String(parent.workflowId) : null } : null;\nif (trigJson && trigJson.headers && trigJson.headers['x-zendesk-webhook-id']) {\n  out.zendesk_webhook = { webhook_id: trigJson.headers['x-zendesk-webhook-id'], invocation_id: trigJson.headers['x-zendesk-webhook-invocation-id'] || null };\n}\nconst trigClean = trigJson && trigJson.body && trigJson.headers ? trigJson.body : trigJson;\nout.trigger = trig ? { node: trig.name, input: cut(trigClean, 2500) } : null;\nif (err) {\n  const en = err.node || {};\n  const errNodeName = typeof en === 'string' ? en : (en.name || rd.lastNodeExecuted);\n  const er = err.errorResponse || {};\n  const ctx = err.context && err.context.request ? err.context.request : (er.context && er.context.request ? er.context.request : null);\n  const msgs = (err.messages && err.messages.length) ? err.messages : (er.messages && er.messages.length ? er.messages : null);\n  out.error = {\n    node: errNodeName,\n    node_type: typeof en === 'string' ? null : (en.type || null),\n    message: err.message || null,\n    description: err.description || er.description || null,\n    http_code: err.httpCode || er.httpCode || null,\n    api_response: cut(msgs, 1500),\n    request: ctx ? { method: ctx.method || null, uri: ctx.uri || ctx.url || null, body: cut(ctx.body, 800) } : null,\n    failed_sub_execution: err.executionId ? { execution_id: String(err.executionId), workflow_id: err.workflowId ? String(err.workflowId) : null, execution_url: BASE + '/workflow/' + err.workflowId + '/executions/' + err.executionId } : null\n  };\n  const ranParams = typeof en === 'string' ? null : en.parameters;\n  out.errored_node_parameters_ran = ranParams ? cut(ranParams, 3000) : null;\n  let inp = null;\n  try {\n    const st = (exd.nodeExecutionStack || []).filter(s => s.node && s.node.name === errNodeName)[0];\n    if (st) inp = st.data.main[0].slice(0, 2).map(i => i.json);\n  } catch (e) { inp = null; }\n  if (!inp) {\n    try {\n      const r = runData[errNodeName];\n      const src = r[r.length - 1].source[0].previousNode;\n      const pr = runData[src];\n      inp = pr[pr.length - 1].data.main[0].slice(0, 2).map(i => i.json);\n    } catch (e) { inp = null; }\n  }\n  out.errored_node_input = cut(inp, 3000);\n  if (wf.nodes && errNodeName) {\n    const dn = wf.nodes.filter(n => n.name === errNodeName)[0];\n    if (!dn) out.errored_node_in_draft = 'node not found in current draft (renamed or removed)';\n    else if (ranParams) out.errored_node_in_draft = subset(dn.parameters || {}, ranParams) ? 'unchanged' : 'changed in current draft';\n    if (dn && out.errored_node_in_draft === 'changed in current draft') out.errored_node_parameters_draft = cut(dn.parameters, 3000);\n  }\n}\nconst RX = /([a-z0-9-]+)[.]zendesk[.]com[/](?:agent[/]tickets|api[/]v2[/]tickets)[/]([0-9]+)/i;\nlet ticket = null;\nconst tryStr = s => { if (!s || ticket) return; const m = String(s).match(RX); if (m) ticket = { subdomain: m[1].toLowerCase(), ticket_id: m[2] }; };\ntryStr(cut(trigJson, 300000));\nif (!ticket) tryStr(out.errored_node_input);\nif (!ticket) { nodes.slice(0, 12).forEach(n => tryStr(cut(firstJson(n), 100000))); }\nconst findId = (o, d) => {\n  if (!o || typeof o !== 'object' || d > 6) return null;\n  const keys = Object.keys(o);\n  for (const k of keys) {\n    const v = o[k];\n    if ((k === 'ticket_id' || k === 'ticketId' || k === 'ticket.id') && /^[0-9]+$/.test(String(v))) return String(v);\n    if (k === 'ticket' && v && typeof v === 'object' && /^[0-9]+$/.test(String(v.id))) return String(v.id);\n  }\n  for (const k of keys) { const r = findId(o[k], d + 1); if (r) return r; }\n  return null;\n};\nif (!ticket) { const id = findId(trigJson, 0); if (id) ticket = { subdomain: null, ticket_id: id }; }\nout.ticket = ticket ? { subdomain: ticket.subdomain, ticket_id: ticket.ticket_id, ticket_url: ticket.subdomain ? 'https://' + ticket.subdomain + '.zendesk.com/agent/tickets/' + ticket.ticket_id : null } : null;\nreturn [{ json: out }];"
+      }
+    }
+  ],
+  "connections": {
+    "When called by another workflow": {
+      "main": [
+        [
+          {
+            "node": "Has execution id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has execution id": {
+      "main": [
+        [
+          {
+            "node": "Get execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get execution": {
+      "main": [
+        [
+          {
+            "node": "Get workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get workflow": {
+      "main": [
+        [
+          {
+            "node": "Build digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [
+    {
+      "id": "bbb9dc8c-deff-4080-a090-566b44c6aa9f",
+      "name": "Fetch and digest",
+      "nodeIds": [
+        "53f03a9c-3a01-46e1-bb08-adf1ffc3141a",
+        "ee356d55-fc2b-4928-9b37-22978a477029",
+        "1173e8a0-f717-44b7-800b-8faa51e99de5",
+        "197bbfc6-f73e-4422-8b6a-be68cd6daa67"
+      ],
+      "description": "Reads one execution and its workflow via the n8n API (GET only) and returns a compact digest: error, inputs, ticket, parent, draft status"
+    }
+  ],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "executionTimeout": 300
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "drqo3oTHf2RmRsv7",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "updatedAt": "2025-09-16T08:57:49.000Z"
+      },
+      "createdAt": "2026-10-22T10:22:43.808Z",
+      "updatedAt": "2026-10-22T10:22:43.808Z"
+    }
+  ],
+  "activeVersion": null
+}
