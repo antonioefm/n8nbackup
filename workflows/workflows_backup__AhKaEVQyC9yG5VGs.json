@@ -5,10 +5,10 @@
   "active": true,
   "activeVersionId": "1006faf7-0ad7-4a0b-9177-c64cbc475d17",
   "createdAt": "2026-04-29T10:52:05.621Z",
-  "updatedAt": "2026-10-28T13:57:02.617Z",
+  "updatedAt": "2026-10-28T14:39:20.597Z",
   "isArchived": false,
-  "versionId": "d8597fd8-9349-4558-83f2-59d054962aab",
-  "versionCounter": 29,
+  "versionId": "c69575e6-ad92-4d78-a413-b8008ae722dc",
+  "versionCounter": 30,
   "sourceWorkflowId": null,
   "triggerCount": 1,
   "nodes": [
@@ -75,7 +75,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        464,
+        688,
         400
       ],
       "credentials": {
@@ -94,22 +94,22 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        688,
+        912,
         400
       ],
       "alwaysOutputData": true
     },
     {
       "parameters": {
-        "jsCode": "// Input is the loop's done output: every Record Result item from all passes.\nconst results = $input.all().map(i => i.json).filter(r => r && r.filename);\nconst listed = $(\"Filter and Prep Workflows\").all().filter(i => i.json && i.json.filename).length;\nlet success = 0;\nlet skipped = 0;\nconst failures = [];\nfor (const r of results) {\n  if (r.ok === true) { success += 1; continue; }\n  if (r.skipped === true) { skipped += 1; }\n  failures.push({ file: r.filename, error: r.error || \"Unknown error\" });\n}\nconst missing = Math.max(0, listed - results.length);\nconst total = listed;\nconst failed = failures.length + missing;\nconst status = failed === 0 ? \"success\" : (success === 0 ? \"failure\" : \"partial\");\nconst icon = status === \"success\" ? \":white_check_mark:\" : (status === \"partial\" ? \":warning:\" : \":x:\");\nconst dateStr = new Date().toISOString().slice(0, 10);\nlet message = icon + \" *n8n Backup \" + dateStr + \"* - \" + success + \"/\" + total + \" workflows committed to `antonioefm/n8nbackup`\";\nif (missing > 0) {\n  message += \"\\n\" + missing + \" workflow(s) never reached the commit step.\";\n}\nif (failures.length > 0) {\n  message += \"\\n\\n*Issues (\" + failures.length + \"):*\\n\";\n  const shown = failures.slice(0, 10);\n  for (const f of shown) {\n    message += \"- `\" + f.file + \"`: \" + f.error + \"\\n\";\n  }\n  if (failures.length > 10) message += \"_...and \" + (failures.length - 10) + \" more_\";\n}\nreturn [{ json: { status: status, success: success, failed: failed, skipped: skipped, missing: missing, total: total, message: message } }];"
+        "jsCode": "// Runs once, after the commits (or straight away when nothing changed).\nconst prepItems = $('Prepare Commit').all().map(i => i.json);\nconst stats = (prepItems[0] && prepItems[0].stats) || { listed: 0, unchanged: 0, toCommit: 0, fetchFailed: [] };\nconst toCommit = prepItems.filter(j => j.noop !== true);\nlet commits = [];\nif (toCommit.length > 0) {\n  try { commits = $('Commit to GitHub').all().map(i => i.json); } catch (e) { commits = []; }\n}\nlet committed = 0;\nlet added = 0;\nconst failures = (stats.fetchFailed || []).slice();\nfor (let i = 0; i < toCommit.length; i++) {\n  const c = commits[i] || {};\n  if (c.commit && typeof c.commit.sha === 'string') {\n    committed += 1;\n    if (toCommit[i].isNew) added += 1;\n    continue;\n  }\n  let msg = 'Unknown error';\n  if (c.error) { msg = c.error.message || JSON.stringify(c.error); }\n  else if (c.message) { msg = c.message; }\n  failures.push({ file: toCommit[i].filename, error: String(msg).slice(0, 200) });\n}\nconst ok = stats.unchanged + committed;\nconst failed = failures.length;\nconst status = failed === 0 ? 'success' : (ok === 0 ? 'failure' : 'partial');\nconst icon = status === 'success' ? ':white_check_mark:' : (status === 'partial' ? ':warning:' : ':x:');\nconst dateStr = new Date().toISOString().slice(0, 10);\nlet message = icon + ' *n8n Backup ' + dateStr + '* - ' + ok + '/' + stats.listed + ' workflows backed up to `antonioefm/n8nbackup` (' + committed + ' changed' + (added > 0 ? ', of which ' + added + ' new' : '') + ', ' + stats.unchanged + ' unchanged)';\nif (failed > 0) {\n  message += '\\n\\n*Issues (' + failed + '):*\\n';\n  for (const f of failures.slice(0, 10)) { message += '- `' + f.file + '`: ' + f.error + '\\n'; }\n  if (failed > 10) { message += '_...and ' + (failed - 10) + ' more_'; }\n}\nreturn [{ json: { status: status, listed: stats.listed, committed: committed, added: added, unchanged: stats.unchanged, failed: failed, message: message } }];"
       },
       "id": "c7a23b9b-02e8-49dd-b09c-b2f082b1ca02",
       "name": "Build Summary",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1984,
-        544
+        2032,
+        400
       ],
       "alwaysOutputData": true
     },
@@ -131,8 +131,8 @@
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.4,
       "position": [
-        2208,
-        544
+        2256,
+        400
       ],
       "webhookId": "5311f757-f91b-456b-9e99-f4438e2b9dbe",
       "credentials": {
@@ -148,15 +148,22 @@
         "url": "=https://efuturemedia.app.n8n.cloud/api/v1/workflows/{{ $json.id }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
-        "options": {}
+        "options": {
+          "batching": {
+            "batch": {
+              "batchInterval": 200,
+              "batchSize": 5
+            }
+          }
+        }
       },
       "id": "5f1ec9c1-8318-4cf4-84e4-2c57ac13248a",
       "name": "Fetch Workflow JSON",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1120,
-        304
+        1136,
+        400
       ],
       "alwaysOutputData": true,
       "credentials": {
@@ -169,66 +176,16 @@
     },
     {
       "parameters": {
-        "url": "=https://api.github.com/repos/antonioefm/n8nbackup/contents/{{ encodeURIComponent($(\"Loop Over Workflows\").item.json.filename) }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendQuery": true,
-        "queryParameters": {
-          "parameters": [
-            {
-              "name": "ref",
-              "value": "main"
-            }
-          ]
-        },
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Accept",
-              "value": "application/vnd.github+json"
-            },
-            {
-              "name": "X-GitHub-Api-Version",
-              "value": "2022-11-28"
-            },
-            {
-              "name": "User-Agent",
-              "value": "n8n-backup"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "id": "a5371648-2d5e-4b4e-82b5-8ff3f65a13d0",
-      "name": "Get Existing File SHA",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
-      "position": [
-        1344,
-        304
-      ],
-      "alwaysOutputData": true,
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "wuT3y1kHuVyjQS0i",
-          "name": "GitHub Backup Token"
-        }
-      },
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const wfMeta = $(\"Loop Over Workflows\").item.json;\nconst wfFull = $(\"Fetch Workflow JSON\").item.json;\nconst shaItem = $json;\nconst fetchOk = wfFull && typeof wfFull.id === \"string\" && Array.isArray(wfFull.nodes);\nconst existingSha = (shaItem && typeof shaItem.sha === \"string\") ? shaItem.sha : null;\nconst dateStr = new Date().toISOString().slice(0, 10);\nif (!fetchOk) {\n  return {\n    filename: wfMeta.filename,\n    workflowName: wfMeta.name,\n    workflowId: wfMeta.id,\n    skip: true,\n    skipReason: \"Workflow fetch failed\",\n    bodyJson: \"{}\"\n  };\n}\nconst content = Buffer.from(JSON.stringify(wfFull, null, 2), \"utf8\").toString(\"base64\");\nconst bodyObj = {\n  message: \"Daily backup \" + dateStr + \" - \" + wfMeta.name,\n  content: content,\n  branch: \"main\"\n};\nif (existingSha) bodyObj.sha = existingSha;\nreturn {\n  filename: wfMeta.filename,\n  workflowName: wfMeta.name,\n  workflowId: wfMeta.id,\n  skip: false,\n  bodyJson: JSON.stringify(bodyObj)\n};"
+        "jsCode": "// Compares each workflow with the copy already in the repo and keeps only new or changed files.\n// Git stores a file's blob SHA as sha1('blob <bytes>\\0<content>'), so an identical file has an identical SHA.\nconst crypto = require('crypto');\nconst blobSha = (s) => {\n  const b = Buffer.from(s, 'utf8');\n  return crypto.createHash('sha1').update(Buffer.concat([Buffer.from('blob ' + b.length + '\\0', 'utf8'), b])).digest('hex');\n};\nconst tree = $('Get repo tree').first().json;\nif (!Array.isArray(tree.tree) || tree.truncated === true) {\n  throw new Error('Could not read the full file list of the backup repo (tree missing or truncated). Nothing was committed.');\n}\nconst repo = {};\nfor (const e of tree.tree) { if (e.type === 'blob') repo[e.path] = e.sha; }\n\nconst metas = $('Filter and Prep Workflows').all();\nconst fetched = $input.all();\nconst dateStr = new Date().toISOString().slice(0, 10);\nconst out = [];\nlet unchanged = 0;\nconst fetchFailed = [];\nfor (let i = 0; i < fetched.length; i++) {\n  const p = fetched[i].pairedItem;\n  const idx = (p && typeof p.item === 'number') ? p.item : i;\n  const meta = (metas[idx] || {}).json || {};\n  const wf = fetched[i].json || {};\n  if (typeof wf.id !== 'string' || !Array.isArray(wf.nodes)) {\n    fetchFailed.push({ file: meta.filename || 'unknown', error: 'Workflow fetch failed' });\n    continue;\n  }\n  const text = JSON.stringify(wf, null, 2);\n  const existing = repo[meta.filename] || null;\n  if (existing && existing === blobSha(text)) { unchanged += 1; continue; }\n  const body = { message: 'Daily backup ' + dateStr + ' - ' + meta.name, content: Buffer.from(text, 'utf8').toString('base64'), branch: 'main' };\n  if (existing) body.sha = existing;\n  out.push({ json: { filename: meta.filename, workflowName: meta.name, workflowId: meta.id, isNew: !existing, bodyJson: JSON.stringify(body) } });\n}\nconst stats = { listed: metas.length, unchanged: unchanged, toCommit: out.length, fetchFailed: fetchFailed };\nif (out.length === 0) { return [{ json: { noop: true, stats: stats } }]; }\nfor (const o of out) { o.json.stats = stats; }\nreturn out;",
+        "mode": "runOnceForAllItems"
       },
       "id": "728957e4-1d03-4f72-b808-89a15781c895",
       "name": "Prepare Commit",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1568,
-        304
+        1360,
+        400
       ]
     },
     {
@@ -257,14 +214,21 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ $json.bodyJson }}",
-        "options": {}
+        "options": {
+          "batching": {
+            "batch": {
+              "batchInterval": 1000,
+              "batchSize": 1
+            }
+          }
+        }
       },
       "id": "18cafef5-8a1c-4175-9c7d-4a455894861b",
       "name": "Commit to GitHub",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1792,
+        1808,
         304
       ],
       "alwaysOutputData": true,
@@ -277,61 +241,94 @@
       "onError": "continueRegularOutput"
     },
     {
-      "parameters": {
-        "options": {}
-      },
-      "id": "7dd5e750-dcc3-4a96-a4c8-95456359bda6",
-      "name": "Loop Over Workflows",
-      "type": "n8n-nodes-base.splitInBatches",
-      "typeVersion": 3,
+      "id": "6e1e3405-4317-4068-8896-c73d795673f7",
+      "name": "Get repo tree",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
       "position": [
-        912,
+        464,
         400
-      ]
-    },
-    {
-      "id": "e3bea82c-2679-4b3a-99fa-f6649c680af5",
-      "name": "Record Result",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1792,
-        112
       ],
       "parameters": {
-        "jsCode": "// One result per workflow. The loop's done output collects these from every pass,\n// so Build Summary sees all of them, not just the last pass.\nconst prep = $(\"Prepare Commit\").item.json;\nconst commit = $json || {};\nconst base = { filename: prep.filename, workflowName: prep.workflowName, workflowId: prep.workflowId };\nif (prep.skip === true) {\n  return { json: Object.assign(base, { ok: false, skipped: true, error: prep.skipReason || \"skipped\" }) };\n}\nif (commit.commit && typeof commit.commit.sha === \"string\") {\n  return { json: Object.assign(base, { ok: true, skipped: false, error: null }) };\n}\nlet msg = \"Unknown error\";\nif (commit.error) {\n  msg = commit.error.message || JSON.stringify(commit.error);\n} else if (commit.message) {\n  msg = commit.message;\n}\nreturn { json: Object.assign(base, { ok: false, skipped: false, error: String(msg).slice(0, 200) }) };",
-        "mode": "runOnceForEachItem"
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            },
+            {
+              "name": "User-Agent",
+              "value": "n8n-backup"
+            }
+          ]
+        },
+        "options": {},
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "recursive",
+              "value": "1"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "sendQuery": true,
+        "url": "https://api.github.com/repos/antonioefm/n8nbackup/git/trees/main"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "wuT3y1kHuVyjQS0i",
+          "name": "GitHub Backup Token"
+        }
+      }
+    },
+    {
+      "id": "d7b05be2-ba4b-4efc-bb9e-90c8ebf048db",
+      "name": "Anything to commit?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1584,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "a1b2c3d4-0000-4000-8000-000000000001",
+              "leftValue": "={{ $json.noop === true }}",
+              "operator": {
+                "operation": "false",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
       }
     }
   ],
   "connections": {
-    "Daily 2 AM": {
-      "main": [
-        [
-          {
-            "node": "List n8n Workflows",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "List n8n Workflows": {
       "main": [
         [
           {
             "node": "Filter and Prep Workflows",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Filter and Prep Workflows": {
-      "main": [
-        [
-          {
-            "node": "Loop Over Workflows",
             "type": "main",
             "index": 0
           }
@@ -349,18 +346,40 @@
         ]
       ]
     },
-    "Fetch Workflow JSON": {
+    "Daily 2 AM": {
       "main": [
         [
           {
-            "node": "Get Existing File SHA",
+            "node": "Get repo tree",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Get Existing File SHA": {
+    "Get repo tree": {
+      "main": [
+        [
+          {
+            "node": "List n8n Workflows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter and Prep Workflows": {
+      "main": [
+        [
+          {
+            "node": "Fetch Workflow JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Workflow JSON": {
       "main": [
         [
           {
@@ -375,25 +394,25 @@
       "main": [
         [
           {
-            "node": "Commit to GitHub",
+            "node": "Anything to commit?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Loop Over Workflows": {
+    "Anything to commit?": {
       "main": [
         [
           {
-            "node": "Build Summary",
+            "node": "Commit to GitHub",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Fetch Workflow JSON",
+            "node": "Build Summary",
             "type": "main",
             "index": 0
           }
@@ -404,18 +423,7 @@
       "main": [
         [
           {
-            "node": "Record Result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Record Result": {
-      "main": [
-        [
-          {
-            "node": "Loop Over Workflows",
+            "node": "Build Summary",
             "type": "main",
             "index": 0
           }
