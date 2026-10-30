@@ -5,10 +5,10 @@
   "active": false,
   "activeVersionId": null,
   "createdAt": "2026-10-20T10:07:13.939Z",
-  "updatedAt": "2026-10-26T12:12:39.385Z",
+  "updatedAt": "2026-10-29T10:47:54.867Z",
   "isArchived": false,
-  "versionId": "eace72a2-1e6b-4311-a2b1-07fa67b9572a",
-  "versionCounter": 21,
+  "versionId": "5c218b64-2014-44dd-a3a2-1ab6fc8ce98e",
+  "versionCounter": 23,
   "sourceWorkflowId": null,
   "triggerCount": 0,
   "nodes": [
@@ -34,7 +34,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Chat AI - frontend, 26 Oct 2026: descriptions for the 4 tag-2610 image style titles. Written only where the live description is empty.\nconst DESCS = {\n  \"965509844\": \"Landing page, 'Image styles' section: title on a style card showing a photo turned into a portrait painted in watercolor by the AI image generator. Short card title: no final period, use your language's capitalization (no English title case), keep about as short as the English.\",\n  \"965509845\": \"Landing page, 'Image styles' section: title on a style card showing a photo converted into a black-and-white (single-colour) image by the AI image generator. Short card title: no final period, use your language's capitalization (no English title case), keep about as short as the English.\",\n  \"965509846\": \"Landing page, 'Image styles' section: title on a style card showing a photo turned into a chibi illustration (Japanese anime/manga style with a small body and an oversized head) by the AI image generator. 'Chibi' is normally kept as is. Short card title: no final period.\",\n  \"965509847\": \"Landing page, 'Image styles' section: title on a style card for the style that shows the person's face with suggested makeup looks (AI makeup suggestions/try-on). 'Guide' means suggestions/how-to, not a person. Short card title: no final period, use your language's capitalization (no English title case), keep about as short as the English.\"\n};\nreturn [{ json: { project_id: '691331356a3b9a68428ab3.43540470', descs: DESCS, key_ids: Object.keys(DESCS) } }];"
+        "jsCode": "// VIN Checker, 29 Oct 2026: VIN-369 batch (push 10:36 UTC, PR #355). Tag VIN-369 (merge_tags) + APPEND page/state context to the dev descriptions. Never replace existing text.\nconst CTX = ' | Page: member area > Dashboard > Subscription (/dashboard/subscription). Shown only when the subscription is in \"Pending payment\" status (a renewal charge failed). Ticket VIN-369.';\nconst MODAL = ' | Modal opened from the \"Pay now\" button on the Subscription page when the subscription is in \"Pending payment\" status; it charges the outstanding renewal amount right away (not just a card update). Ticket VIN-369.';\nconst DESCS = {\n  '968531055': CTX + ' \"Pay now\" = pay the overdue renewal now; short button label.',\n  '968531056': CTX,\n  '968531057': CTX,\n  '968531058': CTX,\n  '968531059': MODAL,\n  '968531060': MODAL + ' Short button label.',\n  '968531061': MODAL + ' Shown on the button while the payment is processing; keep short.',\n  '968531062': MODAL\n};\nreturn [{ json: { project_id: '2944050668d5010cbd95e8.36175908', tag: 'VIN-369', descs: DESCS, key_ids: Object.keys(DESCS) } }];"
       }
     },
     {
@@ -71,7 +71,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Guards: skip archived; description written only where the live description is empty (never overwrite an existing one).\nconst p = $('Params').first().json; const keys = ($input.first().json.keys) || [];\nconst byId = {}; for (const k of keys) { byId[k.key_id] = k; }\nconst out = []; const skipped = []; const before = [];\nfor (const id of p.key_ids) {\n  const k = byId[id]; if (!k || k.is_archived) { skipped.push({ id: id, why: 'missing/archived' }); continue; }\n  before.push({ id: k.key_id, description: k.description || '' });\n  if (String(k.description || '').trim()) { skipped.push({ id: id, why: 'description already set', now: k.description }); continue; }\n  out.push({ key_id: Number(id), description: p.descs[id] });\n}\nif (out.length === 0) { throw new Error('Nothing to write: ' + JSON.stringify(skipped)); }\nreturn [{ json: { body: { keys: out }, skipped: skipped, before: before, plan: out.map(function (x) { return x.key_id; }) } }];"
+        "jsCode": "// Guards: skip archived; tag with merge_tags; description = existing + appended context, skipped if it already mentions the ticket. Never replaces text.\nconst p = $('Params').first().json; const keys = ($input.first().json.keys) || [];\nconst byId = {}; for (const k of keys) { byId[k.key_id] = k; }\nconst out = []; const skipped = []; const before = []; const expected = {};\nfor (const id of p.key_ids) {\n  const k = byId[id]; if (!k || k.is_archived) { skipped.push({ id: id, why: 'missing/archived' }); continue; }\n  before.push({ id: k.key_id, description: k.description || '', tags: k.tags });\n  const cur = String(k.description || '').trim();\n  const item = { key_id: Number(id), tags: [p.tag], merge_tags: true };\n  if (cur.indexOf(p.tag) === -1) { item.description = cur ? cur + p.descs[id] : p.descs[id].replace(/^ \\| /, ''); }\n  else { skipped.push({ id: id, why: 'description already mentions ' + p.tag }); }\n  expected[id] = item.description || cur;\n  out.push(item);\n}\nif (out.length === 0) { throw new Error('Nothing to write: ' + JSON.stringify(skipped)); }\nreturn [{ json: { body: { keys: out }, skipped: skipped, before: before, expected: expected, plan: out.map(function (x) { return x.key_id; }) } }];"
       }
     },
     {
@@ -146,7 +146,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const p = $('Params').first().json; const B = $('Build').first().json; const keys = ($input.first().json.keys) || [];\nconst byId = {}; for (const k of keys) { byId[k.key_id] = k; }\nconst res = B.plan.map(function (id) { const k = byId[id] || {}; return { id: id, ok: k.description === p.descs[String(id)], description: k.description, tags: k.tags }; });\nconst bad = res.filter(function (x) { return !x.ok; });\nreturn [{ json: { ok: bad.length === 0, results: res, skipped: B.skipped, bad: bad } }];"
+        "jsCode": "const p = $('Params').first().json; const B = $('Build').first().json; const keys = ($input.first().json.keys) || [];\nconst byId = {}; for (const k of keys) { byId[k.key_id] = k; }\nconst oldTags = {}; for (const b of B.before) { oldTags[b.id] = b.tags || []; }\nconst res = B.plan.map(function (id) { const k = byId[id] || {}; const tags = k.tags || []; const keptOld = (oldTags[id] || []).every(function (t) { return tags.indexOf(t) !== -1; }); return { id: id, ok: k.description === B.expected[String(id)] && tags.indexOf(p.tag) !== -1 && keptOld, description: k.description, tags: tags }; });\nconst bad = res.filter(function (x) { return !x.ok; });\nreturn [{ json: { ok: bad.length === 0, results: res, skipped: B.skipped, bad: bad } }];"
       }
     },
     {
@@ -278,5 +278,6 @@
       "updatedAt": "2026-10-20T10:07:13.943Z"
     }
   ],
-  "activeVersion": null
+  "activeVersion": null,
+  "parentFolder": null
 }
