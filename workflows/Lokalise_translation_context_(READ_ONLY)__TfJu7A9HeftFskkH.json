@@ -1,0 +1,165 @@
+{
+  "id": "TfJu7A9HeftFskkH",
+  "name": "Lokalise translation context (READ ONLY)",
+  "description": "Read-only: keys with en+target translations for one or more projects, the project's screenshots, and the shared glossary.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-29T11:04:40.212Z",
+  "updatedAt": "2026-10-29T12:03:31.650Z",
+  "isArchived": false,
+  "versionId": "731f1b15-35e7-44ed-bf92-c21db50b2d86",
+  "versionCounter": 4,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "4467fe32-4480-45fa-bc90-9c8a7b886f83",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "bd30d5fb-13c3-4d14-97a0-c31184a428cf",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// EDIT ME. projects: [{tag, id, pages, shots}]; langs for filter_langs; glossary cursor ('' = first page)\nconst B = 'https://api.lokalise.com/api2/projects/';\nconst projects = [ { tag: 'vin', id: '2944050668d5010cbd95e8.36175908', pages: [1,2,3,4,5], shots: false } ];\nconst langs = 'en,es';\nconst glossary = { id: '46552447679363c70f7ef8.58193285', cursor: '' };\nconst out = [];\nfor (const p of projects) {\n  for (const n of p.pages) { out.push({ json: { kind: 'keys', tag: p.tag, url: B + p.id + '/keys?include_translations=1&filter_langs=' + langs + (p.shots ? '&include_screenshots=1' : '') + '&limit=500&page=' + n } }); }\n  if (p.shots) { out.push({ json: { kind: 'shots', tag: p.tag, url: B + p.id + '/screenshots?limit=500' } }); }\n}\nout.push({ json: { kind: 'glossary', tag: 'g', url: B + glossary.id + '/glossary-terms?limit=500' + (glossary.cursor ? '&cursor=' + glossary.cursor : '') } });\nreturn out;"
+      }
+    },
+    {
+      "id": "273c6eb7-5d50-4c50-8ef7-66fbec9b3e51",
+      "name": "Fetch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "3165d8ab-48d6-481e-8a8c-80905482c945",
+      "name": "Out",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const rq = $('Config').all(); const res = $input.all();\nconst R = { vin: [], rc: [], shots: [], glossary: [], glossary_next_cursor: null, status: [] };\nfor (let i = 0; i < res.length; i++) {\n  const q = rq[i].json; const r = res[i].json; const b = r.body || {}; const h = r.headers || {};\n  R.status.push(q.kind + ':' + q.tag + ':' + r.statusCode + ':' + (h['x-pagination-total-count'] || ''));\n  if (q.kind === 'keys') {\n    for (const k of (b.keys || [])) {\n      if (k.is_archived) { continue; }\n      const o = { id: k.key_id, name: (k.key_name && k.key_name.web) || k.key_name, plural: k.is_plural, desc: k.description || '', tags: k.tags || [], created_at: k.created_at };\n      for (const t of (k.translations || [])) { const iso = (t.language_iso || '').toLowerCase(); if (iso === 'en') { o.en = t.translation; } if (iso === 'es') { o.es = t.translation; o.es_by = t.modified_by_email; o.es_rev = t.is_reviewed; o.es_tid = t.translation_id; } }\n      if (q.tag === 'vin') { o.shots = (k.screenshots || []).map(function (s) { return s.screenshot_id; }); R.vin.push(o); } else if (o.es) { R.rc.push({ name: o.name, en: o.en, es: o.es }); }\n    }\n  } else if (q.kind === 'shots') {\n    for (const s of (b.screenshots || [])) { R.shots.push({ id: s.screenshot_id, title: s.title, description: s.description, keys: (s.key_ids || []).length, key_ids: s.key_ids, w: s.width, h: s.height, url: s.url, tags: s.tags }); }\n  } else {\n    R.glossary_next_cursor = h['x-pagination-next-cursor'] || null;\n    for (const g of (b.data || [])) { const es = (g.translations || []).filter(function (t) { return t.langId === 1056; })[0]; R.glossary.push({ term: g.term, desc: g.description, tags: g.tags, translatable: g.translatable, forbidden: g.forbidden, cs: g.caseSensitive, es: es ? es.translation : '', es_desc: es ? es.description : '' }); }\n  }\n}\nreturn [{ json: R }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch": {
+      "main": [
+        [
+          {
+            "node": "Out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "TfJu7A9HeftFskkH",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-29T11:04:40.223Z",
+      "updatedAt": "2026-10-29T11:04:40.223Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
