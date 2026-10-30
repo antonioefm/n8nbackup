@@ -5,10 +5,10 @@
   "active": false,
   "activeVersionId": null,
   "createdAt": "2026-10-07T14:41:59.248Z",
-  "updatedAt": "2026-10-28T09:17:33.709Z",
+  "updatedAt": "2026-10-29T09:06:50.863Z",
   "isArchived": false,
-  "versionId": "da6e044a-ada6-4fda-abb2-6c2a6b7a2636",
-  "versionCounter": 95,
+  "versionId": "f8b54da4-0e32-4027-b59d-16e982ac1bb5",
+  "versionCounter": 100,
   "sourceWorkflowId": null,
   "triggerCount": 0,
   "nodes": [
@@ -33,7 +33,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "// READ ONLY. Cross-project scan for audit notes 2026-10-28: EN 'Reset' -> nl, EN with 'blur' -> de. Archived excluded.\nconst pids = ['225008626a33e62b328c63.04676982','8241074569a69e614ce094.27318095','14240418673f52ae29a007.74392007','9274956467e3e224807498.79791832','901014606819db6d0bc999.26230201','46552447679363c70f7ef8.58193285','3070657967b5854be32cb1.65162854','50011170688b3050b0a7f8.40995136','60625870676151e1da46d0.81913446','18564477693fc9bba4cec8.54789459','1286096867dbf31146afc5.54950617','46919453689d5d729a1e70.59972091','6744586768821f2c3fe845.13636914','479073796a6095e8c10e35.09051894','9933660066825e9a8005c8.58526829','31393214664f295f94dd86.76792605','491848986923fad6dc2f85.42477363','852017176a3ce11141ecd5.60405885','964775386a3ce03ecca883.03770715','899698826a7340184c6a03.84153135','4780438967fe077b4e6484.83742970','1274536968b58980dc56a0.78363786','410385576a9fb240ac4f42.73305789'];\nreturn pids.map(pid => ({ json: { pid, url: 'https://api.lokalise.com/api2/projects/' + pid + '/keys?include_translations=1&disable_references=1&filter_archived=exclude&filter_translation_lang_ids=640,737,666&limit=500&pagination=cursor' } }));\n",
+        "jsCode": "// READ ONLY. 2026-10-29: Slovak (799) + EN (640) for strings mentioning location/locate/address.\nconst pids = ['3070657967b5854be32cb1.65162854','50011170688b3050b0a7f8.40995136','9274956467e3e224807498.79791832','491848986923fad6dc2f85.42477363','1286096867dbf31146afc5.54950617','6744586768821f2c3fe845.13636914','964775386a3ce03ecca883.03770715','852017176a3ce11141ecd5.60405885','146903556751632e0388b9.21648688','35679002689c4f3ba6dd50.31739712','1600517668d38be7f36ba4.51132642','2944050668d5010cbd95e8.36175908','4780438967fe077b4e6484.83742970','1274536968b58980dc56a0.78363786','691331356a3b9a68428ab3.43540470','225008626a33e62b328c63.04676982','8241074569a69e614ce094.27318095','14240418673f52ae29a007.74392007','60625870676151e1da46d0.81913446','31393214664f295f94dd86.76792605'];\nreturn pids.map(pid => ({ json: { pid, url: 'https://api.lokalise.com/api2/projects/' + pid + '/keys?include_translations=1&disable_references=1&filter_archived=exclude&filter_translation_lang_ids=640,799&limit=500&pagination=cursor' } }));\n",
         "mode": "runOnceForAllItems"
       }
     },
@@ -106,7 +106,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "const out = []; const errors = []; let keys = 0;\nfor (const it of $input.all()) { const j = it.json; if (j.statusCode && j.statusCode >= 400) { errors.push(j.statusCode); continue; }\n  const b = j.body || {}; const pid = b.project_id || '';\n  for (const k of (b.keys || [])) { keys++; const name = (k.key_name && (k.key_name.web || k.key_name.other)) || '';\n    const tr = k.translations || []; const en = (tr.find(t => t.language_iso === 'en') || {}).translation || '';\n    if (typeof en !== 'string') continue;\n    const isReset = /^\\s*reset\\b/i.test(en) && en.length <= 40;\n    const isBlur = /\\bblur/i.test(en) && en.length <= 200;\n    if (!isReset && !isBlur) continue;\n    const lang = isReset ? 'nl' : 'de'; const t = tr.find(x => x.language_iso === lang) || {};\n    out.push({ pid, key: name, check: isReset ? 'reset-nl' : 'blur-de', en, tr: t.translation, by: t.modified_by_email, mod: t.modified_at, reviewed: t.is_reviewed }); } }\nreturn [{ json: { keys, errors, rows: out } }];\n",
+        "jsCode": "const RE = /locat|address|\\bwhere\\b|position|gps|whereabouts/i;\nconst out = []; const errors = []; let keys = 0; const perProject = {}; const editors = {};\nfor (const it of $input.all()) { const j = it.json; if (j.statusCode && j.statusCode >= 400) { errors.push(j.statusCode + ' ' + JSON.stringify(j.body || '').slice(0, 200)); continue; }\n  const b = j.body || {}; const pid = b.project_id || '';\n  for (const k of (b.keys || [])) { keys++; perProject[pid] = (perProject[pid] || 0) + 1;\n    const tr = k.translations || []; const enT = (tr.find(t => t.language_iso === 'en') || {}).translation;\n    const sk = tr.find(t => t.language_iso === 'sk');\n    if (!sk || typeof sk.translation !== 'string' || !sk.translation) continue;\n    const by = sk.modified_by_email || ''; editors[by] = (editors[by] || 0) + 1;\n    if (typeof enT !== 'string' || !RE.test(enT) || enT.length > 400) continue;\n    const name = (k.key_name && (k.key_name.web || k.key_name.other)) || '';\n    out.push({ pid, key: name, en: enT, sk: sk.translation, by, rev: sk.is_reviewed ? 1 : 0 }); } }\nreturn [{ json: { keys_seen: keys, per_project: perProject, sk_editors: editors, errors, rows_kept: out.length, rows: out } }];\n",
         "mode": "runOnceForAllItems"
       }
     }
@@ -181,5 +181,6 @@
       "updatedAt": "2026-10-07T14:41:59.251Z"
     }
   ],
-  "activeVersion": null
+  "activeVersion": null,
+  "parentFolder": null
 }
