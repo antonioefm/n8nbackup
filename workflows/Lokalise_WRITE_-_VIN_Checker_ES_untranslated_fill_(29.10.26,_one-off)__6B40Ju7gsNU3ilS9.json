@@ -1,0 +1,481 @@
+{
+  "id": "6B40Ju7gsNU3ilS9",
+  "name": "Lokalise WRITE - VIN Checker ES untranslated fill (29.10.26, one-off)",
+  "description": "One-off write: fill 91 empty Spanish translations in VIN Checker (VinReady) FE. Guard writes only where the target is still empty. Marked unverified.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-29T08:47:15.485Z",
+  "updatedAt": "2026-10-29T14:51:11.115Z",
+  "isArchived": false,
+  "versionId": "6b6eddcc-c8e7-48da-b69a-8d07c30dd581",
+  "versionCounter": 22,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "549c999f-e28a-48d0-abbd-45d4412975b4",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "219edc4d-2991-4a4f-9f08-315bf85138b7",
+      "name": "Glossary fetch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.body.meta.nextCursor }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body.meta || !$response.body.meta.nextCursor }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20,
+              "requestInterval": 700
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "9932ff51-1adf-4564-a21e-37a7ea06932f",
+      "name": "Build glossary update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const MODE = 'write'; // 'dry' | 'write'\nlet terms = [];\nfor (const it of $input.all()) { const b = it.json.body !== undefined ? it.json.body : it.json; terms = terms.concat((b && (b.data || b.glossary_terms)) || []); }\nif (terms.length < 600) { throw new Error('Glossary fetch looks incomplete: ' + terms.length); }\nfunction iso(x) { return String(x.langIso || '').split('_')[0]; }\nfunction full(t, change) { return (t.translations || []).map(function (x) { const c = change ? change(x) : null; return c || { langId: x.langId, translation: x.translation || '', description: x.description || '' }; }); }\nconst EDITS = [\n  { id: 7173827, from: 'adresa', to: 'poloha', note: 'SK linguist uses \"poloha\" for a phone\\'s location (Zistiť polohu, História polohy); the headline \"Location found!\" is \"Lokalita nájdená!\". \"Adresa\" only for an actual address.' },\n  { id: 7431321, from: 'adresa', to: 'lokalita', note: 'SK linguist used \"Lokality\" for company locations (Mobitrace contact page); use \"adresa\" only when a street address is shown.' }\n];\nconst report = []; const put = [];\nfor (const e of EDITS) {\n  const t = terms.find(function (x) { return x.id === e.id; });\n  const sk = t && (t.translations || []).find(function (x) { return iso(x) === 'sk'; });\n  if (!t || !sk) { report.push({ id: e.id, status: 'SKIP: not found' }); continue; }\n  if (String(sk.translation).trim() !== e.from) { report.push({ id: e.id, status: 'SKIP: sk is \"' + sk.translation + '\"' }); continue; }\n  put.push({ id: t.id, translations: full(t, function (x) { return x === sk ? { langId: x.langId, translation: e.to, description: e.note } : null; }) });\n  report.push({ id: e.id, term: t.term, tags: t.tags, status: 'OK', to: e.to, non_empty_before: (t.translations || []).filter(function (x) { return x.translation; }).length });\n}\nreturn [{ json: { mode: MODE, report: report, body: { terms: MODE === 'write' ? put : [] }, create: { terms: [] }, planned_put: put } }];\n"
+      }
+    },
+    {
+      "id": "44920541-2326-47e5-937d-4cfcd9a21462",
+      "name": "Write glossary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "id": "f076639f-a0ef-4e22-9c6c-affb95b2021a",
+      "name": "Glossary result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b = $('Build glossary update').first().json;\nconst w = $('Write glossary').first().json;\nconst c = $input.first().json;\nfunction bd(r) { return r && r.body !== undefined ? r.body : r; }\nconst wu = (bd(w) && (bd(w).data || [])) || [];\nconst cu = (bd(c) && (bd(c).data || [])) || [];\nreturn [{ json: { mode: b.mode, report: b.report, put_status: w.statusCode || null, put_errors: bd(w) && bd(w).errors, updated: wu.map(function (t) { return { id: t.id, term: t.term, tags: t.tags, description: t.description, fr: ((t.translations || []).find(function (x) { return x.langIso === 'fr'; }) || {}).translation, filled: (t.translations || []).filter(function (x) { return x.translation; }).length }; }), post_status: c.statusCode || null, post_errors: bd(c) && bd(c).errors, created: cu.map(function (t) { return { id: t.id, term: t.term, tags: t.tags, filled: (t.translations || []).filter(function (x) { return x.translation; }).length, sample: (t.translations || []).filter(function (x) { return ['fr', 'de', 'vi', 'no'].indexOf(x.langIso) !== -1; }).map(function (x) { return x.langIso + ':' + x.translation; }) }; }) } }];\n"
+      }
+    },
+    {
+      "id": "8c5c4440-be5e-4484-a7ac-017354939778",
+      "name": "Translation plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "throw new Error('Retired: VIN Checker ES fill done 29.10.26 (91 keys written). Write a new plan before reusing.');"
+      }
+    },
+    {
+      "id": "ecb2647f-13ef-4422-b840-bbfc3b1d85cc",
+      "name": "Fetch target key",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.check_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "925abce5-698c-4ad3-bec5-03ffff8a12ae",
+      "name": "Fetch My Image key",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Translation plan').item.json.check_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "5f8dd454-8f77-4887-863b-c91b024073eb",
+      "name": "Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const MODE = 'write'; // 'dry' | 'write'\nconst plan = $('Translation plan').all().map(function (i) { return i.json; });\nconst tgt = $('Fetch target key').all().map(function (i) { return i.json; });\nfunction empty(v) { if (v === null || v === undefined) return true; let s = String(v); if (!s.trim()) return true; try { const o = JSON.parse(s); if (o && typeof o === 'object') { return Object.values(o).every(function (x) { return !String(x || '').trim(); }); } } catch (e) {} return false; }\nconst rows = [];\nfor (let i = 0; i < plan.length; i++) {\n  const p = plan[i]; const r = tgt[i] || {}; const b = r.body !== undefined ? r.body : r; const k = b && b.key;\n  const row = { pid: p.pid, key: p.key, iso: p.iso, proposed: p.proposed, write: false };\n  const t = k && (k.translations || []).find(function (x) { return x.language_iso === p.iso; });\n  if (!t) { row.reason = 'fetch failed / language missing'; rows.push(row); continue; }\n  row.current = t.translation; row.last_by = t.modified_by_email;\n  if (!empty(t.translation)) { row.reason = 'no longer empty'; rows.push(row); continue; }\n  if (MODE !== 'write') { row.reason = 'safe (dry)'; rows.push(row); continue; }\n  row.write = true; row.tid = t.translation_id; row.reason = 'write'; rows.push(row);\n}\nif (MODE !== 'write') { return rows.map(function (r) { return { json: r }; }); }\nconst w = rows.filter(function (r) { return r.write; });\nif (!w.length) { return [{ json: { nothing: true, skipped: rows } }]; }\nreturn w.map(function (r) { return { json: r }; });\n"
+      }
+    },
+    {
+      "id": "6de3af93-9f67-4909-b3df-aa73093eb287",
+      "name": "Write translation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.pid }}/translations/{{ $json.tid }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ translation: $json.proposed, is_unverified: true }) }}",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "disabled": true
+    },
+    {
+      "id": "5bc3f579-fe64-4804-bcc4-72f9ddcd8489",
+      "name": "Verify",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const g = $('Guard').all().map(function (i) { return i.json; });\nconst res = $input.all().map(function (i) { return i.json; });\nfunction norm(v) { if (v && typeof v === 'object') return JSON.stringify(v); try { const o = JSON.parse(v); if (o && typeof o === 'object') return JSON.stringify(o); } catch (e) {} return String(v); }\nconst out = [];\nfor (let i = 0; i < g.length; i++) {\n  const r = g[i]; const x = res[i] || {}; const b = x.body !== undefined ? x.body : x;\n  const now = b && b.translation ? b.translation.translation : null;\n  out.push({ key: r.key, iso: r.iso, status: x.statusCode || null, ok: norm(now) === norm(r.proposed), now: now, unverified: b && b.translation ? b.translation.is_unverified : null, err: b && b.error ? JSON.stringify(b.error).slice(0, 200) : '' });\n}\nreturn [{ json: { written: out.filter(function (o) { return o.ok; }).length, failed: out.filter(function (o) { return !o.ok; }), rows: out } }];\n"
+      }
+    },
+    {
+      "id": "fbcb5900-98b1-44ed-a2c1-e846c7d67927",
+      "name": "Create glossary term",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        770,
+        200
+      ],
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "contentType": "json",
+        "genericAuthType": "httpHeaderAuth",
+        "jsonBody": "={{ JSON.stringify($('Build glossary update').first().json.create) }}",
+        "method": "POST",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "disabled": true
+    }
+  ],
+  "connections": {
+    "Glossary fetch": {
+      "main": [
+        [
+          {
+            "node": "Build glossary update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build glossary update": {
+      "main": [
+        [
+          {
+            "node": "Write glossary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Glossary result": {
+      "main": [
+        [
+          {
+            "node": "Translation plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Translation plan": {
+      "main": [
+        [
+          {
+            "node": "Fetch target key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard": {
+      "main": [
+        [
+          {
+            "node": "Write translation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write translation": {
+      "main": [
+        [
+          {
+            "node": "Verify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write glossary": {
+      "main": [
+        [
+          {
+            "node": "Create glossary term",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create glossary term": {
+      "main": [
+        [
+          {
+            "node": "Glossary result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Translation plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch target key": {
+      "main": [
+        [
+          {
+            "node": "Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "6B40Ju7gsNU3ilS9",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-29T08:47:15.498Z",
+      "updatedAt": "2026-10-29T08:47:15.498Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
