@@ -1,0 +1,212 @@
+{
+  "id": "vD4m06Az8qelvSvJ",
+  "name": "Lokalise - terminology lookup 291026",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-29T12:31:29.537Z",
+  "updatedAt": "2026-10-29T12:31:29.537Z",
+  "isArchived": false,
+  "versionId": "20fb914a-e80a-4c08-9b9b-d80b15fb1551",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "82f61f8a-6eb2-4e2c-be45-eea8feb8a49f",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "d0e7776e-fdf2-4fa6-a107-cdb4a98d3c20",
+      "name": "Fetch EN",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/31393214664f295f94dd86.76792605/keys?limit=500&include_translations=1&filter_translation_lang_ids=640",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "pagination": {
+            "pagination": {
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "page",
+                    "value": "={{ $pageCount + 1 }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ $response.body.keys.length < 500 }}",
+              "limitPagesFetched": true,
+              "maxRequests": 200,
+              "requestInterval": 250
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "d3e48c67-bd54-4e5c-a18d-ed5ffff0de65",
+      "name": "Pick Candidates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const TERMS = ['ebook','bipolar','borderline','narciss','psychopath','sociopath','ocd','obsessive','autism','depression','anxiety','neurodiver','archetype','big 5','big five','occupation','political','self-reflection','medical diagnosis','up next','all tests','keep exploring','welcome','iq','minutes','min','discover your','your career','about yourself','completed','show more','refresh the page'];\nconst per = {};\nconst ids = [];\nconst seen = {};\nfor (const it of $input.all()) {\n  for (const k of (it.json.keys || [])) {\n    if (k.is_archived) { continue; }\n    if ((k.tags || []).indexOf('291026') >= 0) { continue; }\n    const tr = (k.translations || [])[0];\n    if (!tr) { continue; }\n    const en = String(tr.translation || '');\n    if (!en || en.length > 70) { continue; }\n    const low = en.toLowerCase();\n    for (const t of TERMS) {\n      const hit = (t === 'iq' || t === 'min') ? new RegExp('\\\\b' + t + '\\\\b').test(low) : low.indexOf(t) >= 0;\n      if (!hit) { continue; }\n      per[t] = per[t] || 0;\n      if (per[t] >= 6) { continue; }\n      per[t]++;\n      if (!seen[k.key_id]) { seen[k.key_id] = 1; ids.push(k.key_id); }\n    }\n  }\n}\nconst out = [];\nfor (let i = 0; i < ids.length; i += 100) { out.push({ json: { ids: ids.slice(i, i + 100).join(',') } }); }\nreturn out;\n"
+      }
+    },
+    {
+      "id": "28f6b7c3-9a36-4a00-bad8-8bf860063f52",
+      "name": "Fetch Candidates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/31393214664f295f94dd86.76792605/keys?limit=500&include_translations=1&filter_key_ids={{ $json.ids }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "1cf11eab-9adb-4adc-a9b0-80354d23bf28",
+      "name": "Format",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const rows = [];\nfor (const it of $input.all()) {\n  for (const k of (it.json.keys || [])) {\n    const m = {};\n    for (const t of (k.translations || [])) { m[t.language_iso] = t.translation; }\n    rows.push({ name: (k.key_name && k.key_name.web) || '', t: m });\n  }\n}\nreturn [{ json: { rows: rows } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch EN",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch EN": {
+      "main": [
+        [
+          {
+            "node": "Pick Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Candidates": {
+      "main": [
+        [
+          {
+            "node": "Fetch Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Candidates": {
+      "main": [
+        [
+          {
+            "node": "Format",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "vD4m06Az8qelvSvJ",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-29T12:31:29.539Z",
+      "updatedAt": "2026-10-29T12:31:29.539Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
