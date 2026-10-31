@@ -1,0 +1,228 @@
+{
+  "id": "1EsaahLgQBVX4nME",
+  "name": "i18n QA sweep – glossary DNT terms (READ ONLY)",
+  "description": "Read-only: fetches the shared Lokalise glossary (all pages) and returns the non-translatable terms for the i18n QA sweep DNT list.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-30T11:27:46.759Z",
+  "updatedAt": "2026-10-30T14:30:37.808Z",
+  "isArchived": false,
+  "versionId": "fcd34ca1-a3e0-42a6-9306-450c9e124664",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "2d5fe0b1-05d7-43d2-9b77-fd1e816f0f8e",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "24ba5b68-605a-452d-a21b-56a28b44b48f",
+      "name": "Glossary Page 1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "b1b1127b-46ce-4478-a5ae-2f05fd32e163",
+      "name": "Glossary Page 2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500&cursor={{ $('Glossary Page 1').first().json.headers['x-pagination-next-cursor'] || 'none' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "06a9e454-4211-44f6-8f35-638ecda81d12",
+      "name": "Glossary Page 3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/46552447679363c70f7ef8.58193285/glossary-terms?limit=500&cursor={{ $('Glossary Page 2').first().json.headers['x-pagination-next-cursor'] || 'none' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "c454c6fc-b29b-4f2d-8818-f7ecf1fef058",
+      "name": "DNT Terms",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const pages = ['Glossary Page 1','Glossary Page 2','Glossary Page 3'];\nconst seen = new Set(); const all = []; const meta = [];\nlet prevNext = 'x';\nfor (const p of pages) {\n  if (!prevNext) break;\n  let j; try { j = $(p).first().json; } catch (e) { continue; }\n  const b = j.body || {};\n  const data = b.data || b.glossary_terms || b.terms || [];\n  prevNext = (j.headers || {})['x-pagination-next-cursor'] || '';\n  meta.push({ page: p, status: j.statusCode, count: data.length, next: prevNext });\n  for (const t of data) { const id = t.id || t.term_id || t.term; if (seen.has(id)) continue; seen.add(id); all.push(t); }\n}\nconst dnt = all.filter(t => t.translatable === false).map(t => t.term);\nconst terms = all.map(t => ({ term: t.term, d: t.description || '', cs: !!t.caseSensitive, tr: t.translatable !== false, fb: !!t.forbidden, tags: t.tags || [], x: (t.translations || []).filter(x => x.translation || x.description).map(x => [x.langId, x.langName || '', x.translation || '', x.description || '']) }));\nreturn [{ json: { total_terms: all.length, dnt_count: dnt.length, complete: !prevNext, meta, dnt, terms } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Glossary Page 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Glossary Page 1": {
+      "main": [
+        [
+          {
+            "node": "Glossary Page 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Glossary Page 2": {
+      "main": [
+        [
+          {
+            "node": "Glossary Page 3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Glossary Page 3": {
+      "main": [
+        [
+          {
+            "node": "DNT Terms",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "1EsaahLgQBVX4nME",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-30T11:27:46.762Z",
+      "updatedAt": "2026-10-30T11:27:46.762Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
