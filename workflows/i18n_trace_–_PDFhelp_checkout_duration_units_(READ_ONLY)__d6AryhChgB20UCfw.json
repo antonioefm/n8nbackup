@@ -1,0 +1,247 @@
+{
+  "id": "d6AryhChgB20UCfw",
+  "name": "i18n trace – PDFhelp checkout duration units (READ ONLY)",
+  "description": "Read-only: greps PDFhelp monorepo checkout/plan/pricing files and the English source for duration units (weeks) to trace untranslated \"weeks\" on checkout.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-30T14:19:21.672Z",
+  "updatedAt": "2026-10-30T14:20:53.482Z",
+  "isArchived": false,
+  "versionId": "25fb5fb6-f83d-4b8b-9c00-7cb96080e801",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "4e46d804-8a10-4d16-9b5c-fa37533819be",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "f010a8d8-5de4-4f8c-b9c3-f7ee076a23d1",
+      "name": "Get Repo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.github.com/repos/QR-CODE-App/pdfhelp-monorepo",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi"
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      }
+    },
+    {
+      "id": "e94dde09-ec87-4bc8-935f-b224499c9233",
+      "name": "Get Tree",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/QR-CODE-App/pdfhelp-monorepo/git/trees/{{ $json.default_branch }}?recursive=1",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi"
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      }
+    },
+    {
+      "id": "ffac6e64-cde6-4691-8d02-1e6542eb94b8",
+      "name": "Filter Tree",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const tree = $input.first().json.tree || [];\nconst branch = $('Get Repo').first().json.default_branch;\nconst CODE = /^apps\\/frontend-onepdf\\/src\\/.*(checkout|select-plan|pricing|price|plan|subscription|sales|payrails|adyen|billing|duration|period|interval|format).*\\.(ts|tsx)$/i;\nconst EN = /^apps\\/frontend-onepdf\\/.*(\\/en\\.json|\\/en\\/[^/]+\\.json)$/;\nconst SKIP = /(node_modules|__tests__|\\.test\\.|\\.spec\\.|\\.stories\\.|\\.d\\.ts$)/;\nconst files = tree.filter(t => t.type === 'blob' && !SKIP.test(t.path) && (CODE.test(t.path) || EN.test(t.path)) && (t.size || 0) < 600000).slice(0, 400);\nif (!files.length) return [{ json: { skip: true, path: '', branch } }];\nreturn files.map(f => ({ json: { path: f.path, branch } }));"
+      }
+    },
+    {
+      "id": "aa631250-5d78-4934-98d5-1072fb4a771a",
+      "name": "Get File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/QR-CODE-App/pdfhelp-monorepo/contents/{{ encodeURI($json.path) }}?ref={{ $json.branch }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.raw"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "data"
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 10,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      }
+    },
+    {
+      "id": "974b2cc6-130e-4cf8-9084-e947ffd5b41c",
+      "name": "Grep",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const src = $('Filter Tree').all();\nconst items = $input.all();\nconst out = { ns: [], keys: [] };\nconst walk = (o, pre) => { if (o && typeof o === 'object') { for (const [k, v] of Object.entries(o)) { const p = pre ? pre + '.' + k : k; if (v && typeof v === 'object') walk(v, p); else if (/(^|\\.)(units|plan_units|plan_names|durationUnits|duration_units)(\\.|$)/i.test(p) || /^(weeks?|months?|years?|days?)$/i.test(k)) out.keys.push({ file: '', key: p, value: String(v).slice(0, 160) }); } } };\nfor (let i = 0; i < items.length; i++) {\n  const path = (src[i] && src[i].json.path) || '';\n  const c = items[i].json.data; if (typeof c !== 'string') continue;\n  if (/\\.json$/.test(path)) { try { const before = out.keys.length; walk(JSON.parse(c), ''); for (let j = before; j < out.keys.length; j++) out.keys[j].file = path; } catch (e) {} continue; }\n  if (/CheckoutBenefits|CheckoutDisclaimer/.test(path)) {\n    const m = c.match(/use(?:Translations|Translation)\\([^)]*\\)|getTranslations\\([^)]*\\)/g) || [];\n    out.ns.push({ path, translations: m, tUnits: (c.match(/tUnits\\s*=\\s*[^;\\n]+/) || [''])[0] });\n  }\n}\nreturn [{ json: out }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Get Repo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Repo": {
+      "main": [
+        [
+          {
+            "node": "Get Tree",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Tree": {
+      "main": [
+        [
+          {
+            "node": "Filter Tree",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Tree": {
+      "main": [
+        [
+          {
+            "node": "Get File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get File": {
+      "main": [
+        [
+          {
+            "node": "Grep",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "d6AryhChgB20UCfw",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-30T14:19:21.676Z",
+      "updatedAt": "2026-10-30T14:19:21.676Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
