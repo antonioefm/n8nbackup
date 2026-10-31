@@ -1,0 +1,306 @@
+{
+  "id": "XQQ6OGFePjoMM2Dq",
+  "name": "Lokalise READ - Guaranteed Satisfaction keys + translations scan 2026-10-30",
+  "description": "READ ONLY (read-only token). Finds non-archived keys in all projects whose EN is Guaranteed Satisfaction / 256-bit SSL Encryption / Trusted by 7M+ Users; returns translations with modified dates and screenshots.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-30T10:27:45.235Z",
+  "updatedAt": "2026-10-30T10:27:45.235Z",
+  "isArchived": false,
+  "versionId": "5c548f28-a745-4fc3-9a1e-414c5b6166e4",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "8c3d7d1f-ed3f-430a-9a18-485682cf94d3",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "911d5d60-6f0d-4fb9-a4f3-dfb724d7db42",
+      "name": "Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=100&include_statistics=0&include_settings=0",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "0dfbbef9-ba71-4cd4-9d6a-74d7a8bba0e1",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b = $input.first().json.body || {};\nconst GL = '46552447679363c70f7ef8.58193285';\nconst A = 'https://api.lokalise.com/api2/projects/';\nconst ps = (b.projects || []).filter(function(p){ return p.project_id !== GL; });\nreturn ps.map(function(p){ return { json: { pid: p.project_id, name: p.name, url: A + p.project_id + '/keys?include_translations=1&disable_references=1&filter_archived=exclude&filter_translation_lang_ids=640&limit=500&pagination=cursor' } }; });"
+      }
+    },
+    {
+      "id": "2eae40cb-632d-4372-922d-a0597df773ee",
+      "name": "Fetch EN",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 400
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 60,
+              "requestInterval": 300
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "f8d77486-f77a-46c3-8869-c88a59d37195",
+      "name": "Match",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function norm(s) { return String(s || '').trim().replace(/[\\s\\u00a0]*[:.!]$/, '').trim().toLowerCase(); }\nconst EXACT = ['guaranteed satisfaction','256-bit ssl encryption','trusted by 7m+ users'];\nconst byP = {}; const errors = []; const near = []; let seen = 0; const pids = {};\nfor (const it of $input.all()) { const b = it.json.body || {};\n  if (!Array.isArray(b.keys)) { errors.push({ s: it.json.statusCode, b: JSON.stringify(b).slice(0, 200) }); continue; }\n  pids[b.project_id] = 1;\n  for (const k of b.keys) { seen++; if (k.is_archived) continue;\n    const en = (k.translations || []).find(function(t){ return t.language_iso === 'en'; }); if (!en || typeof en.translation !== 'string') continue;\n    const n = norm(en.translation);\n    if (EXACT.indexOf(n) >= 0) { (byP[b.project_id] = byP[b.project_id] || []).push(k.key_id); }\n    else if (n.indexOf('guaranteed satisfaction') >= 0 || n.indexOf('satisfaction guaranteed') >= 0) near.push({ p: b.project_id, id: k.key_id, en: en.translation.slice(0, 150) });\n  } }\nconst A = 'https://api.lokalise.com/api2/projects/';\nconst out = [];\nfor (const p in byP) { const ids = byP[p]; for (let i = 0; i < ids.length; i += 100) out.push({ json: { url: A + p + '/keys?include_translations=1&include_screenshots=1&disable_references=1&limit=500&filter_key_ids=' + ids.slice(i, i + 100).join(',') } }); }\nconst meta = { seen: seen, projectsRead: Object.keys(pids).length, errors: errors, near: near, matchProjects: Object.keys(byP).length };\nif (!out.length) return [{ json: { url: '', meta: meta } }];\nout[0].json.meta = meta; return out;"
+      }
+    },
+    {
+      "id": "9796bb23-4b65-4fd5-b604-4ba94e06217c",
+      "name": "Fetch Matches",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 400
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "94839b61-d280-4289-b17a-360c5cf27386",
+      "name": "Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const meta = $('Match').first().json.meta;\nconst names = {}; for (const it of $('Config').all()) names[it.json.pid] = it.json.name;\nconst rows = []; const errors = [];\nfor (const it of $input.all()) { const b = it.json.body || {};\n  if (!Array.isArray(b.keys)) { errors.push({ s: it.json.statusCode, b: JSON.stringify(b).slice(0, 200) }); continue; }\n  for (const k of b.keys) { if (k.is_archived) continue;\n    const kn = typeof k.key_name === 'object' ? (k.key_name.web || k.key_name.other || Object.values(k.key_name)[0]) : k.key_name;\n    const t = {}; let en = '';\n    for (const x of (k.translations || [])) { if (typeof x.translation !== 'string' || !x.translation) continue; if (x.language_iso === 'en') { en = x.translation; continue; } t[x.language_iso] = [x.translation, x.modified_at || '', x.modified_by_email || '', x.is_reviewed ? 1 : 0, x.is_unverified ? 1 : 0]; }\n    rows.push({ p: b.project_id, pn: names[b.project_id], id: k.key_id, k: kn, en: en, file: k.filenames, tags: k.tags, shots: (k.screenshots || []).map(function(s){ return s.title || s.screenshot_id; }), t: t }); } }\nreturn [{ json: { meta: meta, errors: errors, rows: rows } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Projects": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch EN",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch EN": {
+      "main": [
+        [
+          {
+            "node": "Match",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match": {
+      "main": [
+        [
+          {
+            "node": "Fetch Matches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Matches": {
+      "main": [
+        [
+          {
+            "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "XQQ6OGFePjoMM2Dq",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-30T10:27:45.239Z",
+      "updatedAt": "2026-10-30T10:27:45.239Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
