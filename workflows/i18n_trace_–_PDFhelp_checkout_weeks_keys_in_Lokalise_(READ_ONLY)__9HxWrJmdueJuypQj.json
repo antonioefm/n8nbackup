@@ -1,0 +1,205 @@
+{
+  "id": "9HxWrJmdueJuypQj",
+  "name": "i18n trace – PDFhelp checkout weeks keys in Lokalise (READ ONLY)",
+  "description": "Read-only: looks up the checkout duration-unit keys (Sales.checkout.units/plan_units/plan_names.weeks) in the PDF Lokalise projects with all translations.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-10-30T14:22:47.307Z",
+  "updatedAt": "2026-10-30T14:22:50.875Z",
+  "isArchived": false,
+  "versionId": "956afbf8-fd80-47f3-86ae-3c142deb8c23",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "b5451bde-085e-4028-832f-1bd25644cec5",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "ec081e1c-bb9c-4849-ab5e-b103f054824d",
+      "name": "List Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=100&include_statistics=0&include_settings=0",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "a43e7eaa-1bfa-40f1-9417-b1b335b546f3",
+      "name": "Pick PDF Projects",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ps = ($input.first().json.projects || []).filter(p => /pdf/i.test(p.name));\nconst keys = ['Sales::checkout::units::weeks','Sales::checkout::plan_units::weeks','Sales::checkout::plan_names::weeks','Sales.checkout.units.weeks','Sales.checkout.plan_units.weeks','Sales.checkout.plan_names.weeks'].join(',');\nif (!ps.length) return [{ json: { skip: true, url: 'https://api.lokalise.com/api2/system/languages?limit=1', name: 'none', pid: '' } }];\nreturn ps.map(p => ({ json: { pid: p.project_id, name: p.name, url: 'https://api.lokalise.com/api2/projects/' + p.project_id + '/keys?include_translations=1&limit=50&filter_keys=' + encodeURIComponent(keys) } }));"
+      }
+    },
+    {
+      "id": "9ef54008-3343-4c6b-ab9c-2364a538eb15",
+      "name": "Get Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 400
+            }
+          },
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "3890d13d-53ee-4022-8443-ee0ace302d04",
+      "name": "Summarize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const src = $('Pick PDF Projects').all();\nconst res = $input.all();\nconst out = [];\nfor (let i = 0; i < res.length; i++) {\n  const p = src[i] ? src[i].json : {};\n  for (const k of (res[i].json.keys || [])) {\n    const tr = {};\n    for (const t of (k.translations || [])) tr[t.language_iso] = { v: (t.translation || '').slice(0, 80), rev: t.is_reviewed, unv: t.is_unverified };\n    out.push({ project: p.name, pid: p.pid, key: k.key_name.web || k.key_name.other, key_id: k.key_id, description: k.description, tags: k.tags, archived: k.is_archived, tr });\n  }\n}\nreturn [{ json: { projects_checked: src.map(s => s.json.name), found: out } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "List Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Projects": {
+      "main": [
+        [
+          {
+            "node": "Pick PDF Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick PDF Projects": {
+      "main": [
+        [
+          {
+            "node": "Get Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Keys": {
+      "main": [
+        [
+          {
+            "node": "Summarize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "9HxWrJmdueJuypQj",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-10-30T14:22:47.310Z",
+      "updatedAt": "2026-10-30T14:22:47.310Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
