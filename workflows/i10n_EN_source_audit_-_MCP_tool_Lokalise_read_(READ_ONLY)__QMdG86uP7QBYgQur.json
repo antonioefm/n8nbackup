@@ -1,0 +1,219 @@
+{
+  "id": "QMdG86uP7QBYgQur",
+  "name": "i10n EN source audit - MCP tool: Lokalise read (READ ONLY)",
+  "description": "READ-ONLY sub-workflow behind the EN source audit MCP server. Modes: projects | languages | keys | glossary. GET only, Lokalise read-only credential. Called only by the MCP server workflow.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-03T15:26:53.520Z",
+  "updatedAt": "2026-11-03T15:26:53.520Z",
+  "isArchived": false,
+  "versionId": "db1d451c-83e3-4ccf-8041-14caf75dc81e",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "5b298572-2350-4035-a27b-308cd56657f4",
+      "name": "Called by MCP server",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "mode",
+              "type": "string"
+            },
+            {
+              "name": "project_id",
+              "type": "string"
+            },
+            {
+              "name": "filter_tags",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "fde76b28-04fe-4794-a8d0-e97404aed0ec",
+      "name": "Validate and build URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// READ-ONLY. Builds GET urls only. Called by the EN source audit MCP server.\nconst inp = $input.first().json || {};\nconst mode = String(inp.mode || '').trim();\nconst MODES = ['projects', 'languages', 'keys', 'glossary'];\nif (MODES.indexOf(mode) === -1) { throw new Error('mode must be one of: ' + MODES.join(', ')); }\nconst GLOSSARY_PROJECT = '46552447679363c70f7ef8.58193285';\nconst BASE = 'https://api.lokalise.com/api2';\nlet pid = String(inp.project_id || '').trim();\nif (mode === 'glossary' && !pid) { pid = GLOSSARY_PROJECT; }\nif (mode === 'projects') {\n  return [{ json: { mode: mode, project_id: '', url: BASE + '/projects?limit=500' } }];\n}\nif (!/^[0-9a-z]+[.][0-9]+$/.test(pid)) {\n  throw new Error('project_id must be a Lokalise project id such as 691331356a3b9a68428ab3.43540470 (got: ' + pid + ')');\n}\nif (mode === 'languages') {\n  return [{ json: { mode: mode, project_id: pid, url: BASE + '/projects/' + pid + '/languages?limit=500' } }];\n}\nif (mode === 'glossary') {\n  return [{ json: { mode: mode, project_id: pid, url: BASE + '/projects/' + pid + '/glossary-terms?limit=500' } }];\n}\n// include_translations=1 is required: the EN source arrives inside the translations array.\n// filter_translation_lang_ids=640 keeps only English. Archived keys are never audited.\nlet qs = 'include_translations=1&disable_references=1&limit=500&pagination=cursor&filter_translation_lang_ids=640&filter_archived=exclude';\nconst tags = String(inp.filter_tags || '').trim();\nif (tags) { qs += '&filter_tags=' + encodeURIComponent(tags); }\nreturn [{ json: { mode: mode, project_id: pid, url: BASE + '/projects/' + pid + '/keys?' + qs } }];\n"
+      }
+    },
+    {
+      "id": "4fe5a955-933a-4854-adca-7cbb7973ab5f",
+      "name": "Fetch Lokalise (GET only)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "parameters": {
+                "parameters": [
+                  {
+                    "name": "cursor",
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 200,
+              "requestInterval": 700
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "a27f7483-5001-42a8-a63b-920daa0a36ae",
+      "name": "Shape result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// One compact result for the MCP client. Archived keys skipped and counted.\nconst pages = $input.all();\nconst cfg = $('Validate and build URL').first().json;\nconst rows = [];\nconst errors = [];\nlet keysSeen = 0, sourceMissing = 0, archivedSkipped = 0, totalCount = null;\nfor (const p of pages) {\n  const r = p.json || {};\n  const body = (r.body !== undefined ? r.body : r) || {};\n  const h = r.headers || {};\n  if (h['x-pagination-total-count']) { totalCount = Number(h['x-pagination-total-count']); }\n  if (cfg.mode === 'projects') {\n    for (const pr of (body.projects || [])) {\n      rows.push({ project_id: pr.project_id, name: pr.name, keys_total: (pr.statistics && pr.statistics.keys_total) || null, base_language: pr.base_language_iso || '' });\n    }\n    continue;\n  }\n  if (cfg.mode === 'languages') {\n    for (const l of (body.languages || [])) { rows.push({ lang_id: l.lang_id, iso: l.lang_iso, name: l.lang_name }); }\n    continue;\n  }\n  if (cfg.mode === 'glossary') {\n    for (const t of (body.data || [])) {\n      rows.push({ term: t.term, description: t.description || '', case_sensitive: !!t.caseSensitive, translatable: t.translatable !== false, forbidden: !!t.forbidden, tags: t.tags || [] });\n    }\n    continue;\n  }\n  if (!Array.isArray(body.keys)) {\n    errors.push({ statusCode: r.statusCode, body: JSON.stringify(body).slice(0, 300) });\n    continue;\n  }\n  for (const key of body.keys) {\n    if (key.is_archived === true) { archivedSkipped++; continue; }\n    keysSeen++;\n    const tr = Array.isArray(key.translations) ? key.translations : [];\n    const en = tr.find(function (t) { return t.language_iso === 'en'; });\n    const name = typeof key.key_name === 'object' ? (key.key_name.web || key.key_name.other || '') : key.key_name;\n    if (!en || en.translation === undefined || en.translation === null || en.translation === '') { sourceMissing++; continue; }\n    rows.push({ key_id: key.key_id, k: name, en: en.translation, description: key.description || '', plural: !!key.is_plural, tags: key.tags || [], modified_by: en.modified_by_email || '' });\n  }\n}\nconst out = { mode: cfg.mode, project_id: cfg.project_id, pages: pages.length, rows_kept: rows.length, errors: errors };\nif (cfg.mode === 'keys') {\n  out.keys_seen = keysSeen; out.source_missing = sourceMissing; out.archived_skipped = archivedSkipped;\n  out.note = 'Compare keys_seen with keys_total from list_lokalise_projects before trusting the result.';\n}\nif (totalCount !== null) { out.server_total = totalCount; }\nout.rows = rows;\nreturn [{ json: out }];\n"
+      }
+    },
+    {
+      "id": "7a9c71bb-3b59-424c-8e6b-8f5ce1cf628e",
+      "name": "Sticky Note 42430dd3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        208,
+        -96
+      ],
+      "parameters": {
+        "content": "## READ ONLY - Lokalise read for the EN source audit MCP server\n\nCalled only by the MCP server workflow. GET only, no body, no write endpoints.\nAttach ONLY the 'Lokalise read-only' credential. Never the read-write token.\nKeep pagination=cursor in the keys query or you silently get page 1.\nInputs: mode (projects | languages | keys | glossary), project_id, filter_tags.",
+        "color": 3,
+        "width": 400,
+        "height": 224
+      }
+    }
+  ],
+  "connections": {
+    "Called by MCP server": {
+      "main": [
+        [
+          {
+            "node": "Validate and build URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate and build URL": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lokalise (GET only)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lokalise (GET only)": {
+      "main": [
+        [
+          {
+            "node": "Shape result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "QMdG86uP7QBYgQur",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-03T15:26:53.522Z",
+      "updatedAt": "2026-11-03T15:26:53.522Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
