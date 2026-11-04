@@ -1,0 +1,217 @@
+{
+  "id": "Zxx6kwcSohtv0W6g",
+  "name": "i10n EN source audit - MCP tool: workbook upload link (CREATE-ONLY)",
+  "description": "CREATE-ONLY sub-workflow behind the EN source audit MCP server: returns a OneDrive upload-session URL for a new workbook in ENGLISH SOURCE/AI source audits (rename on conflict, never overwrites).",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-03T15:27:34.315Z",
+  "updatedAt": "2026-11-03T15:27:34.315Z",
+  "isArchived": false,
+  "versionId": "b9a2f9c6-3fe4-4ff5-94ed-bfbb21ae83c8",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "df6426b8-1111-440f-b9f0-318412c45196",
+      "name": "Called by MCP server",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "file_name",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "a08486f3-ebb8-456d-ae8a-7c90a8384797",
+      "name": "Validate file name",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// CREATE-ONLY. Validates the workbook name and builds the Graph upload-session URL.\nconst name = String(($input.first().json || {}).file_name || '').trim();\nif (!name) { throw new Error('file_name is required, e.g. \"03.11.26 Chat AI.xlsx\"'); }\nif (!/[.]xlsx$/i.test(name)) { throw new Error('file_name must end in .xlsx'); }\nif (/[\\/\\\\:*?\"<>|#%]/.test(name) || name.length > 180 || name.indexOf('..') !== -1) {\n  throw new Error('file_name contains characters OneDrive does not allow or is too long');\n}\nconst folder = ['ENGLISH SOURCE', 'AI source audits'].map(encodeURIComponent).join('/');\nconst url = 'https://graph.microsoft.com/v1.0/me/drive/root:/' + folder + '/' + encodeURIComponent(name) + ':/createUploadSession';\nreturn [{ json: { file_name: name, url: url } }];\n"
+      }
+    },
+    {
+      "id": "ecea76a6-d590-418d-89b0-f13099134d87",
+      "name": "Create upload session (rename on conflict)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "{\"item\":{\"@microsoft.graph.conflictBehavior\":\"rename\"}}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "QCA5rX8Iyd1rbChu",
+          "name": "Microsoft Drive - Maria Sica account"
+        }
+      }
+    },
+    {
+      "id": "ded54167-f702-4066-aaa4-89d322ee1cc8",
+      "name": "Return upload link",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        720,
+        0
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "u1",
+              "name": "upload_url",
+              "value": "={{ $json.uploadUrl }}",
+              "type": "string"
+            },
+            {
+              "id": "u2",
+              "name": "expires",
+              "value": "={{ $json.expirationDateTime }}",
+              "type": "string"
+            },
+            {
+              "id": "u3",
+              "name": "requested_file_name",
+              "value": "={{ $('Validate file name').first().json.file_name }}",
+              "type": "string"
+            },
+            {
+              "id": "u4",
+              "name": "folder",
+              "value": "ENGLISH SOURCE/AI source audits",
+              "type": "string"
+            },
+            {
+              "id": "u5",
+              "name": "how_to_upload",
+              "value": "PUT the file bytes to upload_url with headers Content-Length: <size> and Content-Range: bytes 0-<size-1>/<size>. No Authorization header. One request is fine for files under 60 MB. On a name clash OneDrive renames the new file instead of replacing; the final name and webUrl are in the PUT response.",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "dd149714-37ae-4741-97e7-45f3ee4ac980",
+      "name": "Sticky Note 59f41d7e",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        208,
+        -96
+      ],
+      "parameters": {
+        "content": "## CREATE-ONLY - workbook upload link\n\nOpens a OneDrive upload session in ENGLISH SOURCE/AI source audits with conflictBehavior=rename, so it can never overwrite, move or delete anything. Returns a short-lived pre-authenticated URL; no token leaves n8n.",
+        "color": 4,
+        "width": 400,
+        "height": 224
+      }
+    }
+  ],
+  "connections": {
+    "Called by MCP server": {
+      "main": [
+        [
+          {
+            "node": "Validate file name",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate file name": {
+      "main": [
+        [
+          {
+            "node": "Create upload session (rename on conflict)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create upload session (rename on conflict)": {
+      "main": [
+        [
+          {
+            "node": "Return upload link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "Zxx6kwcSohtv0W6g",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-03T15:27:34.316Z",
+      "updatedAt": "2026-11-03T15:27:34.316Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
