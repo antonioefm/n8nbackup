@@ -1,0 +1,739 @@
+{
+  "id": "cFg4HZwbJn4MFVN1",
+  "name": "Claude usage - relay to FMT dashboard",
+  "description": "Receives daily Claude Code usage records (ClaudeDailyRecord) from the Cowork collector reading claude.ai Analytics, validates them, and forwards them to the stage or prod FMT dashboard import endpoint. dry_run posts are validated only.",
+  "active": true,
+  "activeVersionId": "bfdaa6a3-fc68-4575-bcf6-0340c5c2fe53",
+  "createdAt": "2026-11-03T14:42:00.036Z",
+  "updatedAt": "2026-11-03T14:48:13.893Z",
+  "isArchived": false,
+  "versionId": "bfdaa6a3-fc68-4575-bcf6-0340c5c2fe53",
+  "versionCounter": 4,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "b4a24ff4-7dc9-4deb-a397-0329bb807dd9",
+      "name": "Ingest (POST)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        -600,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "claude-usage-ingest",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "https://claude.ai"
+        }
+      },
+      "webhookId": "480c548c-4fc4-4a0e-90d5-5566258c772e"
+    },
+    {
+      "id": "2ce21338-c897-4e36-bc55-dbd07ed1ddfa",
+      "name": "Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -380,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Validates one day's Claude usage records posted by the daily Cowork collector\n// (Claude in Chrome, claude.ai Analytics) and decides where they go.\n// The key proves the post came from our task. Records are rebuilt with only the\n// dashboard's ClaudeDailyRecord fields, so nothing extra is ever forwarded.\nconst KEY = 'cui_44c4f74de0a30480b007fc89d968e2fb';\nconst MAX_RECORDS = 3000;\nconst INT_FIELDS = ['sessions', 'linesAdded', 'linesRemoved', 'commits', 'pullRequests', 'toolAccepted', 'toolRejected'];\nconst MODEL_FIELDS = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'costCents'];\nconst isCount = (v) => Number.isInteger(v) && v >= 0 && v <= 1e13;\n\nconst body = ($input.first().json || {}).body || {};\nconst summary = { ok: false, route: 'reject', target: null, dry_run: true, received: 0, accepted: 0, rejected: 0, dates: [], reasons: [] };\nconst reason = (r) => { if (summary.reasons.length < 15) summary.reasons.push(r); };\n\nlet p = null;\ntry { p = typeof body.data === 'string' ? JSON.parse(body.data) : (body.records ? body : null); }\ncatch (e) { reason('payload is not valid JSON'); }\nif (!p && !summary.reasons.length) reason('no payload in field \"data\"');\nif (p && p.key !== KEY) { reason('invalid key'); p = null; }\n\nconst records = [];\nif (p) {\n  summary.target = p.target === 'prod' ? 'prod' : (p.target === 'stage' ? 'stage' : null);\n  summary.dry_run = p.dry_run !== false;\n  if (!summary.target) reason('target must be \"stage\" or \"prod\"');\n  const list = Array.isArray(p.records) ? p.records : [];\n  if (!Array.isArray(p.records)) reason('records must be an array');\n  if (list.length > MAX_RECORDS) reason('too many records (' + list.length + '), max ' + MAX_RECORDS);\n  const todayUtc = new Date().toISOString().slice(0, 10);\n  const byKey = new Map();\n  for (const r of list.slice(0, MAX_RECORDS)) {\n    summary.received++;\n    const bad = (why) => { summary.rejected++; reason(why); };\n    if (!r || typeof r !== 'object') { bad('record is not an object'); continue; }\n    const date = String(r.date || '');\n    const email = String(r.email || '').trim().toLowerCase();\n    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date) || isNaN(Date.parse(date + 'T00:00:00Z')) || date > todayUtc || date < '2025-01-01') { bad('bad date ' + date); continue; }\n    if (!/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(email) || email.length > 254) { bad('bad email on ' + date); continue; }\n    if (!INT_FIELDS.every((f) => isCount(r[f]))) { bad('bad counts for ' + email + ' on ' + date); continue; }\n    const models = Array.isArray(r.byModel) ? r.byModel : null;\n    if (!models || models.length > 40) { bad('bad byModel for ' + email + ' on ' + date); continue; }\n    const cleanModels = [];\n    let modelsOk = true;\n    for (const m of models) {\n      const name = m && typeof m.model === 'string' ? m.model.trim() : '';\n      if (!name || name.length > 120 || !MODEL_FIELDS.every((f) => isCount(m[f]))) { modelsOk = false; break; }\n      cleanModels.push({ model: name, inputTokens: m.inputTokens, outputTokens: m.outputTokens, cacheReadTokens: m.cacheReadTokens, cacheCreationTokens: m.cacheCreationTokens, costCents: m.costCents });\n    }\n    if (!modelsOk) { bad('bad model row for ' + email + ' on ' + date); continue; }\n    const rec = { date, email };\n    for (const f of INT_FIELDS) rec[f] = r[f];\n    rec.byModel = cleanModels;\n    byKey.set(date + '|' + email, rec);   // later duplicate of the same date+email wins\n  }\n  for (const rec of byKey.values()) records.push(rec);\n  summary.accepted = records.length;\n  summary.dates = [...new Set(records.map((r) => r.date))].sort();\n  summary.users = new Set(records.map((r) => r.email)).size;\n\n  if (summary.target && list.length <= MAX_RECORDS) {\n    summary.ok = true;\n    if (summary.received === 0) summary.route = 'empty';\n    else if (summary.accepted === 0) { summary.ok = false; summary.route = 'reject'; }\n    else summary.route = summary.dry_run ? 'dry_run' : summary.target;\n  }\n}\nreturn [{ json: { summary, payload: { records } } }];\n"
+      }
+    },
+    {
+      "id": "6f58eadd-8c20-4551-ad8e-ada79271779a",
+      "name": "Route",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -160,
+        300
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputKey": "stage",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.summary.route }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "stage"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "prod",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.summary.route }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "prod"
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "Not sent (dry run, empty or rejected)"
+        }
+      }
+    },
+    {
+      "id": "257d9892-64e4-46b8-9cc8-b7ff8df4728b",
+      "name": "Send to stage dashboard",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        80,
+        160
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://fmt-dashboard-stage.mgmt-efuturemedia.com/api/admin/claude-usage/import",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          },
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "mR96lVAE1UHoL2bd",
+          "name": "Shani's dashboard"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "fffe1bac-bca5-4cbe-9e95-33d15eb411dc",
+      "name": "Dashboard result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        300,
+        240
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "dash-status",
+              "name": "dashboard_status",
+              "type": "number",
+              "value": "={{ $json.statusCode ?? null }}"
+            },
+            {
+              "id": "dash-ok",
+              "name": "dashboard_ok",
+              "type": "boolean",
+              "value": "={{ !$json.error && $json.statusCode >= 200 && $json.statusCode < 300 && !/^\\s*</.test(String($json.body ?? $json.data ?? '')) }}"
+            },
+            {
+              "id": "dash-body",
+              "name": "dashboard_body",
+              "type": "string",
+              "value": "={{ $json.error ? 'request failed: ' + String($json.error.message || $json.error.description || JSON.stringify($json.error)).slice(0, 500) : ($json.headers?.location ? 'redirect to ' + String($json.headers.location).split('?')[0] + ' | ' : '') + String(typeof ($json.body ?? $json.data) === \"string\" ? ($json.body ?? $json.data) : JSON.stringify($json.body ?? $json.data ?? \"\")).slice(0, 1500) }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "a2937050-ff1d-4e2d-8d20-0f97812f3c7b",
+      "name": "Send to prod dashboard",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        80,
+        320
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://fmt-dashboard.mgmt-efuturemedia.com/api/admin/claude-usage/import",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          },
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "mR96lVAE1UHoL2bd",
+          "name": "Shani's dashboard"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "a09232f4-e073-4cf9-b9bb-9761eb512bec",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        520,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify(Object.assign({}, $(\"Validate\").first().json.summary, { dashboard_status: $json.dashboard_status ?? null, dashboard_ok: $json.dashboard_ok ?? null, dashboard_body: $json.dashboard_body ?? null })) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "e3996a0c-40df-4cf9-815b-08a48fc64f34",
+      "name": "Sticky Note 35049b5b",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -624,
+        208
+      ],
+      "parameters": {
+        "content": "## Claude usage relay\n\nThe daily Cowork task reads claude.ai Analytics (Claude Code, Team plan) in the Work Chrome and posts one day of ClaudeDailyRecord rows here per request.\n\nValidate checks the key and every record, then Route sends them to the stage or prod FMT dashboard import with the dashboard bearer credential. dry_run posts are validated only and never forwarded.\n\nThe dashboard upserts by (date, email), so resending a day is safe.",
+        "color": 5,
+        "width": 384,
+        "height": 224
+      }
+    }
+  ],
+  "connections": {
+    "Ingest (POST)": {
+      "main": [
+        [
+          {
+            "node": "Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate": {
+      "main": [
+        [
+          {
+            "node": "Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route": {
+      "main": [
+        [
+          {
+            "node": "Send to stage dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send to prod dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to stage dashboard": {
+      "main": [
+        [
+          {
+            "node": "Dashboard result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dashboard result": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to prod dashboard": {
+      "main": [
+        [
+          {
+            "node": "Dashboard result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "cFg4HZwbJn4MFVN1",
+      "projectId": "CH8lyrRTH2IOvQOj",
+      "project": {
+        "id": "CH8lyrRTH2IOvQOj",
+        "name": "Operations Department",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-12T13:10:08.326Z",
+        "updatedAt": "2025-09-16T08:57:49.000Z"
+      },
+      "createdAt": "2026-11-03T14:42:00.038Z",
+      "updatedAt": "2026-11-03T14:42:00.038Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "bfdaa6a3-fc68-4575-bcf6-0340c5c2fe53",
+    "workflowId": "cFg4HZwbJn4MFVN1",
+    "nodes": [
+      {
+        "id": "b4a24ff4-7dc9-4deb-a397-0329bb807dd9",
+        "name": "Ingest (POST)",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.2,
+        "position": [
+          -600,
+          300
+        ],
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "claude-usage-ingest",
+          "responseMode": "responseNode",
+          "options": {
+            "allowedOrigins": "https://claude.ai"
+          }
+        },
+        "webhookId": "480c548c-4fc4-4a0e-90d5-5566258c772e"
+      },
+      {
+        "id": "2ce21338-c897-4e36-bc55-dbd07ed1ddfa",
+        "name": "Validate",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -380,
+          300
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "// Validates one day's Claude usage records posted by the daily Cowork collector\n// (Claude in Chrome, claude.ai Analytics) and decides where they go.\n// The key proves the post came from our task. Records are rebuilt with only the\n// dashboard's ClaudeDailyRecord fields, so nothing extra is ever forwarded.\nconst KEY = 'cui_44c4f74de0a30480b007fc89d968e2fb';\nconst MAX_RECORDS = 3000;\nconst INT_FIELDS = ['sessions', 'linesAdded', 'linesRemoved', 'commits', 'pullRequests', 'toolAccepted', 'toolRejected'];\nconst MODEL_FIELDS = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'costCents'];\nconst isCount = (v) => Number.isInteger(v) && v >= 0 && v <= 1e13;\n\nconst body = ($input.first().json || {}).body || {};\nconst summary = { ok: false, route: 'reject', target: null, dry_run: true, received: 0, accepted: 0, rejected: 0, dates: [], reasons: [] };\nconst reason = (r) => { if (summary.reasons.length < 15) summary.reasons.push(r); };\n\nlet p = null;\ntry { p = typeof body.data === 'string' ? JSON.parse(body.data) : (body.records ? body : null); }\ncatch (e) { reason('payload is not valid JSON'); }\nif (!p && !summary.reasons.length) reason('no payload in field \"data\"');\nif (p && p.key !== KEY) { reason('invalid key'); p = null; }\n\nconst records = [];\nif (p) {\n  summary.target = p.target === 'prod' ? 'prod' : (p.target === 'stage' ? 'stage' : null);\n  summary.dry_run = p.dry_run !== false;\n  if (!summary.target) reason('target must be \"stage\" or \"prod\"');\n  const list = Array.isArray(p.records) ? p.records : [];\n  if (!Array.isArray(p.records)) reason('records must be an array');\n  if (list.length > MAX_RECORDS) reason('too many records (' + list.length + '), max ' + MAX_RECORDS);\n  const todayUtc = new Date().toISOString().slice(0, 10);\n  const byKey = new Map();\n  for (const r of list.slice(0, MAX_RECORDS)) {\n    summary.received++;\n    const bad = (why) => { summary.rejected++; reason(why); };\n    if (!r || typeof r !== 'object') { bad('record is not an object'); continue; }\n    const date = String(r.date || '');\n    const email = String(r.email || '').trim().toLowerCase();\n    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date) || isNaN(Date.parse(date + 'T00:00:00Z')) || date > todayUtc || date < '2025-01-01') { bad('bad date ' + date); continue; }\n    if (!/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(email) || email.length > 254) { bad('bad email on ' + date); continue; }\n    if (!INT_FIELDS.every((f) => isCount(r[f]))) { bad('bad counts for ' + email + ' on ' + date); continue; }\n    const models = Array.isArray(r.byModel) ? r.byModel : null;\n    if (!models || models.length > 40) { bad('bad byModel for ' + email + ' on ' + date); continue; }\n    const cleanModels = [];\n    let modelsOk = true;\n    for (const m of models) {\n      const name = m && typeof m.model === 'string' ? m.model.trim() : '';\n      if (!name || name.length > 120 || !MODEL_FIELDS.every((f) => isCount(m[f]))) { modelsOk = false; break; }\n      cleanModels.push({ model: name, inputTokens: m.inputTokens, outputTokens: m.outputTokens, cacheReadTokens: m.cacheReadTokens, cacheCreationTokens: m.cacheCreationTokens, costCents: m.costCents });\n    }\n    if (!modelsOk) { bad('bad model row for ' + email + ' on ' + date); continue; }\n    const rec = { date, email };\n    for (const f of INT_FIELDS) rec[f] = r[f];\n    rec.byModel = cleanModels;\n    byKey.set(date + '|' + email, rec);   // later duplicate of the same date+email wins\n  }\n  for (const rec of byKey.values()) records.push(rec);\n  summary.accepted = records.length;\n  summary.dates = [...new Set(records.map((r) => r.date))].sort();\n  summary.users = new Set(records.map((r) => r.email)).size;\n\n  if (summary.target && list.length <= MAX_RECORDS) {\n    summary.ok = true;\n    if (summary.received === 0) summary.route = 'empty';\n    else if (summary.accepted === 0) { summary.ok = false; summary.route = 'reject'; }\n    else summary.route = summary.dry_run ? 'dry_run' : summary.target;\n  }\n}\nreturn [{ json: { summary, payload: { records } } }];\n"
+        }
+      },
+      {
+        "id": "6f58eadd-8c20-4551-ad8e-ada79271779a",
+        "name": "Route",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.2,
+        "position": [
+          -160,
+          300
+        ],
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "outputKey": "stage",
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict"
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.summary.route }}",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      },
+                      "rightValue": "stage"
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              },
+              {
+                "outputKey": "prod",
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict"
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.summary.route }}",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      },
+                      "rightValue": "prod"
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              }
+            ]
+          },
+          "options": {
+            "fallbackOutput": "extra",
+            "renameFallbackOutput": "Not sent (dry run, empty or rejected)"
+          }
+        }
+      },
+      {
+        "id": "257d9892-64e4-46b8-9cc8-b7ff8df4728b",
+        "name": "Send to stage dashboard",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          80,
+          160
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://fmt-dashboard-stage.mgmt-efuturemedia.com/api/admin/claude-usage/import",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json.payload) }}",
+          "options": {
+            "timeout": 60000,
+            "response": {
+              "response": {
+                "fullResponse": true,
+                "neverError": true,
+                "responseFormat": "text"
+              }
+            },
+            "redirect": {
+              "redirect": {
+                "followRedirects": false
+              }
+            }
+          }
+        },
+        "credentials": {
+          "httpBearerAuth": {
+            "id": "mR96lVAE1UHoL2bd",
+            "name": "Shani's dashboard"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "fffe1bac-bca5-4cbe-9e95-33d15eb411dc",
+        "name": "Dashboard result",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          300,
+          240
+        ],
+        "parameters": {
+          "mode": "manual",
+          "includeOtherFields": false,
+          "assignments": {
+            "assignments": [
+              {
+                "id": "dash-status",
+                "name": "dashboard_status",
+                "type": "number",
+                "value": "={{ $json.statusCode ?? null }}"
+              },
+              {
+                "id": "dash-ok",
+                "name": "dashboard_ok",
+                "type": "boolean",
+                "value": "={{ !$json.error && $json.statusCode >= 200 && $json.statusCode < 300 && !/^\\s*</.test(String($json.body ?? $json.data ?? '')) }}"
+              },
+              {
+                "id": "dash-body",
+                "name": "dashboard_body",
+                "type": "string",
+                "value": "={{ $json.error ? 'request failed: ' + String($json.error.message || $json.error.description || JSON.stringify($json.error)).slice(0, 500) : ($json.headers?.location ? 'redirect to ' + String($json.headers.location).split('?')[0] + ' | ' : '') + String(typeof ($json.body ?? $json.data) === \"string\" ? ($json.body ?? $json.data) : JSON.stringify($json.body ?? $json.data ?? \"\")).slice(0, 1500) }}"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "a2937050-ff1d-4e2d-8d20-0f97812f3c7b",
+        "name": "Send to prod dashboard",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          80,
+          320
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://fmt-dashboard.mgmt-efuturemedia.com/api/admin/claude-usage/import",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json.payload) }}",
+          "options": {
+            "timeout": 60000,
+            "response": {
+              "response": {
+                "fullResponse": true,
+                "neverError": true,
+                "responseFormat": "text"
+              }
+            },
+            "redirect": {
+              "redirect": {
+                "followRedirects": false
+              }
+            }
+          }
+        },
+        "credentials": {
+          "httpBearerAuth": {
+            "id": "mR96lVAE1UHoL2bd",
+            "name": "Shani's dashboard"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "a09232f4-e073-4cf9-b9bb-9761eb512bec",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.5,
+        "position": [
+          520,
+          300
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify(Object.assign({}, $(\"Validate\").first().json.summary, { dashboard_status: $json.dashboard_status ?? null, dashboard_ok: $json.dashboard_ok ?? null, dashboard_body: $json.dashboard_body ?? null })) }}",
+          "options": {}
+        }
+      },
+      {
+        "id": "e3996a0c-40df-4cf9-815b-08a48fc64f34",
+        "name": "Sticky Note 35049b5b",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -624,
+          208
+        ],
+        "parameters": {
+          "content": "## Claude usage relay\n\nThe daily Cowork task reads claude.ai Analytics (Claude Code, Team plan) in the Work Chrome and posts one day of ClaudeDailyRecord rows here per request.\n\nValidate checks the key and every record, then Route sends them to the stage or prod FMT dashboard import with the dashboard bearer credential. dry_run posts are validated only and never forwarded.\n\nThe dashboard upserts by (date, email), so resending a day is safe.",
+          "color": 5,
+          "width": 384,
+          "height": 224
+        }
+      }
+    ],
+    "connections": {
+      "Ingest (POST)": {
+        "main": [
+          [
+            {
+              "node": "Validate",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate": {
+        "main": [
+          [
+            {
+              "node": "Route",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Route": {
+        "main": [
+          [
+            {
+              "node": "Send to stage dashboard",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Send to prod dashboard",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send to stage dashboard": {
+        "main": [
+          [
+            {
+              "node": "Dashboard result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Dashboard result": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send to prod dashboard": {
+        "main": [
+          [
+            {
+              "node": "Dashboard result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Antonio antonio.marusic@efuturemedia.com (via MCP)",
+    "name": "Report connection errors in the response instead of failing",
+    "description": "Prod host did not resolve (ENOTFOUND), which crashed the run and returned HTTP 500 to the collector. Send nodes now continue on error, and Dashboard result returns dashboard_ok false with the error message.",
+    "autosaved": false,
+    "createdAt": "2026-11-03T14:48:13.899Z",
+    "updatedAt": "2026-11-03T14:48:13.899Z",
+    "workflowPublishHistory": [
+      {
+        "id": 3188,
+        "workflowId": "cFg4HZwbJn4MFVN1",
+        "versionId": "bfdaa6a3-fc68-4575-bcf6-0340c5c2fe53",
+        "event": "activated",
+        "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e",
+        "createdAt": "2026-11-03T14:48:15.864Z"
+      }
+    ]
+  },
+  "parentFolder": {
+    "id": "SeZdR1COZU68nYV6",
+    "name": "Reporting",
+    "parentFolderId": null,
+    "createdAt": "2026-07-27T13:44:09.970Z",
+    "updatedAt": "2026-07-27T13:44:09.970Z"
+  }
+}
