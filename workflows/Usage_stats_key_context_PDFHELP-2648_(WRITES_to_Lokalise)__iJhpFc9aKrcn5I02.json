@@ -1,0 +1,254 @@
+{
+  "id": "iJhpFc9aKrcn5I02",
+  "name": "Usage stats key context PDFHELP-2648 (WRITES to Lokalise)",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-04T13:18:07.404Z",
+  "updatedAt": "2026-11-04T13:18:47.687Z",
+  "isArchived": false,
+  "versionId": "a0acb995-b15a-44b3-a95e-2f081b0552a9",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "fc5fe233-d7e1-4325-8f9b-0636e3e2767b",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "514cd693-adcc-49a7-889e-63e2f0419f82",
+      "name": "Params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// EDIT ME: only = key ids to write in this run\nconst only = [972784683, 972784682];\nconst tags = ['PDFHELP-2648', 'PDFHELP-2644', 'usage-stats'];\nconst d = function (label, what) { return 'Landing pages (PDF editor, Sign PDF and other tool landings): usage stats row under the upload box. The number of documents ' + what + ', shown above the label \"' + label + '\". Write it with your locale\\'s decimal separator and its usual short form for million / thousand (e.g. IT \"1,6 Mln\"). Keep it short: it sits in a narrow stat column. PDFHELP-2648'; };\nconst all = [\n  { key_id: 972784684, description: d('Documents uploaded', 'uploaded'), tags: tags },\n  { key_id: 972784683, description: d('Documents edited', 'edited'), tags: tags },\n  { key_id: 972784682, description: d('Documents converted', 'converted'), tags: tags }\n];\nconst keys = all.filter(function (k) { return only.indexOf(k.key_id) !== -1; });\nreturn [{ json: { project_id: '479073796a6095e8c10e35.09051894', ids: keys.map(function (k) { return k.key_id; }).join(','), keys: keys } }];"
+      }
+    },
+    {
+      "id": "684a2330-f13e-4751-8949-0775f5dbdae6",
+      "name": "Get Current",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?filter_key_ids={{ $json.ids }}&include_screenshots=1&limit=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "30de78b4-7366-4baf-8054-0f99c94d3a0a",
+      "name": "Build",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const p = $('Params').first().json; const cur = {}; for (const k of ($input.first().json.keys || [])) { cur[k.key_id] = k; }\nconst out = []; const skipped = [];\nfor (const w of p.keys) {\n  const c = cur[w.key_id]; if (!c) { skipped.push({ key_id: w.key_id, why: 'not found' }); continue; }\n  if (c.is_archived) { skipped.push({ key_id: w.key_id, why: 'archived' }); continue; }\n  const item = { key_id: w.key_id };\n  if (!c.description || !String(c.description).trim()) { item.description = w.description; } else { skipped.push({ key_id: w.key_id, why: 'description not empty' }); }\n  const have = c.tags || []; const add = w.tags.filter(function (t) { return have.indexOf(t) === -1; });\n  if (add.length) { item.tags = add; item.merge_tags = true; }\n  if (item.description || item.tags) { out.push(item); }\n}\nif (!out.length) { throw new Error('Nothing to write: ' + JSON.stringify(skipped)); }\nreturn [{ json: { body: { keys: out }, skipped: skipped, before: p.keys.map(function (w) { const c = cur[w.key_id] || {}; return { key_id: w.key_id, tags: c.tags, description: c.description }; }) } }];"
+      }
+    },
+    {
+      "id": "9eda4a1f-44d5-4a31-bfe1-716f457ff5ce",
+      "name": "Write Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "https://api.lokalise.com/api2/projects/479073796a6095e8c10e35.09051894/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "id": "912fb072-f84f-46cb-9b65-b14773a4d286",
+      "name": "Read Back",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/479073796a6095e8c10e35.09051894/keys?filter_key_ids={{ $('Params').first().json.ids }}&limit=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "731aa343-17df-4748-8e78-04bbfa2750d8",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b = $('Build').first().json; const after = {}; for (const k of ($input.first().json.keys || [])) { after[k.key_id] = k; }\nconst res = [];\nfor (const w of $('Params').first().json.keys) {\n  const a = after[w.key_id] || {}; const before = (b.before.find(function (x) { return x.key_id === w.key_id; }) || {}).tags || [];\n  res.push({ key_id: w.key_id, name: a.key_name && a.key_name.web, description_ok: a.description === w.description, new_tags_ok: w.tags.every(function (t) { return (a.tags || []).indexOf(t) !== -1; }), old_tags_kept: before.every(function (t) { return (a.tags || []).indexOf(t) !== -1; }), tags: a.tags });\n}\nreturn [{ json: { summary_marker: true, skipped: b.skipped, results: res } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Params": {
+      "main": [
+        [
+          {
+            "node": "Get Current",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Current": {
+      "main": [
+        [
+          {
+            "node": "Build",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build": {
+      "main": [
+        [
+          {
+            "node": "Write Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Keys": {
+      "main": [
+        [
+          {
+            "node": "Read Back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Back": {
+      "main": [
+        [
+          {
+            "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "iJhpFc9aKrcn5I02",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-04T13:18:07.407Z",
+      "updatedAt": "2026-11-04T13:18:07.407Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
