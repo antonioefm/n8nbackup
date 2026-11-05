@@ -1,0 +1,469 @@
+{
+  "id": "eMLhkq6dYNVypvgq",
+  "name": "Lokalise push :ticket: → Claude (DRAFT)",
+  "description": "Copy of the :ticket: watcher. For each new pushed-to-Lokalise post with a :ticket: reaction it asks @Claude in the thread to run lokalise-keys-jira-trace. Marks done only after the post succeeds. Inactive draft.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-04T16:00:09.293Z",
+  "updatedAt": "2026-11-04T16:00:09.293Z",
+  "isArchived": false,
+  "versionId": "e9f6a62a-9060-4e8f-b08e-142bedc9bd69",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "65af7c28-7575-4634-8c4b-c188d79778cb",
+      "name": "Every 2 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 2
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ef7f9cca-c8c2-4ca5-aa89-7a5176fdae03",
+      "name": "Channels",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Channels to watch for :ticket: reactions on Lokalise push posts (same 7 as the live watcher).\n// Names: aichat, pdf, realchecker, personality, brainiq, resumewise, unicopy -lokalise-github-automation.\n// Not watched: #myimage-lokalise-github-automation (C0996G0TZ9D) - add it here if wanted.\nconst CH = ['C0BCC7KL49M', 'C096NKTSG7K', 'C0BFQ8FH9BM', 'C0ATJEBG8NB', 'C0C1Z9VRNDP', 'C09CUE3ND7V', 'C09A5TC1UCA'];\nconst oldest = Math.floor(Date.now() / 1000) - 3 * 86400;\nreturn CH.map(function (c) { return { json: { channel: c, oldest: oldest } }; });\n"
+      }
+    },
+    {
+      "id": "6f563ca6-e16a-498d-9508-fcefe7e6a81f",
+      "name": "History",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://slack.com/api/conversations.history",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "channel",
+              "value": "={{ $json.channel }}"
+            },
+            {
+              "name": "oldest",
+              "value": "={{ $json.oldest }}"
+            },
+            {
+              "name": "limit",
+              "value": "200"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          },
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "cursor",
+                    "value": "={{ $response.body.response_metadata ? $response.body.response_metadata.next_cursor : \"\" }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body || !$response.body.ok || !($response.body.response_metadata && $response.body.response_metadata.next_cursor) }}",
+              "limitPagesFetched": true,
+              "maxRequests": 10,
+              "requestInterval": 300
+            }
+          }
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "43ece507-7f38-474f-aaea-ff8756f51809",
+      "name": "Pick ticketed posts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// One History item per page per channel; pairedItem points back to the Channels item.\nconst st = $getWorkflowStaticData('global');\nst.done = st.done || {};\nconst chans = $('Channels').all();\nconst res = $input.all();\nconst TICKET = /^(ticket|tickets|admission_tickets)(::skin-tone-\\d)?$/;\nfunction allText(m) {\n  const parts = [m.text || ''];\n  for (const a of (m.attachments || [])) { parts.push(a.pretext || '', a.title || '', a.text || '', a.fallback || ''); }\n  (function walk(x) { if (!x) { return; } if (Array.isArray(x)) { x.forEach(walk); return; } if (typeof x === 'object') { if (typeof x.text === 'string') { parts.push(x.text); } else if (x.text) { walk(x.text); } if (x.url) { parts.push(x.url); } walk(x.elements); walk(x.fields); } })(m.blocks || []);\n  return parts.join('\\n');\n}\nconst out = []; const errors = []; const okCh = {}; let scanned = 0; const lastCur = {};\nconst seen = {};\nfor (let i = 0; i < res.length; i++) {\n  const pi = res[i].pairedItem; const idx = Array.isArray(pi) ? pi[0].item : (pi && pi.item !== undefined ? pi.item : i);\n  const ch = (chans[idx] || chans[i] || { json: {} }).json.channel;\n  const b = res[i].json || {};\n  if (!b.ok) { errors.push(ch + ': ' + (b.error || 'request failed')); continue; }\n  okCh[ch] = 1;\n  lastCur[ch] = (b.response_metadata && b.response_metadata.next_cursor) || '';\n  for (const m of (b.messages || [])) {\n    scanned++;\n    const text = allText(m);\n    if (!/pushed to Lokalise/i.test(text)) { continue; }\n    if (/cleanup mode/i.test(text)) { continue; }\n    if (!(m.reactions || []).some(function (r) { return TICKET.test(r.name); })) { continue; }\n    const id = ch + ':' + m.ts;\n    if (st.done[id] || seen[id]) { continue; }\n    seen[id] = 1;\n    const project = text.split('\\n')[0].split(':')[0].replace(/\\*/g, '').trim();\n    const tickets = [];\n    for (const t of (text.match(/browse\\/([A-Z][A-Z0-9]+-\\d+)/g) || [])) { const k = t.replace('browse/', ''); if (tickets.indexOf(k) < 0) { tickets.push(k); } }\n    out.push({ json: { channel: ch, ts: m.ts, id: id, project_name: project, tickets_in_post: tickets } });\n  }\n}\nconst cutoff = Date.now() - 10 * 86400000;\nfor (const k of Object.keys(st.done)) { if (st.done[k] < cutoff) { delete st.done[k]; } }\n// Channels still holding more history after the 10-page cap (2,000 msgs): posts older than that were not checked.\nst.last_truncated = Object.keys(lastCur).filter(function (k) { return lastCur[k]; });\nst.last_errors = errors; st.last_run = new Date().toISOString(); st.last_scanned = scanned;\nif (Object.keys(okCh).length === 0 && errors.length) {\n  // Fail loudly: the live watcher swallowed channel_not_found on every run for weeks.\n  throw new Error('Slack history failed for every channel: ' + errors.join('; '));\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "06a37580-7300-45ae-a2c4-11e4474d876a",
+      "name": "Thread replies",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://slack.com/api/conversations.replies",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "channel",
+              "value": "={{ $json.channel }}"
+            },
+            {
+              "name": "ts",
+              "value": "={{ $json.ts }}"
+            },
+            {
+              "name": "limit",
+              "value": "200"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          },
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "66403be7-58bc-40eb-81f5-17c83ba5d41d",
+      "name": "Not asked yet",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Skip posts whose thread already has the Claude request. Those count as done.\nconst st = $getWorkflowStaticData('global');\nst.done = st.done || {};\nconst cands = $('Pick ticketed posts').all();\nconst res = $input.all(); const out = [];\nfor (let i = 0; i < res.length; i++) {\n  const c = cands[i].json; const b = res[i].json || {};\n  if (!b.ok) { continue; }  // replies lookup failed: try again next poll\n  const asked = (b.messages || []).some(function (m) { const t = String(m.text || ''); return t.indexOf('<@U0ADGJUQNC8>') >= 0 && t.indexOf('lokalise-keys-jira-trace') >= 0; });\n  if (asked) { st.done[c.id] = Date.now(); continue; }\n  out.push({ json: c });\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "2b3d5e63-6cb0-4552-8234-e3a8aa1b8b0f",
+      "name": "Get permalink",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://slack.com/api/chat.getPermalink",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "channel",
+              "value": "={{ $json.channel }}"
+            },
+            {
+              "name": "message_ts",
+              "value": "={{ $json.ts }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "fccfadf7-9f7c-40ec-b789-6e53eda03745",
+      "name": "Ask Claude in thread",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1400,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $(\"Not asked yet\").item.json.channel, thread_ts: $(\"Not asked yet\").item.json.ts, unfurl_links: false, unfurl_media: false, text: \"<@U0ADGJUQNC8> run lokalise-keys-jira-trace on this push: \" + ($json.ok && $json.permalink ? $json.permalink : (\"https://futuremedia-world.enterprise.slack.com/archives/\" + $(\"Not asked yet\").item.json.channel + \"/p\" + String($(\"Not asked yet\").item.json.ts).replace(\".\", \"\"))) }) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1100
+            }
+          },
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "62deb4c3-c125-465d-b161-67be42f732d2",
+      "name": "Mark done",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Mark done only after Slack accepted the post, so failures retry on the next poll.\nconst st = $getWorkflowStaticData('global');\nst.done = st.done || {};\nconst posts = $('Not asked yet').all();\nconst res = $input.all(); const out = [];\nfor (let i = 0; i < res.length; i++) {\n  const p = posts[i].json; const b = res[i].json || {};\n  if (b.ok) { st.done[p.id] = Date.now(); }\n  out.push({ json: { id: p.id, channel: p.channel, ts: p.ts, posted: !!b.ok, reply_ts: b.ts || null, error: b.ok ? null : (b.error || 'post failed') } });\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "2c0cc3a3-0838-49e6-9806-6fa54aa5a42c",
+      "name": "Sticky Note fa0e1d1d",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -32,
+        -96
+      ],
+      "parameters": {
+        "content": "## Lokalise push :ticket: -> Claude (DRAFT, inactive)\n\nEvery 2 min reads 3 days of history (paginated, up to 10x200 per channel) in the 7 automation channels. A post matches when its text, attachments or blocks contain \"pushed to Lokalise\" (not \"cleanup mode\") and it has a :ticket: reaction. For each new match it posts in the thread: `@Claude run lokalise-keys-jira-trace on this push: <permalink>`, unless the thread already has that request. A post is marked done only after Slack accepts the reply.\n\n**Before publishing:** the i18n assignment bot must be a member of all 7 channels (the live watcher gets channel_not_found on every channel) and needs channels:history, groups:history, chat:write. Claude must be in the channels too.",
+        "color": 4,
+        "width": 560,
+        "height": 224
+      }
+    }
+  ],
+  "connections": {
+    "Every 2 minutes": {
+      "main": [
+        [
+          {
+            "node": "Channels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Channels": {
+      "main": [
+        [
+          {
+            "node": "History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "History": {
+      "main": [
+        [
+          {
+            "node": "Pick ticketed posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick ticketed posts": {
+      "main": [
+        [
+          {
+            "node": "Thread replies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Thread replies": {
+      "main": [
+        [
+          {
+            "node": "Not asked yet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Not asked yet": {
+      "main": [
+        [
+          {
+            "node": "Get permalink",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get permalink": {
+      "main": [
+        [
+          {
+            "node": "Ask Claude in thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask Claude in thread": {
+      "main": [
+        [
+          {
+            "node": "Mark done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [
+    {
+      "id": "3a55225c-8d88-4ab6-b386-6f6ef3e618f6",
+      "name": "Find ticketed pushes",
+      "nodeIds": [
+        "ef7f9cca-c8c2-4ca5-aa89-7a5176fdae03",
+        "6f563ca6-e16a-498d-9508-fcefe7e6a81f",
+        "43ece507-7f38-474f-aaea-ff8756f51809"
+      ],
+      "description": "Reads 3 days of history in the 7 channels and keeps new pushed-to-Lokalise posts with a :ticket: reaction"
+    },
+    {
+      "id": "a2d2c285-3a32-440e-beab-05a063055524",
+      "name": "Ask Claude",
+      "nodeIds": [
+        "06a37580-7300-45ae-a2c4-11e4474d876a",
+        "66403be7-58bc-40eb-81f5-17c83ba5d41d",
+        "2b3d5e63-6cb0-4552-8234-e3a8aa1b8b0f",
+        "fccfadf7-9f7c-40ec-b789-6e53eda03745",
+        "62deb4c3-c125-465d-b161-67be42f732d2"
+      ],
+      "description": "Skips threads that already asked, posts the @Claude request, marks done only on success"
+    }
+  ],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "eMLhkq6dYNVypvgq",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-04T16:00:09.295Z",
+      "updatedAt": "2026-11-04T16:00:09.295Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
