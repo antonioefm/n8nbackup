@@ -1,0 +1,342 @@
+{
+  "id": "Idtl0PIizQ44evUZ",
+  "name": "i18n QA sweep – code scan – Personality (READ ONLY)",
+  "description": "Read-only GitHub fetch of QR-CODE-App/personality-app (code + English locale files) for the Personality key analysis.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-04T15:27:46.314Z",
+  "updatedAt": "2026-11-04T15:27:51.862Z",
+  "isArchived": false,
+  "versionId": "f58696d3-a96b-442c-b6d0-e601e32b9c7c",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "aa53916d-df19-4801-9e68-e542a9c40dda",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "99baa83d-bb37-487c-8a98-82b2658969a6",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        192
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\"repo\": \"personality-app\", \"branch\": \"\", \"subdir\": \"\", \"max_files\": 4000}"
+      }
+    },
+    {
+      "id": "eac8b6e8-0cce-448e-9f93-eb08057930f3",
+      "name": "Get Repo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/QR-CODE-App/{{ $json.repo }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi"
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      }
+    },
+    {
+      "id": "afea9906-4714-419d-baff-175aa2d27078",
+      "name": "Get Tree",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/QR-CODE-App/{{ $('Config').item.json.repo }}/git/trees/{{ $('Config').item.json.branch || $json.default_branch }}?recursive=1",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi"
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      }
+    },
+    {
+      "id": "1cd72946-8054-44e4-a5ba-51db3012eab1",
+      "name": "Filter Tree",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const res = $input.first().json;\nconst tree = res.tree || [];\nconst cfg = $('Config').first().json;\nconst branch = cfg.branch || $('Get Repo').first().json.default_branch;\nconst repo = cfg.repo;\nconst sub = (cfg.subdir || '').replace(/\\/$/, '');\nconst EXT = /\\.(js|jsx|ts|tsx|mjs|cjs|json|ya?ml)$|(^|\\/)Dockerfile$/i;\nconst SKIP = /(^|\\/)(node_modules|dist|build|\\.next|coverage|__mocks__|storybook|\\.storybook|public)(\\/|$)|\\.d\\.ts$|(package-lock|yarn\\.lock|pnpm-lock)|(^|\\/)tsconfig[^/]*$/i;\nlet files = tree.filter(t => t.type === 'blob' && EXT.test(t.path) && !SKIP.test(t.path) && (t.size || 0) < 4000000 && (!sub || t.path.startsWith(sub + '/')));\n// JSON: keep only English locale files (site + members) and the root package.json\nfiles = files.filter(t => !/\\.json$/i.test(t.path) || /(^|\\/)en\\.json$/.test(t.path) || t.path === 'package.json');\n// YAML: keep only GitHub workflows and helm/values\nfiles = files.filter(t => !/\\.ya?ml$/i.test(t.path) || /\\.github\\/workflows\\//.test(t.path) || /values/i.test(t.path));\nconst all_paths = tree.filter(t => t.type === 'blob').map(t => t.path + '|' + (t.size || 0));\nfiles = files.slice(0, cfg.max_files || 4000);\nconst out = files.map(f => ({ json: { repo, branch, path: f.path } }));\nout[0].json.tree_truncated = !!res.truncated;\nout[0].json.all_paths = all_paths;\nreturn out;"
+      }
+    },
+    {
+      "id": "1899195f-5d2c-47ba-aaf1-3568eca3e534",
+      "name": "Collect",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Pass-through, read only: one item per file with its content, plus the tree listing.\nconst ft = $('Filter Tree').first().json;\nconst items = $input.all().map(i => i.json).filter(j => j && j.path);\nconst meta = { meta: true, repo: ft.repo, branch: ft.branch, tree_truncated: ft.tree_truncated, files_fetched: items.length, empty: items.filter(j => typeof j.content !== 'string' || !j.content.length).map(j => j.path), all_paths: ft.all_paths };\nreturn [{ json: meta }, ...items.map(j => ({ json: { path: j.path, content: j.content } }))];"
+      }
+    },
+    {
+      "id": "a06d0371-c14e-447b-aef8-1f7a63500448",
+      "name": "Get File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/QR-CODE-App/{{ $json.repo }}/contents/{{ encodeURI($json.path) }}?ref={{ $json.branch }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.raw"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "data"
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 10,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      }
+    },
+    {
+      "id": "836ce405-46dd-426b-a065-33b5df0fdd42",
+      "name": "Emit File",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        272
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const src = $('Loop Files').itemMatching($itemIndex).json;\nconst c = $json.data;\nreturn { json: { path: src.path, content: typeof c === 'string' ? c : (c == null ? null : JSON.stringify(c)) } };"
+      }
+    },
+    {
+      "id": "d50e66b5-3fd0-4d3d-a63b-ed3426dfa148",
+      "name": "Loop Files",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1120,
+        192
+      ],
+      "parameters": {
+        "batchSize": 10
+      }
+    },
+    {
+      "id": "593f2f8a-9efe-4404-8c61-f4f2862fa4fa",
+      "name": "Sticky Note cb13d251",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        720,
+        384
+      ],
+      "parameters": {
+        "content": "READ ONLY. GET requests to the GitHub API only (repo, tree, file contents). Never add a write, never attach another credential. Used by the Personality localization key analysis (Claude, INTERNATIONALIZATION).",
+        "color": 3
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Get Repo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Repo": {
+      "main": [
+        [
+          {
+            "node": "Get Tree",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Tree": {
+      "main": [
+        [
+          {
+            "node": "Filter Tree",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Tree": {
+      "main": [
+        [
+          {
+            "node": "Loop Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get File": {
+      "main": [
+        [
+          {
+            "node": "Emit File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emit File": {
+      "main": [
+        [
+          {
+            "node": "Loop Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Files": {
+      "main": [
+        [
+          {
+            "node": "Collect",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "Idtl0PIizQ44evUZ",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-04T15:27:46.317Z",
+      "updatedAt": "2026-11-04T15:27:46.317Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
