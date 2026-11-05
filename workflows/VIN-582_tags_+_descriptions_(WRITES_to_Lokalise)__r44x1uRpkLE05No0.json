@@ -1,0 +1,322 @@
+{
+  "id": "r44x1uRpkLE05No0",
+  "name": "VIN-582 tags + descriptions (WRITES to Lokalise)",
+  "description": "DONE 04.11.26: VIN Checker keys 972751295-98 tagged VIN-582, VIN-418, searched-plate + translator note appended; read back 4/4 (exec 961826, 961828). WRITE node disabled.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-04T13:28:56.575Z",
+  "updatedAt": "2026-11-04T13:30:37.282Z",
+  "isArchived": false,
+  "versionId": "d4a3cde9-bd0e-4127-9075-c195cd1513a6",
+  "versionCounter": 4,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "df57d8fb-2323-4182-ae8c-3f83eb70365a",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "2929e933-c067-41f0-9167-44d97b7d61aa",
+      "name": "Params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: { pid: '2944050668d5010cbd95e8.36175908', ids: '972751295,972751296,972751297,972751298', tags: ['VIN-582','VIN-418','searched-plate'], append: '\"Plate\" = the vehicle licence plate number. Example: \"Plate: P7790D - FL\". Keep both placeholders and the order plate → state; FL is a US state code, do not translate it.', mode: 'all' } }];"
+      }
+    },
+    {
+      "id": "00249612-924e-4ea0-9aa3-e6e3d110eef6",
+      "name": "Tag Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [1,2,3,4,5].map(p => ({ json: { page: p } }));"
+      }
+    },
+    {
+      "id": "ab94ea58-4fab-475e-9a7f-7e0f49274d51",
+      "name": "Fetch Tags",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $('Params').first().json.pid }}/keys?limit=500&page={{ $json.page }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "ab8f0535-1c8a-4fd3-86c8-3cb01ae50ead",
+      "name": "Get Current",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $('Params').first().json.pid }}/keys?limit=500&filter_key_ids={{ $('Params').first().json.ids }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "354ec879-8b2f-4457-957b-28e38190248c",
+      "name": "Build",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const cfg = $('Params').first().json;\nconst all = new Set(); for (const it of $('Fetch Tags').all()) for (const k of (it.json.keys || [])) for (const t of (k.tags || [])) all.add(t);\nconst similar = Array.from(all).filter(t => /plate|vin-582|vin-418|search/i.test(t));\nconst keys = []; const held = [];\nfor (const k of ($('Get Current').first().json.keys || [])) {\n  if (k.is_archived) { held.push([k.key_id, 'archived']); continue; }\n  const out = { key_id: k.key_id };\n  const newTags = cfg.tags.filter(t => !(k.tags || []).includes(t));\n  if (newTags.length) { out.tags = newTags; out.merge_tags = true; }\n  const d = String(k.description || '');\n  if (!d.includes(cfg.append)) out.description = d.trim() ? d.trim() + '\\n' + cfg.append : cfg.append;\n  if (out.tags || out.description !== undefined) keys.push(out); else held.push([k.key_id, 'nothing to change']);\n}\nif (cfg.mode === 'check') throw new Error('CHECK ' + JSON.stringify({ similar, keys, held }));\nconst body = { keys: cfg.mode === 'one' ? keys.slice(0, 1) : keys };\nif (!body.keys.length) throw new Error('nothing to write ' + JSON.stringify(held));\nreturn [{ json: { body, held } }];"
+      }
+    },
+    {
+      "id": "5cd95ab6-93ce-454b-9841-5b53ab74f922",
+      "name": "WRITE Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $('Params').first().json.pid }}/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "id": "7a6d0288-f45c-4ea7-8324-ebcbb95c7d5b",
+      "name": "Read Back",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1568,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $('Params').first().json.pid }}/keys?limit=500&filter_key_ids={{ $('Params').first().json.ids }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "73716a80-04fd-4b07-b223-b431610bfaec",
+      "name": "Compare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const cfg = $('Params').first().json;\nconst before = {}; for (const k of ($('Get Current').first().json.keys || [])) before[k.key_id] = k.tags || [];\nreturn ($('Read Back').first().json.keys || []).map(k => ({ json: { key_id: k.key_id, name: (k.key_name || {}).web, tags: k.tags, hasNewTags: cfg.tags.every(t => (k.tags || []).includes(t)), keptOldTags: before[k.key_id].every(t => (k.tags || []).includes(t)), descAppended: String(k.description || '').includes(cfg.append), description: k.description } }));"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Params": {
+      "main": [
+        [
+          {
+            "node": "Tag Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag Pages": {
+      "main": [
+        [
+          {
+            "node": "Fetch Tags",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Tags": {
+      "main": [
+        [
+          {
+            "node": "Get Current",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Current": {
+      "main": [
+        [
+          {
+            "node": "Build",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build": {
+      "main": [
+        [
+          {
+            "node": "WRITE Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WRITE Keys": {
+      "main": [
+        [
+          {
+            "node": "Read Back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Back": {
+      "main": [
+        [
+          {
+            "node": "Compare",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "r44x1uRpkLE05No0",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-04T13:28:56.577Z",
+      "updatedAt": "2026-11-04T13:28:56.577Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
