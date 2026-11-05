@@ -1,0 +1,248 @@
+{
+  "id": "aJcfhWbsoF2T4Ak1",
+  "name": "Chat AI de/pt register fixes (WRITES to Lokalise)",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-04T12:55:33.071Z",
+  "updatedAt": "2026-11-04T13:02:15.345Z",
+  "isArchived": false,
+  "versionId": "a9cb7b98-b36a-4427-9627-fde43627e808",
+  "versionCounter": 4,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "e6f986d8-6736-43dc-aacf-eed842c61207",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "7b869336-bdf8-440d-96f0-5332ba63b96d",
+      "name": "Params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Each fix: key name, lang, find (must occur exactly once in the current text), replace. Written as unverified.\nconst project_id = '691331356a3b9a68428ab3.43540470';\nconst fixes = [\n  { name: 'seo::pages::cancelSubscriptionVerify::title', lang: 'de', find: 'Bestätigung Ihrer Kündigung', replace: 'Bestätigung deiner Kündigung' },\n  { name: 'auth::title', lang: 'pt', find: 'Cadastrar-se ou iniciar sessão', replace: 'Cadastre-se ou faça login' },\n  { name: 'accountSettings::logoutEverywhere::errorDescription', lang: 'pt', find: 'Inicie sessão e', replace: 'Faça login e' }\n];\nreturn [{ json: { project_id, fixes, names: fixes.map(f => f.name) } }];"
+      }
+    },
+    {
+      "id": "e0516390-9626-4cd5-8eed-0aa583984bec",
+      "name": "Get Current",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?limit=500&include_translations=1&filter_keys={{ encodeURIComponent($json.names.join(',')) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "a0142b44-b3f6-40b6-a5d0-44ea5ca1891b",
+      "name": "Build",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const p = $('Params').first().json; const keys = $input.first().json.keys || [];\nconst byName = {}; keys.forEach(k => { if (!k.is_archived) byName[k.key_name.web || k.key_name.other] = k; });\nconst byKey = {}; const skipped = []; const plan = [];\np.fixes.forEach(f => {\n  const k = byName[f.name]; const t = k && (k.translations || []).find(x => x.language_iso === f.lang);\n  if (!t) { skipped.push({ name: f.name, why: 'missing' }); return; }\n  const n = t.translation.split(f.find).length - 1;\n  if (n !== 1) { skipped.push({ name: f.name, lang: f.lang, why: 'find occurs ' + n + 'x', now: t.translation }); return; }\n  const to = t.translation.replace(f.find, f.replace);\n  (byKey[k.key_id] = byKey[k.key_id] || []).push({ language_iso: f.lang, translation: to, is_unverified: true });\n  plan.push({ key_id: k.key_id, name: f.name, lang: f.lang, from: t.translation, to: to });\n});\nconst body = { keys: Object.keys(byKey).map(id => ({ key_id: Number(id), translations: byKey[id] })) };\nif (!body.keys.length) throw new Error('Nothing to write: ' + JSON.stringify(skipped));\nreturn [{ json: { body, skipped, plan, key_ids: plan.map(x => x.key_id) } }];"
+      }
+    },
+    {
+      "id": "1ca49253-b5e5-44d0-a24e-dc34a812bf64",
+      "name": "Write Translations",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $('Params').first().json.project_id }}/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "id": "ce0a55d1-c8c5-40d4-91e6-33aa1c3771a2",
+      "name": "Read Back",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $('Params').first().json.project_id }}/keys?limit=500&include_translations=1&filter_key_ids={{ $('Build').first().json.key_ids.join(',') }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "2a3bba7f-97a0-469d-ad3f-5f0c019f4776",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const B = $('Build').first().json; const keys = $input.first().json.keys || [];\nconst res = B.plan.map(x => { const k = keys.find(y => y.key_id === x.key_id); const t = k && k.translations.find(y => y.language_iso === x.lang); return { name: x.name, lang: x.lang, ok: !!t && t.translation === x.to, unverified: t && t.is_unverified, from: x.from, now: t && t.translation }; });\nreturn [{ json: { ok: res.every(r => r.ok), results: res, skipped: B.skipped } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Params": {
+      "main": [
+        [
+          {
+            "node": "Get Current",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Current": {
+      "main": [
+        [
+          {
+            "node": "Build",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build": {
+      "main": [
+        [
+          {
+            "node": "Write Translations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Translations": {
+      "main": [
+        [
+          {
+            "node": "Read Back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Back": {
+      "main": [
+        [
+          {
+            "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "aJcfhWbsoF2T4Ak1",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-04T12:55:33.073Z",
+      "updatedAt": "2026-11-04T12:55:33.073Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
