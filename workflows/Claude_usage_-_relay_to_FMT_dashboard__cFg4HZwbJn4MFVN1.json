@@ -3,12 +3,12 @@
   "name": "Claude usage - relay to FMT dashboard",
   "description": "Receives daily Claude Code usage records (ClaudeDailyRecord) from the Cowork collector reading claude.ai Analytics, validates them, and forwards them to the stage or prod FMT dashboard import endpoint. dry_run posts are validated only.",
   "active": true,
-  "activeVersionId": "bfdaa6a3-fc68-4575-bcf6-0340c5c2fe53",
+  "activeVersionId": "25fb9a26-f07c-485a-b5a1-aa15486d6411",
   "createdAt": "2026-11-03T14:42:00.036Z",
-  "updatedAt": "2026-11-03T14:48:13.893Z",
+  "updatedAt": "2026-11-04T07:58:12.020Z",
   "isArchived": false,
-  "versionId": "bfdaa6a3-fc68-4575-bcf6-0340c5c2fe53",
-  "versionCounter": 4,
+  "versionId": "25fb9a26-f07c-485a-b5a1-aa15486d6411",
+  "versionCounter": 7,
   "sourceWorkflowId": null,
   "triggerCount": 1,
   "nodes": [
@@ -43,7 +43,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// Validates one day's Claude usage records posted by the daily Cowork collector\n// (Claude in Chrome, claude.ai Analytics) and decides where they go.\n// The key proves the post came from our task. Records are rebuilt with only the\n// dashboard's ClaudeDailyRecord fields, so nothing extra is ever forwarded.\nconst KEY = 'cui_44c4f74de0a30480b007fc89d968e2fb';\nconst MAX_RECORDS = 3000;\nconst INT_FIELDS = ['sessions', 'linesAdded', 'linesRemoved', 'commits', 'pullRequests', 'toolAccepted', 'toolRejected'];\nconst MODEL_FIELDS = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'costCents'];\nconst isCount = (v) => Number.isInteger(v) && v >= 0 && v <= 1e13;\n\nconst body = ($input.first().json || {}).body || {};\nconst summary = { ok: false, route: 'reject', target: null, dry_run: true, received: 0, accepted: 0, rejected: 0, dates: [], reasons: [] };\nconst reason = (r) => { if (summary.reasons.length < 15) summary.reasons.push(r); };\n\nlet p = null;\ntry { p = typeof body.data === 'string' ? JSON.parse(body.data) : (body.records ? body : null); }\ncatch (e) { reason('payload is not valid JSON'); }\nif (!p && !summary.reasons.length) reason('no payload in field \"data\"');\nif (p && p.key !== KEY) { reason('invalid key'); p = null; }\n\nconst records = [];\nif (p) {\n  summary.target = p.target === 'prod' ? 'prod' : (p.target === 'stage' ? 'stage' : null);\n  summary.dry_run = p.dry_run !== false;\n  if (!summary.target) reason('target must be \"stage\" or \"prod\"');\n  const list = Array.isArray(p.records) ? p.records : [];\n  if (!Array.isArray(p.records)) reason('records must be an array');\n  if (list.length > MAX_RECORDS) reason('too many records (' + list.length + '), max ' + MAX_RECORDS);\n  const todayUtc = new Date().toISOString().slice(0, 10);\n  const byKey = new Map();\n  for (const r of list.slice(0, MAX_RECORDS)) {\n    summary.received++;\n    const bad = (why) => { summary.rejected++; reason(why); };\n    if (!r || typeof r !== 'object') { bad('record is not an object'); continue; }\n    const date = String(r.date || '');\n    const email = String(r.email || '').trim().toLowerCase();\n    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date) || isNaN(Date.parse(date + 'T00:00:00Z')) || date > todayUtc || date < '2025-01-01') { bad('bad date ' + date); continue; }\n    if (!/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(email) || email.length > 254) { bad('bad email on ' + date); continue; }\n    if (!INT_FIELDS.every((f) => isCount(r[f]))) { bad('bad counts for ' + email + ' on ' + date); continue; }\n    const models = Array.isArray(r.byModel) ? r.byModel : null;\n    if (!models || models.length > 40) { bad('bad byModel for ' + email + ' on ' + date); continue; }\n    const cleanModels = [];\n    let modelsOk = true;\n    for (const m of models) {\n      const name = m && typeof m.model === 'string' ? m.model.trim() : '';\n      if (!name || name.length > 120 || !MODEL_FIELDS.every((f) => isCount(m[f]))) { modelsOk = false; break; }\n      cleanModels.push({ model: name, inputTokens: m.inputTokens, outputTokens: m.outputTokens, cacheReadTokens: m.cacheReadTokens, cacheCreationTokens: m.cacheCreationTokens, costCents: m.costCents });\n    }\n    if (!modelsOk) { bad('bad model row for ' + email + ' on ' + date); continue; }\n    const rec = { date, email };\n    for (const f of INT_FIELDS) rec[f] = r[f];\n    rec.byModel = cleanModels;\n    byKey.set(date + '|' + email, rec);   // later duplicate of the same date+email wins\n  }\n  for (const rec of byKey.values()) records.push(rec);\n  summary.accepted = records.length;\n  summary.dates = [...new Set(records.map((r) => r.date))].sort();\n  summary.users = new Set(records.map((r) => r.email)).size;\n\n  if (summary.target && list.length <= MAX_RECORDS) {\n    summary.ok = true;\n    if (summary.received === 0) summary.route = 'empty';\n    else if (summary.accepted === 0) { summary.ok = false; summary.route = 'reject'; }\n    else summary.route = summary.dry_run ? 'dry_run' : summary.target;\n  }\n}\nreturn [{ json: { summary, payload: { records } } }];\n"
+        "jsCode": "// Validates one day's Claude usage records posted by the daily Cowork collector\n// (Claude in Chrome, claude.ai Analytics) and decides where they go.\n// The key proves the post came from our task. Records are rebuilt with only the\n// dashboard's ClaudeDailyRecord fields, so nothing extra is ever forwarded.\nconst KEY = 'cui_44c4f74de0a30480b007fc89d968e2fb';\nconst MAX_RECORDS = 3000;\nconst INT_FIELDS = ['sessions', 'linesAdded', 'linesRemoved', 'commits', 'pullRequests', 'toolAccepted', 'toolRejected'];\nconst MODEL_FIELDS = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'costCents'];\nconst isCount = (v) => Number.isInteger(v) && v >= 0 && v <= 1e13;\n\nconst body = ($input.first().json || {}).body || {};\nconst summary = { ok: false, route: 'reject', target: null, dry_run: true, received: 0, accepted: 0, rejected: 0, dates: [], reasons: [] };\nconst reason = (r) => { if (summary.reasons.length < 15) summary.reasons.push(r); };\n\nlet p = null;\ntry { p = typeof body.data === 'string' ? JSON.parse(body.data) : (body.records ? body : null); }\ncatch (e) { reason('payload is not valid JSON'); }\nif (!p && !summary.reasons.length) reason('no payload in field \"data\"');\nif (p && p.key !== KEY) { reason('invalid key'); p = null; }\n\nconst records = [];\nif (p) {\n  summary.target = p.target === 'prod' ? 'prod' : (p.target === 'stage' ? 'stage' : null);\n  summary.dry_run = p.dry_run !== false;\n  if (!summary.target) reason('target must be \"stage\" or \"prod\"');\n  const list = Array.isArray(p.records) ? p.records : [];\n  if (!Array.isArray(p.records)) reason('records must be an array');\n  if (list.length > MAX_RECORDS) reason('too many records (' + list.length + '), max ' + MAX_RECORDS);\n  const todayUtc = new Date().toISOString().slice(0, 10);\n  const byKey = new Map();\n  for (const r of list.slice(0, MAX_RECORDS)) {\n    summary.received++;\n    const bad = (why) => { summary.rejected++; reason(why); };\n    if (!r || typeof r !== 'object') { bad('record is not an object'); continue; }\n    const date = String(r.date || '');\n    const email = String(r.email || '').trim().toLowerCase();\n    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date) || isNaN(Date.parse(date + 'T00:00:00Z')) || date > todayUtc || date < '2025-01-01') { bad('bad date ' + date); continue; }\n    if (!/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(email) || email.length > 254) { bad('bad email on ' + date); continue; }\n    if (!INT_FIELDS.every((f) => isCount(r[f]))) { bad('bad counts for ' + email + ' on ' + date); continue; }\n    const models = Array.isArray(r.byModel) ? r.byModel : null;\n    if (!models || models.length > 40) { bad('bad byModel for ' + email + ' on ' + date); continue; }\n    const cleanModels = [];\n    let modelsOk = true;\n    for (const m of models) {\n      const name = m && typeof m.model === 'string' ? m.model.trim() : '';\n      if (!name || name.length > 120 || !MODEL_FIELDS.every((f) => isCount(m[f]))) { modelsOk = false; break; }\n      cleanModels.push({ model: name, inputTokens: m.inputTokens, outputTokens: m.outputTokens, cacheReadTokens: m.cacheReadTokens, cacheCreationTokens: m.cacheCreationTokens, costCents: m.costCents });\n    }\n    if (!modelsOk) { bad('bad model row for ' + email + ' on ' + date); continue; }\n    const rec = { date, email };\n    for (const f of INT_FIELDS) rec[f] = r[f];\n    rec.byModel = cleanModels;\n    byKey.set(date + '|' + email, rec);   // later duplicate of the same date+email wins\n  }\n  for (const rec of byKey.values()) records.push(rec);\n  summary.accepted = records.length;\n  summary.dates = [...new Set(records.map((r) => r.date))].sort();\n  summary.users = new Set(records.map((r) => r.email)).size;\n\n  if (summary.target && list.length <= MAX_RECORDS) {\n    summary.ok = true;\n    if (summary.received === 0) summary.route = 'empty';\n    else if (summary.accepted === 0) { summary.ok = false; summary.route = 'reject'; }\n    else summary.route = summary.dry_run ? 'dry_run' : summary.target;\n  }\n}\n// The dashboard rejects request bodies over ~100 KB (\"request entity too large\"),\n// so records are split into batches of at most MAX_BYTES of JSON. The dashboard\n// upserts by (date, email), so splitting changes nothing about what's stored.\nconst MAX_BYTES = 80000;\nconst chunks = [];\nlet cur = [], size = 15;\nfor (const rec of records) {\n  const s = JSON.stringify(rec).length + 1;\n  if (cur.length && size + s > MAX_BYTES) { chunks.push(cur); cur = []; size = 15; }\n  cur.push(rec); size += s;\n}\nif (cur.length || !chunks.length) chunks.push(cur);\nsummary.batches = chunks.length;\nreturn chunks.map((c, i) => ({ json: { summary, batch: i + 1, payload: { records: c } } }));\n"
       }
     },
     {
@@ -119,9 +119,9 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "https://fmt-dashboard-stage.mgmt-efuturemedia.com/api/admin/claude-usage/import",
+        "url": "https://fmt-dashboard-stage.mgmt-efuturemedia.com/api/integrations/claude-usage/import",
         "authentication": "genericCredentialType",
-        "genericAuthType": "httpBearerAuth",
+        "genericAuthType": "httpCustomAuth",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -139,6 +139,12 @@
             "redirect": {
               "followRedirects": false
             }
+          },
+          "batching": {
+            "batch": {
+              "batchInterval": 300,
+              "batchSize": 1
+            }
           }
         }
       },
@@ -146,6 +152,10 @@
         "httpBearerAuth": {
           "id": "mR96lVAE1UHoL2bd",
           "name": "Shani's dashboard"
+        },
+        "httpCustomAuth": {
+          "id": "LiGHxbY2gGyVv3ik",
+          "name": "FMT dashboard stage - Claude usage import"
         }
       },
       "onError": "continueRegularOutput"
@@ -177,6 +187,12 @@
               "value": "={{ !$json.error && $json.statusCode >= 200 && $json.statusCode < 300 && !/^\\s*</.test(String($json.body ?? $json.data ?? '')) }}"
             },
             {
+              "id": "dash-json",
+              "name": "dashboard_json",
+              "type": "object",
+              "value": "={{ (() => { try { const b = $json.body ?? $json.data; const j = typeof b === 'string' ? JSON.parse(b) : b; return (j && typeof j === 'object') ? j : {}; } catch (e) { return {}; } })() }}"
+            },
+            {
               "id": "dash-body",
               "name": "dashboard_body",
               "type": "string",
@@ -197,7 +213,7 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "https://fmt-dashboard.mgmt-efuturemedia.com/api/admin/claude-usage/import",
+        "url": "https://fmt-dashboard.mgmt-efuturemedia.com/api/integrations/claude-usage/import",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpBearerAuth",
         "sendBody": true,
@@ -217,6 +233,12 @@
             "redirect": {
               "followRedirects": false
             }
+          },
+          "batching": {
+            "batch": {
+              "batchInterval": 300,
+              "batchSize": 1
+            }
           }
         }
       },
@@ -234,12 +256,12 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.5,
       "position": [
-        520,
+        740,
         300
       ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify(Object.assign({}, $(\"Validate\").first().json.summary, { dashboard_status: $json.dashboard_status ?? null, dashboard_ok: $json.dashboard_ok ?? null, dashboard_body: $json.dashboard_body ?? null })) }}",
+        "responseBody": "={{ JSON.stringify(Object.assign({}, $(\"Validate\").first().json.summary, { dashboard_status: $json.dashboard_status ?? null, dashboard_ok: $json.dashboard_ok ?? null, batches: $json.batches ?? null, batches_ok: $json.batches_ok ?? null, dailyWritten: $json.dailyWritten ?? null, unmatchedWritten: $json.unmatchedWritten ?? null, unmatchedEmails: $json.unmatchedEmails ?? null, dashboard_body: $json.dashboard_body ?? null })) }}",
         "options": {}
       }
     },
@@ -257,6 +279,21 @@
         "color": 5,
         "width": 384,
         "height": 224
+      }
+    },
+    {
+      "id": "224dc76f-86bd-4eb5-a2d1-d0cf113a9ac5",
+      "name": "Combine results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        240
+      ],
+      "parameters": {
+        "jsCode": "// One item per batch arrives from Dashboard result. Combine them into one answer\n// for the collector: totals across batches and the union of unmatched emails.\nconst items = $input.all().map((i) => i.json);\nconst okCount = items.filter((x) => x.dashboard_ok === true).length;\nconst sum = (k) => items.reduce((a, x) => a + (Number(x.dashboard_json && x.dashboard_json[k]) || 0), 0);\nconst emails = [...new Set(items.flatMap((x) => (x.dashboard_json && Array.isArray(x.dashboard_json.unmatchedEmails)) ? x.dashboard_json.unmatchedEmails : []))].sort();\nconst bad = items.find((x) => x.dashboard_ok !== true);\nreturn [{ json: {\n  batches: items.length,\n  batches_ok: okCount,\n  dashboard_ok: items.length > 0 && okCount === items.length,\n  dashboard_status: bad ? (bad.dashboard_status ?? null) : (items.length ? items[0].dashboard_status : null),\n  dailyWritten: sum('dailyWritten'),\n  unmatchedWritten: sum('unmatchedWritten'),\n  unmatchedEmails: emails,\n  dashboard_body: bad ? (bad.dashboard_body ?? null) : null\n} }];\n",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
       }
     }
   ],
@@ -319,22 +356,33 @@
         ]
       ]
     },
-    "Dashboard result": {
+    "Send to prod dashboard": {
       "main": [
         [
           {
-            "node": "Respond",
+            "node": "Dashboard result",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Send to prod dashboard": {
+    "Dashboard result": {
       "main": [
         [
           {
-            "node": "Dashboard result",
+            "node": "Combine results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine results": {
+      "main": [
+        [
+          {
+            "node": "Respond",
             "type": "main",
             "index": 0
           }
@@ -378,7 +426,7 @@
     }
   ],
   "activeVersion": {
-    "versionId": "bfdaa6a3-fc68-4575-bcf6-0340c5c2fe53",
+    "versionId": "25fb9a26-f07c-485a-b5a1-aa15486d6411",
     "workflowId": "cFg4HZwbJn4MFVN1",
     "nodes": [
       {
@@ -412,7 +460,7 @@
         "parameters": {
           "mode": "runOnceForAllItems",
           "language": "javaScript",
-          "jsCode": "// Validates one day's Claude usage records posted by the daily Cowork collector\n// (Claude in Chrome, claude.ai Analytics) and decides where they go.\n// The key proves the post came from our task. Records are rebuilt with only the\n// dashboard's ClaudeDailyRecord fields, so nothing extra is ever forwarded.\nconst KEY = 'cui_44c4f74de0a30480b007fc89d968e2fb';\nconst MAX_RECORDS = 3000;\nconst INT_FIELDS = ['sessions', 'linesAdded', 'linesRemoved', 'commits', 'pullRequests', 'toolAccepted', 'toolRejected'];\nconst MODEL_FIELDS = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'costCents'];\nconst isCount = (v) => Number.isInteger(v) && v >= 0 && v <= 1e13;\n\nconst body = ($input.first().json || {}).body || {};\nconst summary = { ok: false, route: 'reject', target: null, dry_run: true, received: 0, accepted: 0, rejected: 0, dates: [], reasons: [] };\nconst reason = (r) => { if (summary.reasons.length < 15) summary.reasons.push(r); };\n\nlet p = null;\ntry { p = typeof body.data === 'string' ? JSON.parse(body.data) : (body.records ? body : null); }\ncatch (e) { reason('payload is not valid JSON'); }\nif (!p && !summary.reasons.length) reason('no payload in field \"data\"');\nif (p && p.key !== KEY) { reason('invalid key'); p = null; }\n\nconst records = [];\nif (p) {\n  summary.target = p.target === 'prod' ? 'prod' : (p.target === 'stage' ? 'stage' : null);\n  summary.dry_run = p.dry_run !== false;\n  if (!summary.target) reason('target must be \"stage\" or \"prod\"');\n  const list = Array.isArray(p.records) ? p.records : [];\n  if (!Array.isArray(p.records)) reason('records must be an array');\n  if (list.length > MAX_RECORDS) reason('too many records (' + list.length + '), max ' + MAX_RECORDS);\n  const todayUtc = new Date().toISOString().slice(0, 10);\n  const byKey = new Map();\n  for (const r of list.slice(0, MAX_RECORDS)) {\n    summary.received++;\n    const bad = (why) => { summary.rejected++; reason(why); };\n    if (!r || typeof r !== 'object') { bad('record is not an object'); continue; }\n    const date = String(r.date || '');\n    const email = String(r.email || '').trim().toLowerCase();\n    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date) || isNaN(Date.parse(date + 'T00:00:00Z')) || date > todayUtc || date < '2025-01-01') { bad('bad date ' + date); continue; }\n    if (!/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(email) || email.length > 254) { bad('bad email on ' + date); continue; }\n    if (!INT_FIELDS.every((f) => isCount(r[f]))) { bad('bad counts for ' + email + ' on ' + date); continue; }\n    const models = Array.isArray(r.byModel) ? r.byModel : null;\n    if (!models || models.length > 40) { bad('bad byModel for ' + email + ' on ' + date); continue; }\n    const cleanModels = [];\n    let modelsOk = true;\n    for (const m of models) {\n      const name = m && typeof m.model === 'string' ? m.model.trim() : '';\n      if (!name || name.length > 120 || !MODEL_FIELDS.every((f) => isCount(m[f]))) { modelsOk = false; break; }\n      cleanModels.push({ model: name, inputTokens: m.inputTokens, outputTokens: m.outputTokens, cacheReadTokens: m.cacheReadTokens, cacheCreationTokens: m.cacheCreationTokens, costCents: m.costCents });\n    }\n    if (!modelsOk) { bad('bad model row for ' + email + ' on ' + date); continue; }\n    const rec = { date, email };\n    for (const f of INT_FIELDS) rec[f] = r[f];\n    rec.byModel = cleanModels;\n    byKey.set(date + '|' + email, rec);   // later duplicate of the same date+email wins\n  }\n  for (const rec of byKey.values()) records.push(rec);\n  summary.accepted = records.length;\n  summary.dates = [...new Set(records.map((r) => r.date))].sort();\n  summary.users = new Set(records.map((r) => r.email)).size;\n\n  if (summary.target && list.length <= MAX_RECORDS) {\n    summary.ok = true;\n    if (summary.received === 0) summary.route = 'empty';\n    else if (summary.accepted === 0) { summary.ok = false; summary.route = 'reject'; }\n    else summary.route = summary.dry_run ? 'dry_run' : summary.target;\n  }\n}\nreturn [{ json: { summary, payload: { records } } }];\n"
+          "jsCode": "// Validates one day's Claude usage records posted by the daily Cowork collector\n// (Claude in Chrome, claude.ai Analytics) and decides where they go.\n// The key proves the post came from our task. Records are rebuilt with only the\n// dashboard's ClaudeDailyRecord fields, so nothing extra is ever forwarded.\nconst KEY = 'cui_44c4f74de0a30480b007fc89d968e2fb';\nconst MAX_RECORDS = 3000;\nconst INT_FIELDS = ['sessions', 'linesAdded', 'linesRemoved', 'commits', 'pullRequests', 'toolAccepted', 'toolRejected'];\nconst MODEL_FIELDS = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'costCents'];\nconst isCount = (v) => Number.isInteger(v) && v >= 0 && v <= 1e13;\n\nconst body = ($input.first().json || {}).body || {};\nconst summary = { ok: false, route: 'reject', target: null, dry_run: true, received: 0, accepted: 0, rejected: 0, dates: [], reasons: [] };\nconst reason = (r) => { if (summary.reasons.length < 15) summary.reasons.push(r); };\n\nlet p = null;\ntry { p = typeof body.data === 'string' ? JSON.parse(body.data) : (body.records ? body : null); }\ncatch (e) { reason('payload is not valid JSON'); }\nif (!p && !summary.reasons.length) reason('no payload in field \"data\"');\nif (p && p.key !== KEY) { reason('invalid key'); p = null; }\n\nconst records = [];\nif (p) {\n  summary.target = p.target === 'prod' ? 'prod' : (p.target === 'stage' ? 'stage' : null);\n  summary.dry_run = p.dry_run !== false;\n  if (!summary.target) reason('target must be \"stage\" or \"prod\"');\n  const list = Array.isArray(p.records) ? p.records : [];\n  if (!Array.isArray(p.records)) reason('records must be an array');\n  if (list.length > MAX_RECORDS) reason('too many records (' + list.length + '), max ' + MAX_RECORDS);\n  const todayUtc = new Date().toISOString().slice(0, 10);\n  const byKey = new Map();\n  for (const r of list.slice(0, MAX_RECORDS)) {\n    summary.received++;\n    const bad = (why) => { summary.rejected++; reason(why); };\n    if (!r || typeof r !== 'object') { bad('record is not an object'); continue; }\n    const date = String(r.date || '');\n    const email = String(r.email || '').trim().toLowerCase();\n    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date) || isNaN(Date.parse(date + 'T00:00:00Z')) || date > todayUtc || date < '2025-01-01') { bad('bad date ' + date); continue; }\n    if (!/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(email) || email.length > 254) { bad('bad email on ' + date); continue; }\n    if (!INT_FIELDS.every((f) => isCount(r[f]))) { bad('bad counts for ' + email + ' on ' + date); continue; }\n    const models = Array.isArray(r.byModel) ? r.byModel : null;\n    if (!models || models.length > 40) { bad('bad byModel for ' + email + ' on ' + date); continue; }\n    const cleanModels = [];\n    let modelsOk = true;\n    for (const m of models) {\n      const name = m && typeof m.model === 'string' ? m.model.trim() : '';\n      if (!name || name.length > 120 || !MODEL_FIELDS.every((f) => isCount(m[f]))) { modelsOk = false; break; }\n      cleanModels.push({ model: name, inputTokens: m.inputTokens, outputTokens: m.outputTokens, cacheReadTokens: m.cacheReadTokens, cacheCreationTokens: m.cacheCreationTokens, costCents: m.costCents });\n    }\n    if (!modelsOk) { bad('bad model row for ' + email + ' on ' + date); continue; }\n    const rec = { date, email };\n    for (const f of INT_FIELDS) rec[f] = r[f];\n    rec.byModel = cleanModels;\n    byKey.set(date + '|' + email, rec);   // later duplicate of the same date+email wins\n  }\n  for (const rec of byKey.values()) records.push(rec);\n  summary.accepted = records.length;\n  summary.dates = [...new Set(records.map((r) => r.date))].sort();\n  summary.users = new Set(records.map((r) => r.email)).size;\n\n  if (summary.target && list.length <= MAX_RECORDS) {\n    summary.ok = true;\n    if (summary.received === 0) summary.route = 'empty';\n    else if (summary.accepted === 0) { summary.ok = false; summary.route = 'reject'; }\n    else summary.route = summary.dry_run ? 'dry_run' : summary.target;\n  }\n}\n// The dashboard rejects request bodies over ~100 KB (\"request entity too large\"),\n// so records are split into batches of at most MAX_BYTES of JSON. The dashboard\n// upserts by (date, email), so splitting changes nothing about what's stored.\nconst MAX_BYTES = 80000;\nconst chunks = [];\nlet cur = [], size = 15;\nfor (const rec of records) {\n  const s = JSON.stringify(rec).length + 1;\n  if (cur.length && size + s > MAX_BYTES) { chunks.push(cur); cur = []; size = 15; }\n  cur.push(rec); size += s;\n}\nif (cur.length || !chunks.length) chunks.push(cur);\nsummary.batches = chunks.length;\nreturn chunks.map((c, i) => ({ json: { summary, batch: i + 1, payload: { records: c } } }));\n"
         }
       },
       {
@@ -488,9 +536,9 @@
         ],
         "parameters": {
           "method": "POST",
-          "url": "https://fmt-dashboard-stage.mgmt-efuturemedia.com/api/admin/claude-usage/import",
+          "url": "https://fmt-dashboard-stage.mgmt-efuturemedia.com/api/integrations/claude-usage/import",
           "authentication": "genericCredentialType",
-          "genericAuthType": "httpBearerAuth",
+          "genericAuthType": "httpCustomAuth",
           "sendBody": true,
           "contentType": "json",
           "specifyBody": "json",
@@ -508,6 +556,12 @@
               "redirect": {
                 "followRedirects": false
               }
+            },
+            "batching": {
+              "batch": {
+                "batchInterval": 300,
+                "batchSize": 1
+              }
             }
           }
         },
@@ -515,6 +569,10 @@
           "httpBearerAuth": {
             "id": "mR96lVAE1UHoL2bd",
             "name": "Shani's dashboard"
+          },
+          "httpCustomAuth": {
+            "id": "LiGHxbY2gGyVv3ik",
+            "name": "FMT dashboard stage - Claude usage import"
           }
         },
         "onError": "continueRegularOutput"
@@ -546,6 +604,12 @@
                 "value": "={{ !$json.error && $json.statusCode >= 200 && $json.statusCode < 300 && !/^\\s*</.test(String($json.body ?? $json.data ?? '')) }}"
               },
               {
+                "id": "dash-json",
+                "name": "dashboard_json",
+                "type": "object",
+                "value": "={{ (() => { try { const b = $json.body ?? $json.data; const j = typeof b === 'string' ? JSON.parse(b) : b; return (j && typeof j === 'object') ? j : {}; } catch (e) { return {}; } })() }}"
+              },
+              {
                 "id": "dash-body",
                 "name": "dashboard_body",
                 "type": "string",
@@ -566,7 +630,7 @@
         ],
         "parameters": {
           "method": "POST",
-          "url": "https://fmt-dashboard.mgmt-efuturemedia.com/api/admin/claude-usage/import",
+          "url": "https://fmt-dashboard.mgmt-efuturemedia.com/api/integrations/claude-usage/import",
           "authentication": "genericCredentialType",
           "genericAuthType": "httpBearerAuth",
           "sendBody": true,
@@ -586,6 +650,12 @@
               "redirect": {
                 "followRedirects": false
               }
+            },
+            "batching": {
+              "batch": {
+                "batchInterval": 300,
+                "batchSize": 1
+              }
             }
           }
         },
@@ -603,12 +673,12 @@
         "type": "n8n-nodes-base.respondToWebhook",
         "typeVersion": 1.5,
         "position": [
-          520,
+          740,
           300
         ],
         "parameters": {
           "respondWith": "json",
-          "responseBody": "={{ JSON.stringify(Object.assign({}, $(\"Validate\").first().json.summary, { dashboard_status: $json.dashboard_status ?? null, dashboard_ok: $json.dashboard_ok ?? null, dashboard_body: $json.dashboard_body ?? null })) }}",
+          "responseBody": "={{ JSON.stringify(Object.assign({}, $(\"Validate\").first().json.summary, { dashboard_status: $json.dashboard_status ?? null, dashboard_ok: $json.dashboard_ok ?? null, batches: $json.batches ?? null, batches_ok: $json.batches_ok ?? null, dailyWritten: $json.dailyWritten ?? null, unmatchedWritten: $json.unmatchedWritten ?? null, unmatchedEmails: $json.unmatchedEmails ?? null, dashboard_body: $json.dashboard_body ?? null })) }}",
           "options": {}
         }
       },
@@ -626,6 +696,21 @@
           "color": 5,
           "width": 384,
           "height": 224
+        }
+      },
+      {
+        "id": "224dc76f-86bd-4eb5-a2d1-d0cf113a9ac5",
+        "name": "Combine results",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          520,
+          240
+        ],
+        "parameters": {
+          "jsCode": "// One item per batch arrives from Dashboard result. Combine them into one answer\n// for the collector: totals across batches and the union of unmatched emails.\nconst items = $input.all().map((i) => i.json);\nconst okCount = items.filter((x) => x.dashboard_ok === true).length;\nconst sum = (k) => items.reduce((a, x) => a + (Number(x.dashboard_json && x.dashboard_json[k]) || 0), 0);\nconst emails = [...new Set(items.flatMap((x) => (x.dashboard_json && Array.isArray(x.dashboard_json.unmatchedEmails)) ? x.dashboard_json.unmatchedEmails : []))].sort();\nconst bad = items.find((x) => x.dashboard_ok !== true);\nreturn [{ json: {\n  batches: items.length,\n  batches_ok: okCount,\n  dashboard_ok: items.length > 0 && okCount === items.length,\n  dashboard_status: bad ? (bad.dashboard_status ?? null) : (items.length ? items[0].dashboard_status : null),\n  dailyWritten: sum('dailyWritten'),\n  unmatchedWritten: sum('unmatchedWritten'),\n  unmatchedEmails: emails,\n  dashboard_body: bad ? (bad.dashboard_body ?? null) : null\n} }];\n",
+          "language": "javaScript",
+          "mode": "runOnceForAllItems"
         }
       }
     ],
@@ -688,17 +773,6 @@
           ]
         ]
       },
-      "Dashboard result": {
-        "main": [
-          [
-            {
-              "node": "Respond",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
       "Send to prod dashboard": {
         "main": [
           [
@@ -709,23 +783,45 @@
             }
           ]
         ]
+      },
+      "Dashboard result": {
+        "main": [
+          [
+            {
+              "node": "Combine results",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Combine results": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     },
     "nodeGroups": [],
     "authors": "Antonio antonio.marusic@efuturemedia.com (via MCP)",
-    "name": "Report connection errors in the response instead of failing",
-    "description": "Prod host did not resolve (ENOTFOUND), which crashed the run and returned HTTP 500 to the collector. Send nodes now continue on error, and Dashboard result returns dashboard_ok false with the error message.",
+    "name": "Split sends into batches under 80 KB; combine the dashboard answers",
+    "description": "Stage answered 500 \"request entity too large\" for 471 records in one body (~100 KB server limit). Validate now splits records into batches of at most 80 KB of JSON, the send nodes post them one by one, and Combine results sums dailyWritten/unmatchedWritten and merges unmatchedEmails into one response.",
     "autosaved": false,
-    "createdAt": "2026-11-03T14:48:13.899Z",
-    "updatedAt": "2026-11-03T14:48:13.899Z",
+    "createdAt": "2026-11-04T07:58:12.021Z",
+    "updatedAt": "2026-11-04T07:58:12.021Z",
     "workflowPublishHistory": [
       {
-        "id": 3188,
+        "id": 3197,
         "workflowId": "cFg4HZwbJn4MFVN1",
-        "versionId": "bfdaa6a3-fc68-4575-bcf6-0340c5c2fe53",
+        "versionId": "25fb9a26-f07c-485a-b5a1-aa15486d6411",
         "event": "activated",
         "userId": "6c3517ce-9655-4c91-8b84-23fe9d042f7e",
-        "createdAt": "2026-11-03T14:48:15.864Z"
+        "createdAt": "2026-11-04T07:58:17.122Z"
       }
     ]
   },
