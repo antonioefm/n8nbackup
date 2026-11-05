@@ -1,0 +1,222 @@
+{
+  "id": "J4cv7t4qeRK9jbv1",
+  "name": "Lokalise - tag keys changed today",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-04T13:52:29.127Z",
+  "updatedAt": "2026-11-04T13:52:45.836Z",
+  "isArchived": false,
+  "versionId": "175a3f6e-65a1-4a95-99a0-ecc7cf291d07",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "d1a2d778-ef5b-407c-9278-0211d906dc9b",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "14778153-9871-4077-b287-8e2d60063bba",
+      "name": "Fetch Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/3070657967b5854be32cb1.65162854/keys?limit=500&filter_archived=exclude",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "page",
+                    "value": "={{ $pageCount + 1 }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ ($response.body.keys || []).length < 500 }}",
+              "limitPagesFetched": true,
+              "maxRequests": 100,
+              "requestInterval": 250
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "b991e03f-c26b-49c5-9ce2-56dd6454f5df",
+      "name": "Filter Today",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Today = 2026-11-04 in Europe/Warsaw (CET, UTC+1)\nconst START = Date.UTC(2026, 10, 3, 23, 0, 0) / 1000;\nconst END = START + 86400;\nconst TAG = '041126';\nconst seen = {};\nconst matched = [];\nlet total = 0;\nlet byCreated = 0, byKeyMod = 0, byTrMod = 0, alreadyTagged = 0;\nfor (const it of $input.all()) {\n  for (const k of (it.json.keys || [])) {\n    if (seen[k.key_id]) { continue; }\n    seen[k.key_id] = 1;\n    total++;\n    const c = k.created_at_timestamp || 0;\n    const m = k.modified_at_timestamp || 0;\n    const t = k.translations_modified_at_timestamp || 0;\n    const inC = c >= START && c < END;\n    const inM = m >= START && m < END;\n    const inT = t >= START && t < END;\n    if (!(inC || inM || inT)) { continue; }\n    if (inC) byCreated++;\n    if (inM) byKeyMod++;\n    if (inT) byTrMod++;\n    const tags = k.tags || [];\n    if (tags.indexOf(TAG) >= 0) alreadyTagged++;\n    const nm = k.key_name;\n    const name = (nm && typeof nm === 'object') ? (nm.web || nm.other || nm.ios || nm.android || JSON.stringify(nm)) : nm;\n    matched.push({ key_id: k.key_id, name: name, created: inC, key_modified: inM, tr_modified: inT, tags: tags });\n  }\n}\nreturn [{ json: { total_keys_scanned: total, pages: $input.all().length, matched_count: matched.length, by_created: byCreated, by_key_modified: byKeyMod, by_translation_modified: byTrMod, already_tagged: alreadyTagged, matched: matched } }];\n"
+      }
+    },
+    {
+      "id": "307ed000-f21a-4993-8a83-a033223694cc",
+      "name": "Build Tag Batches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const DRY_RUN = false;\nconst TAG = '041126';\nif (DRY_RUN) { return []; }\nconst ks = $input.first().json.matched.filter(function (m) { return (m.tags || []).indexOf(TAG) < 0; });\nconst out = [];\nfor (let i = 0; i < ks.length; i += 500) {\n  out.push({ json: { body: { keys: ks.slice(i, i + 500).map(function (m) { return { key_id: m.key_id, tags: [TAG], merge_tags: true }; }) } } });\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "cb6d9f41-142a-4355-8bd3-9ee06cdb462c",
+      "name": "Apply Tag",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "https://api.lokalise.com/api2/projects/3070657967b5854be32cb1.65162854/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 500
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Keys": {
+      "main": [
+        [
+          {
+            "node": "Filter Today",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Today": {
+      "main": [
+        [
+          {
+            "node": "Build Tag Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Tag Batches": {
+      "main": [
+        [
+          {
+            "node": "Apply Tag",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "J4cv7t4qeRK9jbv1",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-04T13:52:29.138Z",
+      "updatedAt": "2026-11-04T13:52:29.138Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
