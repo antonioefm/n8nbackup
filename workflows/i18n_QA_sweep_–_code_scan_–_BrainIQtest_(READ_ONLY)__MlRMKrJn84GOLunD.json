@@ -5,10 +5,10 @@
   "active": false,
   "activeVersionId": null,
   "createdAt": "2026-10-20T09:24:46.977Z",
-  "updatedAt": "2026-10-20T09:25:28.922Z",
+  "updatedAt": "2026-11-05T10:04:58.836Z",
   "isArchived": false,
-  "versionId": "7010313d-7258-473b-ac3b-3c33f17bc4af",
-  "versionCounter": 2,
+  "versionId": "4d380bca-f16d-4d5b-871e-e9cb65daeee9",
+  "versionCounter": 3,
   "sourceWorkflowId": null,
   "triggerCount": 0,
   "nodes": [
@@ -34,7 +34,7 @@
       ],
       "parameters": {
         "mode": "raw",
-        "jsonOutput": "{\"repo\": \"iqtest-monorepo\", \"subdir\": \"\", \"dnt\": [\"BrainIQ\", \"BrainIQtest\", \"Brain IQ\", \"IQ\", \"Mensa\", \"Stanford-Binet\", \"Wechsler\"]}"
+        "jsonOutput": "{\"repo\": \"iqtest-monorepo\", \"subdir\": \"\", \"prs\": [308, 311], \"dnt\": [\"BrainIQ\", \"BrainIQtest\", \"Brain IQ\", \"IQ\", \"Mensa\", \"Stanford-Binet\", \"Wechsler\"]}"
       }
     },
     {
@@ -98,7 +98,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const res = $input.first().json;\nconst tree = res.tree || [];\nconst branch = $('Get Repo').first().json.default_branch;\nconst cfg = $('Config').first().json;\nconst repo = cfg.repo;\nconst sub = (cfg.subdir || '').replace(/\\/$/, '');\nconst EXT = /\\.(js|jsx|ts|tsx|vue|svelte|html|hbs|mjml|njk|ejs|json|svg)$/i;\nconst SKIP = /(^|\\/)(node_modules|dist|build|\\.next|coverage|__tests__|__mocks__|mocks?|fixtures|storybook|\\.storybook|e2e|cypress|playwright)(\\/|$)|\\.(test|spec|stories)\\.[jt]sx?$|\\.d\\.ts$|(package-lock|yarn\\.lock|pnpm-lock)|(^|\\/)package\\.json$|(^|\\/)tsconfig[^/]*$/i;\nconst isEn = p => /(^|\\/)(en|en-US|en_US)(\\.json|\\/[^/]+\\.json)$/.test(p);\nlet files = tree.filter(t => t.type === 'blob' && EXT.test(t.path) && !SKIP.test(t.path) && (t.size || 0) < 600000 && (!sub || t.path.startsWith(sub + '/')));\nfiles = files.filter(t => !/\\.json$/i.test(t.path) || isEn(t.path));\nconst total = files.length;\nconst capped = total > 1500;\nfiles = files.slice(0, 1500);\nif (!files.length) return [{ json: { skip: true, tree_truncated: !!res.truncated } }];\nreturn files.map((f, i) => ({ json: { repo, branch, path: f.path, meta: i === 0 ? { total, capped, tree_truncated: !!res.truncated } : undefined } }));\n"
+        "jsCode": "const cfg = $('Config').first().json;\nconst repo = cfg.repo;\nconst branch = $('Get Repo').first().json.default_branch;\nconst treeRes = $('Get Tree').first().json;\nconst tree = treeRes.tree || [];\nconst prFiles = [...$('Get PR A Files').all(), ...$('Get PR B Files').all()].map(i => i.json).filter(f => f && f.filename);\nconst EXT = /\\.(js|jsx|ts|tsx|vue|svelte|html|hbs|mjml|njk|ejs|json|svg)$/i;\nconst SKIP = /(^|\\/)(node_modules|dist|build|\\.next|coverage|__tests__|__mocks__|mocks?|fixtures|storybook|\\.storybook|e2e|cypress|playwright)(\\/|$)|\\.(test|spec|stories)\\.[jt]sx?$|\\.d\\.ts$|(package-lock|yarn\\.lock|pnpm-lock)|(^|\\/)package\\.json$|(^|\\/)tsconfig[^/]*$/i;\nconst isEn = p => /(^|\\/)(en|en-US|en_US)(\\.json|\\/[^/]+\\.json)$/.test(p);\nconst out = [];\nconst seen = new Set();\nfor (const f of prFiles) {\n  if (f.status === 'removed') continue;\n  const p = f.filename;\n  if (!EXT.test(p) || SKIP.test(p)) continue;\n  if (/\\.json$/i.test(p) && !isEn(p)) continue;\n  const ref = (String(f.contents_url || '').match(/[?&]ref=([0-9a-f]{40})/) || [])[1] || branch;\n  const k = p + '@' + ref;\n  if (seen.has(k)) continue;\n  seen.add(k);\n  out.push({ json: { repo, branch: ref, path: p } });\n}\nconst changed = out.length;\nfor (const t of tree) {\n  if (t.type !== 'blob' || !isEn(t.path) || SKIP.test(t.path) || (t.size || 0) >= 600000) continue;\n  const k = t.path + '@' + branch;\n  if (seen.has(k)) continue;\n  seen.add(k);\n  out.push({ json: { repo, branch, path: t.path } });\n}\nif (!out.length) return [{ json: { skip: true, meta: { pr_files: prFiles.length, changed_scanned: 0 } } }];\nout[0].json.meta = { pr_files: prFiles.length, changed_scanned: changed, en_files: out.length - changed, default_branch: branch, tree_truncated: !!treeRes.truncated };\nreturn out;\n"
       }
     },
     {
@@ -189,6 +189,58 @@
       "parameters": {
         "batchSize": 10
       }
+    },
+    {
+      "id": "753b7d88-07a2-4a79-80f0-3e6206f71052",
+      "name": "Get PR A Files",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        784,
+        32
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "method": "GET",
+        "nodeCredentialType": "githubApi",
+        "url": "=https://api.github.com/repos/QR-CODE-App/{{ $('Config').first().json.repo }}/pulls/{{ $('Config').first().json.prs[0] }}/files?per_page=100"
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "executeOnce": true
+    },
+    {
+      "id": "c4df13b2-e438-4622-b0ff-01ad0ff156b9",
+      "name": "Get PR B Files",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        32
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "method": "GET",
+        "nodeCredentialType": "githubApi",
+        "url": "=https://api.github.com/repos/QR-CODE-App/{{ $('Config').first().json.repo }}/pulls/{{ $('Config').first().json.prs[1] }}/files?per_page=100"
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "executeOnce": true
     }
   ],
   "connections": {
@@ -219,17 +271,6 @@
         [
           {
             "node": "Get Tree",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Tree": {
-      "main": [
-        [
-          {
-            "node": "Filter Tree",
             "type": "main",
             "index": 0
           }
@@ -281,6 +322,39 @@
         [
           {
             "node": "Get File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Tree": {
+      "main": [
+        [
+          {
+            "node": "Get PR A Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get PR A Files": {
+      "main": [
+        [
+          {
+            "node": "Get PR B Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get PR B Files": {
+      "main": [
+        [
+          {
+            "node": "Filter Tree",
             "type": "main",
             "index": 0
           }
