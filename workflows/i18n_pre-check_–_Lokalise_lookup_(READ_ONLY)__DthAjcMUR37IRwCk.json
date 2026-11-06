@@ -5,10 +5,10 @@
   "active": false,
   "activeVersionId": null,
   "createdAt": "2026-11-04T11:31:31.803Z",
-  "updatedAt": "2026-11-04T11:31:35.031Z",
+  "updatedAt": "2026-11-05T19:49:33.164Z",
   "isArchived": false,
-  "versionId": "217f97f5-b03f-433d-a48a-ade414f1f641",
-  "versionCounter": 2,
+  "versionId": "d361c002-8f34-483f-ae07-660971172756",
+  "versionCounter": 3,
   "sourceWorkflowId": null,
   "triggerCount": 0,
   "nodes": [
@@ -34,7 +34,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "return [{ json: { project_id: '1286096867dbf31146afc5.54950617', locales: ['de','es','fr','it','ko','ms','nl','pt','sv','th','vi'] } }];"
+        "jsCode": "// Set project_id and locales per run. One item per page; Lokalise returns at most 500 keys per page.\nconst project_id = '2944050668d5010cbd95e8.36175908';\nconst locales = ['es'];\nconst pages = 6;\nreturn Array.from({length: pages}, (_, i) => ({ json: { project_id, locales, page: i + 1 } }));"
       }
     },
     {
@@ -48,7 +48,7 @@
       ],
       "parameters": {
         "method": "GET",
-        "url": "={{ 'https://api.lokalise.com/api2/projects/' + $json.project_id + '/keys?include_translations=1&filter_archived=exclude&limit=5000&page=1' }}",
+        "url": "={{ 'https://api.lokalise.com/api2/projects/' + $json.project_id + '/keys?include_translations=1&filter_archived=exclude&limit=500&page=' + $json.page }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {
@@ -81,7 +81,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const r = $input.first().json;\nconst body = r.body || {};\nif (!Array.isArray(body.keys)) throw new Error('No keys array: status ' + r.statusCode);\nconst locs = $('Params').first().json.locales;\nconst norm = s => String(s || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim();\nconst pick = v => { if (v && typeof v === 'object') return v.other || Object.values(v)[0] || ''; try { const o = JSON.parse(v); if (o && typeof o === 'object') return o.other || Object.values(o)[0] || ''; } catch (e) {} return v; };\nconst matches = {}; const en_values = [];\nfor (const k of body.keys) {\n  if (k.is_archived) continue;\n  const tr = {}; let en = null;\n  for (const t of (k.translations || [])) { const iso = (t.language_iso || '').toLowerCase(); const v = pick(t.translation); if (iso === 'en') en = v; else if (locs.includes(iso) && v && String(v).trim()) tr[iso] = v; }\n  const name = typeof k.key_name === 'object' ? (k.key_name.web || k.key_name.other || Object.values(k.key_name)[0]) : k.key_name;\n  const e = norm(en); if (!e) continue;\n  en_values.push(e);\n  if (!matches[e]) matches[e] = { key: name, plural: !!k.is_plural, t: tr };\n}\nreturn [{ json: { status: r.statusCode, pages: (r.headers || {})['x-pagination-page-count'], total: (r.headers || {})['x-pagination-total-count'], keys: body.keys.length, en_values, matches } }];"
+        "jsCode": "const locs = $('Params').first().json.locales;\nconst norm = s => String(s || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim();\nconst pick = v => { if (v && typeof v === 'object') return v.other || Object.values(v)[0] || ''; try { const o = JSON.parse(v); if (o && typeof o === 'object') return o.other || Object.values(o)[0] || ''; } catch (e) {} return v; };\nconst matches = {}; const en_values = []; let keys = 0, total = null, pageCount = null; const statuses = [];\nfor (const it of $input.all()) {\n  const r = it.json; const body = r.body || {}; statuses.push(r.statusCode);\n  total = total || (r.headers || {})['x-pagination-total-count']; pageCount = pageCount || (r.headers || {})['x-pagination-page-count'];\n  if (!Array.isArray(body.keys)) continue;\n  for (const k of body.keys) {\n    if (k.is_archived) continue; keys++;\n    const tr = {}; let en = null;\n    for (const t of (k.translations || [])) { const iso = (t.language_iso || '').toLowerCase(); const v = pick(t.translation); if (iso === 'en') en = v; else if (locs.includes(iso) && v && String(v).trim()) tr[iso] = v; }\n    const name = typeof k.key_name === 'object' ? (k.key_name.web || k.key_name.other || Object.values(k.key_name)[0]) : k.key_name;\n    const e = norm(en); if (!e) continue;\n    en_values.push(e);\n    if (!matches[e]) matches[e] = { key: name, plural: !!k.is_plural, t: tr };\n  }\n}\nreturn [{ json: { statuses, pages: pageCount, total, keys, en_values, matches } }];"
       }
     }
   ],
