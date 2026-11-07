@@ -1,0 +1,273 @@
+{
+  "id": "EKOW8P4RPlm3i6bs",
+  "name": "i18n readiness – PR files (READ ONLY)",
+  "description": "READ ONLY. Fetches one PR of a QR-CODE-App repo: metadata, changed files with patches and their content at the PR head, for the i18n readiness skill. GET only. Edit only the Config node.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-06T11:28:54.250Z",
+  "updatedAt": "2026-11-06T11:28:57.574Z",
+  "isArchived": false,
+  "versionId": "3388a3de-b0f2-4526-9c1a-c11e40c3ffb7",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "866ade07-231e-4677-96ad-e5f36656b24c",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "9b3bfcbc-952f-4d04-beca-1e32f3c3487e",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// EDIT ME per run: repo and PR number only.\nreturn [{ json: { repo: 'pdfhelp-monorepo', pr: 383 } }];"
+      }
+    },
+    {
+      "id": "2c6a0037-5cf3-4c19-90af-9dfd9174b29d",
+      "name": "Get PR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.github.com/repos/QR-CODE-App/' + $json.repo + '/pulls/' + $json.pr }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      }
+    },
+    {
+      "id": "1c15d2b2-40f8-40c4-883b-88a7ef49b9a3",
+      "name": "Get PR Files",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.github.com/repos/QR-CODE-App/' + $('Config').first().json.repo + '/pulls/' + $('Config').first().json.pr + '/files?per_page=100' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      }
+    },
+    {
+      "id": "ad05f36a-efd8-4498-9617-4236178f522f",
+      "name": "Split Files",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const pr = $('Get PR').first().json;\nconst sha = pr.head && pr.head.sha;\nconst repo = $('Config').first().json.repo;\nconst files = $input.all().map(i => i.json).filter(f => f && f.filename);\nreturn files.filter(f => f.status !== 'removed').map(f => ({ json: { repo, sha, path: f.filename, status: f.status, additions: f.additions, deletions: f.deletions, patch: f.patch || '' } }));"
+      }
+    },
+    {
+      "id": "dd7dd193-85dd-408f-b558-19578c1ab740",
+      "name": "Get Content",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.github.com/repos/QR-CODE-App/' + $json.repo + '/contents/' + encodeURI($json.path) + '?ref=' + $json.sha }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.raw"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "data"
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 500
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      }
+    },
+    {
+      "id": "975e192d-5f81-4f0a-9066-fe32b0c358bd",
+      "name": "Collect",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const pr = $('Get PR').first().json;\nconst src = $('Split Files').all().map(i => i.json);\nconst got = $input.all().map(i => i.json);\nconst files = src.map((f, i) => ({ path: f.path, status: f.status, additions: f.additions, deletions: f.deletions, patch: f.patch, content: typeof (got[i] || {}).data === 'string' ? got[i].data : null }));\nreturn [{ json: { pr: pr.number, title: pr.title, state: pr.state, merged: pr.merged, head_ref: pr.head && pr.head.ref, head_sha: pr.head && pr.head.sha, base_ref: pr.base && pr.base.ref, changed_files: pr.changed_files, files } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Get PR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get PR": {
+      "main": [
+        [
+          {
+            "node": "Get PR Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get PR Files": {
+      "main": [
+        [
+          {
+            "node": "Split Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Files": {
+      "main": [
+        [
+          {
+            "node": "Get Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Content": {
+      "main": [
+        [
+          {
+            "node": "Collect",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "EKOW8P4RPlm3i6bs",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-06T11:28:54.253Z",
+      "updatedAt": "2026-11-06T11:28:54.253Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
