@@ -1,0 +1,165 @@
+{
+  "id": "EwDLw4E62AUpz3wX",
+  "name": "Lokalise - learnabout key probe",
+  "description": "Throwaway read-only probe: lists learnabout_ keys, key references and same-text strings in EN/PT.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-10T14:00:41.809Z",
+  "updatedAt": "2026-11-10T14:00:41.809Z",
+  "isArchived": false,
+  "versionId": "2e141334-76c6-43b9-b1c9-8780fe67c651",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "330ea5dd-2c95-4744-b6e5-903313156f51",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "6078a6ea-1325-4014-9534-d5cb2cff9666",
+      "name": "Build Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const out = [];\nfor (let p = 1; p <= 30; p++) { out.push({ json: { page: p } }); }\nreturn out;\n"
+      }
+    },
+    {
+      "id": "cd545c96-ea62-4a3a-8e14-2d453a3c9586",
+      "name": "Fetch Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/899698826a7340184c6a03.84153135/keys?include_translations=1&filter_translation_lang_ids=640,708&limit=500&page={{ $json.page }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "dca60aac-7f4b-4f75-a027-d60b7ed91a33",
+      "name": "Analyse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const res = $input.all();\nlet total = null; let pageCount = null; let fetched = 0; const statuses = [];\nconst prefixKeys = []; const refs = []; const sameText = [];\nfunction nm(k) { const n = k.key_name || {}; return n.web || n.other || n.ios || n.android || JSON.stringify(n); }\nfunction tr(k) { const o = {}; for (const t of (k.translations || [])) { o[t.language_iso] = t.translation; } return o; }\nfor (const r of res) {\n  const j = r.json || {}; statuses.push(j.statusCode);\n  const h = j.headers || {};\n  if (h['x-pagination-total-count']) { total = h['x-pagination-total-count']; pageCount = h['x-pagination-page-count']; }\n  const keys = (j.body && j.body.keys) || [];\n  fetched += keys.length;\n  for (const k of keys) {\n    const name = nm(k); const t = tr(k);\n    const base = { key_id: k.key_id, name: name, archived: k.is_archived, is_plural: k.is_plural, tags: k.tags, description: k.description, translations: t };\n    if (name.toLowerCase().indexOf('learnabout') >= 0) { prefixKeys.push(base); continue; }\n    let isRef = false;\n    for (const iso in t) { const v = String(t[iso] || ''); if (/\\[%key:[^%]*learnabout/i.test(v)) { isRef = true; } }\n    if (isRef) { refs.push(base); continue; }\n    for (const iso in t) { const v = String(t[iso] || ''); if (/aprender sobre/i.test(v) || /^\\s*learn about\\s*$/i.test(v)) { sameText.push(base); break; } }\n  }\n}\nreturn [{ json: { total: total, pageCount: pageCount, fetched: fetched, statuses: statuses.filter(function(s){return s!==200;}), prefixKeys: prefixKeys, refs: refs, sameText: sameText } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Build Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Pages": {
+      "main": [
+        [
+          {
+            "node": "Fetch Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Keys": {
+      "main": [
+        [
+          {
+            "node": "Analyse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "EwDLw4E62AUpz3wX",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-10T14:00:41.813Z",
+      "updatedAt": "2026-11-10T14:00:41.813Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
