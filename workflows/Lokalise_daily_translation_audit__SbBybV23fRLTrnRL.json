@@ -3,12 +3,12 @@
   "name": "Lokalise daily translation audit",
   "description": "Every day 06:00 Madrid: audits translations added or changed in the last 24h across the 21 active Lokalise projects (glossary, style guide, register). Review sheet per language + #i18n-team post. Read-only.",
   "active": true,
-  "activeVersionId": "9f8174d4-f36a-4229-9b0d-19a3140f7c54",
+  "activeVersionId": "7ba2fb2a-ae6a-4c4b-9d45-afe3d06a1900",
   "createdAt": "2026-10-07T09:40:29.668Z",
-  "updatedAt": "2026-10-29T09:10:41.924Z",
+  "updatedAt": "2026-11-10T15:11:22.996Z",
   "isArchived": false,
-  "versionId": "9f8174d4-f36a-4229-9b0d-19a3140f7c54",
-  "versionCounter": 22,
+  "versionId": "7ba2fb2a-ae6a-4c4b-9d45-afe3d06a1900",
+  "versionCounter": 24,
   "sourceWorkflowId": null,
   "triggerCount": 1,
   "nodes": [
@@ -283,28 +283,6 @@
         "returnAll": true
       },
       "executeOnce": true
-    },
-    {
-      "id": "df2e8837-59c6-4f91-89d1-971842734761",
-      "name": "Read reviewer feedback",
-      "type": "n8n-nodes-base.dataTable",
-      "typeVersion": 1.1,
-      "position": [
-        2464,
-        96
-      ],
-      "parameters": {
-        "resource": "row",
-        "operation": "get",
-        "dataTableId": {
-          "__rl": true,
-          "mode": "id",
-          "value": "zIhywBksdBpwbHp1"
-        },
-        "returnAll": true
-      },
-      "executeOnce": true,
-      "alwaysOutputData": true
     },
     {
       "id": "eec71259-f067-4132-b23e-342be860fe88",
@@ -729,7 +707,7 @@
           "mode": "id",
           "value": "C094NS33FN0"
         },
-        "text": "=Review sheet: <{{ $('Create review sheet').first().json.spreadsheetUrl }}|open> — one tab per language; choose *Approved* or *Rejected* in the _Decision_ dropdown (blank = not reviewed), then react :white_check_mark: on the summary above. *Every Rejected row needs a reason* in the _Reason (required if Rejected)_ column (empty ones turn red); the review is not stored until all rejections have one. _Linguist edit_ = Yes / No and _Last edited by_ show who last changed each translation; rows with Linguist edit = Yes are report-only: fixes are never applied to linguist edits.",
+        "text": "=Review sheet: <{{ $('Create review sheet').first().json.spreadsheetUrl }}|open> — one tab per language; choose *Approved* or *Rejected* in the _Decision_ dropdown (blank = not reviewed). Decisions are stored automatically within the hour as audit learnings (no ✅ needed). *Every Rejected row needs a reason* in the _Reason (required if Rejected)_ column (empty ones turn red); rejections without a reason are not stored. _Linguist edit_ = Yes / No and _Last edited by_ show who last changed each translation; rows with Linguist edit = Yes are report-only: fixes are never applied to linguist edits.",
         "otherOptions": {
           "includeLinkToWorkflow": false,
           "thread_ts": {
@@ -1017,6 +995,64 @@
       "onError": "continueRegularOutput",
       "alwaysOutputData": true,
       "executeOnce": true
+    },
+    {
+      "id": "93b3ae2e-42c6-480a-a461-1879cb1ce987",
+      "name": "Mark unconfirmed glossary terms",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2800,
+        260
+      ],
+      "parameters": {
+        "jsCode": "// Marks glossary entries whose target is not confirmed yet (term tagged to_review, or a 'to be confirmed' language note).\n// The worker keeps term_missing findings on them as Low 'Could be correct' (Maria 2026-11-10). Item order is unchanged.\nconst RV = {};\nfor (const it of $('Fetch glossary').all()) {\n  const b = it.json.body !== undefined ? it.json.body : it.json;\n  for (const t of ((b && (b.data || b.glossary_terms || b.terms)) || [])) {\n    const raw = Array.isArray(t.tags) ? t.tags : String(t.tags || '').split(',');\n    const tags = raw.map(function (x) { return String(typeof x === 'object' && x ? (x.name || x.tag || '') : x).trim().toLowerCase(); });\n    if (tags.indexOf('to_review') !== -1) { RV[String(t.term || '').trim()] = true; }\n  }\n}\nreturn $input.all().map(function (it) {\n  const j = it.json;\n  const gl = (j.glossary || []).map(function (g) {\n    const rv = !!RV[g.src] || /to be confirmed/i.test(String(g.note || ''));\n    return rv ? Object.assign({}, g, { rv: true, note: ('[UNCONFIRMED: to_review] ' + String(g.note || '')).slice(0, 230) }) : g;\n  });\n  return { json: Object.assign({}, j, { glossary: gl }) };\n});\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "455a9061-dca0-4cfc-ba07-eb8e5a5adf37",
+      "name": "Read learnings sheet",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2464,
+        96
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "method": "GET",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "options": {
+          "timeout": 60000
+        },
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/1hKJwT4MrNZymmiy9SA-aW2f6xRmWNJH0z6D65nwSrsk/values/All!A:N"
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Gt1NY0PXKDxBUQGy",
+          "name": "Google Sheets account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "executeOnce": true
+    },
+    {
+      "id": "80903297-a392-4c7c-ac18-039009b65238",
+      "name": "Read reviewer feedback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2576,
+        260
+      ],
+      "parameters": {
+        "jsCode": "// Reviewer precedent now comes from the 'i18n audit learnings' Google Sheet, tab All (Maria 2026-11-10), not the\n// targets_audit_feedback data table. Rows with Active = No are ignored. Scope is carried in each item.\n// Same item shape as before, so Build language jobs is unchanged.\nconst v = (($('Read learnings sheet').first() || {}).json || {}).values || [];\nconst out = [];\nfor (const r of v.slice(1)) {\n  const active = String(r[10] || 'Yes').trim().toLowerCase();\n  if (active === 'no') { continue; }\n  const iso = String(r[2] || '').trim(); const dec = String(r[4] || '').trim().toLowerCase();\n  if (!iso || (dec !== 'approved' && dec !== 'rejected')) { continue; }\n  out.push({ json: { iso: iso, decision: dec, scope: String(r[3] || 'All products'), rule: String(r[5] || ''), en: String(r[6] || ''), translation: String(r[7] || ''), issue: String(r[8] || ''), reason: String(r[9] || ''), reviewed_at: String(r[11] || '') } });\n}\nreturn out.length ? out : [{ json: {} }];",
+        "mode": "runOnceForAllItems"
+      }
     }
   ],
   "connections": {
@@ -1142,39 +1178,6 @@
         [
           {
             "node": "Read style rules",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Read style rules": {
-      "main": [
-        [
-          {
-            "node": "Read reviewer feedback",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Read reviewer feedback": {
-      "main": [
-        [
-          {
-            "node": "Build language jobs",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build language jobs": {
-      "main": [
-        [
-          {
-            "node": "Audit each language",
             "type": "main",
             "index": 0
           }
@@ -1363,6 +1366,61 @@
           }
         ]
       ]
+    },
+    "Build language jobs": {
+      "main": [
+        [
+          {
+            "node": "Mark unconfirmed glossary terms",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark unconfirmed glossary terms": {
+      "main": [
+        [
+          {
+            "node": "Audit each language",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read style rules": {
+      "main": [
+        [
+          {
+            "node": "Read learnings sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read learnings sheet": {
+      "main": [
+        [
+          {
+            "node": "Read reviewer feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read reviewer feedback": {
+      "main": [
+        [
+          {
+            "node": "Build language jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "nodeGroups": [],
@@ -1413,7 +1471,7 @@
     }
   ],
   "activeVersion": {
-    "versionId": "9f8174d4-f36a-4229-9b0d-19a3140f7c54",
+    "versionId": "7ba2fb2a-ae6a-4c4b-9d45-afe3d06a1900",
     "workflowId": "SbBybV23fRLTrnRL",
     "nodes": [
       {
@@ -1687,28 +1745,6 @@
           "returnAll": true
         },
         "executeOnce": true
-      },
-      {
-        "id": "df2e8837-59c6-4f91-89d1-971842734761",
-        "name": "Read reviewer feedback",
-        "type": "n8n-nodes-base.dataTable",
-        "typeVersion": 1.1,
-        "position": [
-          2464,
-          96
-        ],
-        "parameters": {
-          "resource": "row",
-          "operation": "get",
-          "dataTableId": {
-            "__rl": true,
-            "mode": "id",
-            "value": "zIhywBksdBpwbHp1"
-          },
-          "returnAll": true
-        },
-        "executeOnce": true,
-        "alwaysOutputData": true
       },
       {
         "id": "eec71259-f067-4132-b23e-342be860fe88",
@@ -2133,7 +2169,7 @@
             "mode": "id",
             "value": "C094NS33FN0"
           },
-          "text": "=Review sheet: <{{ $('Create review sheet').first().json.spreadsheetUrl }}|open> — one tab per language; choose *Approved* or *Rejected* in the _Decision_ dropdown (blank = not reviewed), then react :white_check_mark: on the summary above. *Every Rejected row needs a reason* in the _Reason (required if Rejected)_ column (empty ones turn red); the review is not stored until all rejections have one. _Linguist edit_ = Yes / No and _Last edited by_ show who last changed each translation; rows with Linguist edit = Yes are report-only: fixes are never applied to linguist edits.",
+          "text": "=Review sheet: <{{ $('Create review sheet').first().json.spreadsheetUrl }}|open> — one tab per language; choose *Approved* or *Rejected* in the _Decision_ dropdown (blank = not reviewed). Decisions are stored automatically within the hour as audit learnings (no ✅ needed). *Every Rejected row needs a reason* in the _Reason (required if Rejected)_ column (empty ones turn red); rejections without a reason are not stored. _Linguist edit_ = Yes / No and _Last edited by_ show who last changed each translation; rows with Linguist edit = Yes are report-only: fixes are never applied to linguist edits.",
           "otherOptions": {
             "includeLinkToWorkflow": false,
             "thread_ts": {
@@ -2421,6 +2457,64 @@
         "onError": "continueRegularOutput",
         "alwaysOutputData": true,
         "executeOnce": true
+      },
+      {
+        "id": "93b3ae2e-42c6-480a-a461-1879cb1ce987",
+        "name": "Mark unconfirmed glossary terms",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2800,
+          260
+        ],
+        "parameters": {
+          "jsCode": "// Marks glossary entries whose target is not confirmed yet (term tagged to_review, or a 'to be confirmed' language note).\n// The worker keeps term_missing findings on them as Low 'Could be correct' (Maria 2026-11-10). Item order is unchanged.\nconst RV = {};\nfor (const it of $('Fetch glossary').all()) {\n  const b = it.json.body !== undefined ? it.json.body : it.json;\n  for (const t of ((b && (b.data || b.glossary_terms || b.terms)) || [])) {\n    const raw = Array.isArray(t.tags) ? t.tags : String(t.tags || '').split(',');\n    const tags = raw.map(function (x) { return String(typeof x === 'object' && x ? (x.name || x.tag || '') : x).trim().toLowerCase(); });\n    if (tags.indexOf('to_review') !== -1) { RV[String(t.term || '').trim()] = true; }\n  }\n}\nreturn $input.all().map(function (it) {\n  const j = it.json;\n  const gl = (j.glossary || []).map(function (g) {\n    const rv = !!RV[g.src] || /to be confirmed/i.test(String(g.note || ''));\n    return rv ? Object.assign({}, g, { rv: true, note: ('[UNCONFIRMED: to_review] ' + String(g.note || '')).slice(0, 230) }) : g;\n  });\n  return { json: Object.assign({}, j, { glossary: gl }) };\n});\n",
+          "mode": "runOnceForAllItems"
+        }
+      },
+      {
+        "id": "455a9061-dca0-4cfc-ba07-eb8e5a5adf37",
+        "name": "Read learnings sheet",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2464,
+          96
+        ],
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "method": "GET",
+          "nodeCredentialType": "googleSheetsOAuth2Api",
+          "options": {
+            "timeout": 60000
+          },
+          "url": "https://sheets.googleapis.com/v4/spreadsheets/1hKJwT4MrNZymmiy9SA-aW2f6xRmWNJH0z6D65nwSrsk/values/All!A:N"
+        },
+        "credentials": {
+          "googleSheetsOAuth2Api": {
+            "id": "Gt1NY0PXKDxBUQGy",
+            "name": "Google Sheets account"
+          }
+        },
+        "onError": "continueRegularOutput",
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 5000,
+        "executeOnce": true
+      },
+      {
+        "id": "80903297-a392-4c7c-ac18-039009b65238",
+        "name": "Read reviewer feedback",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2576,
+          260
+        ],
+        "parameters": {
+          "jsCode": "// Reviewer precedent now comes from the 'i18n audit learnings' Google Sheet, tab All (Maria 2026-11-10), not the\n// targets_audit_feedback data table. Rows with Active = No are ignored. Scope is carried in each item.\n// Same item shape as before, so Build language jobs is unchanged.\nconst v = (($('Read learnings sheet').first() || {}).json || {}).values || [];\nconst out = [];\nfor (const r of v.slice(1)) {\n  const active = String(r[10] || 'Yes').trim().toLowerCase();\n  if (active === 'no') { continue; }\n  const iso = String(r[2] || '').trim(); const dec = String(r[4] || '').trim().toLowerCase();\n  if (!iso || (dec !== 'approved' && dec !== 'rejected')) { continue; }\n  out.push({ json: { iso: iso, decision: dec, scope: String(r[3] || 'All products'), rule: String(r[5] || ''), en: String(r[6] || ''), translation: String(r[7] || ''), issue: String(r[8] || ''), reason: String(r[9] || ''), reviewed_at: String(r[11] || '') } });\n}\nreturn out.length ? out : [{ json: {} }];",
+          "mode": "runOnceForAllItems"
+        }
       }
     ],
     "connections": {
@@ -2546,39 +2640,6 @@
           [
             {
               "node": "Read style rules",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Read style rules": {
-        "main": [
-          [
-            {
-              "node": "Read reviewer feedback",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Read reviewer feedback": {
-        "main": [
-          [
-            {
-              "node": "Build language jobs",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Build language jobs": {
-        "main": [
-          [
-            {
-              "node": "Audit each language",
               "type": "main",
               "index": 0
             }
@@ -2767,23 +2828,78 @@
             }
           ]
         ]
+      },
+      "Build language jobs": {
+        "main": [
+          [
+            {
+              "node": "Mark unconfirmed glossary terms",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Mark unconfirmed glossary terms": {
+        "main": [
+          [
+            {
+              "node": "Audit each language",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read style rules": {
+        "main": [
+          [
+            {
+              "node": "Read learnings sheet",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read learnings sheet": {
+        "main": [
+          [
+            {
+              "node": "Read reviewer feedback",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read reviewer feedback": {
+        "main": [
+          [
+            {
+              "node": "Build language jobs",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     },
     "nodeGroups": [],
     "authors": "Maria Sica (via MCP)",
-    "name": "Add new TR linguist isengoz@gmail.com",
-    "description": "Ismail Sengoz (isengoz@gmail.com) is the new Turkish linguist; his edits are now marked Linguist edit = Yes and report-only.",
+    "name": "Precedent from learnings sheet; no ✅ in thread text",
+    "description": "Added nodes: Read learnings sheet, Read reviewer feedback\nRemoved nodes: Read reviewer feedback\nUpdated nodes: Post sheet link in thread\nConnections: 2 added, 1 removed",
     "autosaved": false,
-    "createdAt": "2026-10-29T09:10:41.926Z",
-    "updatedAt": "2026-10-29T09:10:41.926Z",
+    "createdAt": "2026-11-10T15:11:22.998Z",
+    "updatedAt": "2026-11-10T15:11:22.998Z",
     "workflowPublishHistory": [
       {
-        "id": 3161,
+        "id": 3244,
         "workflowId": "SbBybV23fRLTrnRL",
-        "versionId": "9f8174d4-f36a-4229-9b0d-19a3140f7c54",
+        "versionId": "7ba2fb2a-ae6a-4c4b-9d45-afe3d06a1900",
         "event": "activated",
         "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
-        "createdAt": "2026-10-29T09:10:44.460Z"
+        "createdAt": "2026-11-10T15:11:26.909Z"
       }
     ]
   },
