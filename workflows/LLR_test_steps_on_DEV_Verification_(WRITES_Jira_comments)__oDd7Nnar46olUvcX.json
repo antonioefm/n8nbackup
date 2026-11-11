@@ -1,0 +1,1084 @@
+{
+  "id": "oDd7Nnar46olUvcX",
+  "name": "LLR test steps on DEV Verification (WRITES Jira comments)",
+  "description": "Every 15 min: INTERNAT LLRs moved to DEV Verification (last 3 days) without a \"How to test\" comment get Claude-written test steps (release date, Lokalise tag link) + a readiness-check note. n8n version of i18n-llr-test-steps.",
+  "active": true,
+  "activeVersionId": "3d3f9053-3856-4130-8d8f-02cf218f87d3",
+  "createdAt": "2026-11-10T09:30:26.568Z",
+  "updatedAt": "2026-11-10T10:01:29.850Z",
+  "isArchived": false,
+  "versionId": "9bdc36b7-60ce-4031-a89e-0b86eba80485",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "1ca45311-2e54-4c7b-9272-08be628697eb",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "c9f05f56-6896-4445-8ac6-940cf7c349f6",
+      "name": "Find LLRs in DEV Verification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://futuremedia.atlassian.net/rest/api/2/search/jql",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "jql",
+              "value": "={{ ($json.query && $json.query.llr) ? 'key = ' + $json.query.llr : 'project = INTERNAT AND labels = LLR AND status = \"DEV Verification\" AND status changed to \"DEV Verification\" after -3d ORDER BY updated DESC' }}"
+            },
+            {
+              "name": "fields",
+              "value": "summary,status,issuelinks,comment,duedate"
+            },
+            {
+              "name": "maxResults",
+              "value": "50"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "QJte7dJbX10mIzJI",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "id": "15ee9e7b-1e43-47c5-ad85-ad0cfa119bc2",
+      "name": "Pick LLRs Without Test Steps",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// One item per LLR that has a linked product ticket and no \"How to test\" comment yet.\n// A run through 'Run for One LLR' (?llr=KEY) skips the duplicate check.\nconst NL = String.fromCharCode(10);\nlet force = false;\ntry { const q = $('Run for One LLR').first().json.query || {}; force = !!q.llr; } catch (e) { force = false; }\nfunction fmt(d) { try { return DateTime.fromISO(String(d).slice(0, 10)).toFormat('d LLL yyyy'); } catch (e) { return String(d || ''); } }\nconst issues = ($input.first().json.issues) || [];\nconst out = [];\nfor (const is of issues) {\n  const f = is.fields || {};\n  const comments = (f.comment && f.comment.comments) || [];\n  const bodies = comments.map(function (c) { return String(c.body || ''); });\n  if (!force && bodies.some(function (b) { return b.toLowerCase().indexOf('how to test') >= 0; })) { continue; }\n  const link = (f.issuelinks || []).filter(function (l) { return l.type && String(l.type.name).trim() === 'Localization ticket' && l.inwardIssue; })[0];\n  if (!link) { continue; }\n  let release = '';\n  for (const b of bodies) { const p = b.toLowerCase().indexOf('release date:'); if (p >= 0) { release = b.slice(p + 13).split(NL)[0].split('*').join('').trim(); } }\n  const ready = comments.filter(function (c) { return String(c.body || '').toLowerCase().indexOf('i18n readiness check') >= 0; });\n  out.push({ json: {\n    llr: is.key,\n    product: link.inwardIssue.key,\n    llr_due: f.duedate ? fmt(f.duedate) : '',\n    release_comment: release,\n    readiness_date: ready.length ? fmt(ready[ready.length - 1].created) : '',\n    has_qa_note: bodies.some(function (b) { return b.indexOf('First automatic QA check') >= 0; }),\n    llr_comments: comments.slice(-15).map(function (c) { return { author: c.author && c.author.displayName, created: String(c.created || '').slice(0, 10), body: String(c.body || '').slice(0, 1500) }; })\n  } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "e02ee71f-b9f6-4f4a-ae8d-6165aa27bfe2",
+      "name": "Get Product Ticket",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://futuremedia.atlassian.net/rest/api/2/issue/{{ $json.product }}?fields=summary,description,status,labels,parent,comment,fixVersions,issuetype,resolutiondate,duedate",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "QJte7dJbX10mIzJI",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "id": "1037afb1-fe45-4156-a6f3-4bcbf86eaa04",
+      "name": "Get Epic",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.fields && $json.fields.parent ? \"https://futuremedia.atlassian.net/rest/api/2/issue/\" + $json.fields.parent.key + \"?fields=summary,duedate\" : \"https://futuremedia.atlassian.net/rest/api/2/myself\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "QJte7dJbX10mIzJI",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "id": "cfd179e3-83e2-410c-af1d-d5d18c0a0859",
+      "name": "List Lokalise Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=100&include_statistics=0&include_settings=0",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "47d0e3b0-0e94-4cfe-9324-b71356f230a1",
+      "name": "Build Lokalise Tag Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// One request per LLR x Lokalise project: keys tagged with the product ticket key\nconst llrs = $('Pick LLRs Without Test Steps').all();\nconst projects = (($input.first().json.projects) || []).filter(function (p) { return !/demo/i.test(p.name || ''); });\nconst out = [];\nfor (let i = 0; i < llrs.length; i++) {\n  const tag = llrs[i].json.product;\n  for (const p of projects) {\n    out.push({ json: { i: i, tag: tag, project_id: p.project_id, project_name: p.name, url: 'https://api.lokalise.com/api2/projects/' + p.project_id + '/keys?filter_tags=' + encodeURIComponent(tag) + '&filter_archived=exclude&include_translations=1&limit=100' } });\n  }\n  if (!projects.length) { out.push({ json: { i: i, tag: tag, project_id: '', project_name: '', url: 'https://api.lokalise.com/api2/projects?limit=1' } }); }\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "fc656284-5588-4d2e-8183-15f63304c97c",
+      "name": "Find Tagged Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1540,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 1100
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "4054fabd-679a-424f-989b-71e069331965",
+      "name": "Build Prompts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Per LLR: release/live line, Lokalise key links (tag filter = md5 of the tag), and the JSON input for Claude\nfunction md5(str){function rh(n){let s='',j;for(j=0;j<=3;j++)s+=((n>>(j*8+4))&0x0F).toString(16)+((n>>(j*8))&0x0F).toString(16);return s}\nfunction ad(x,y){const l=(x&0xFFFF)+(y&0xFFFF);const m=(x>>16)+(y>>16)+(l>>16);return(m<<16)|(l&0xFFFF)}\nfunction rl(n,c){return(n<<c)|(n>>>(32-c))}\nfunction cm(q,a,b,x,s,t){return ad(rl(ad(ad(a,q),ad(x,t)),s),b)}\nfunction ff(a,b,c,d,x,s,t){return cm((b&c)|((~b)&d),a,b,x,s,t)}\nfunction gg(a,b,c,d,x,s,t){return cm((b&d)|(c&(~d)),a,b,x,s,t)}\nfunction hh(a,b,c,d,x,s,t){return cm(b^c^d,a,b,x,s,t)}\nfunction ii(a,b,c,d,x,s,t){return cm(c^(b|(~d)),a,b,x,s,t)}\nconst u=unescape(encodeURIComponent(str));const n=((u.length+8)>>6)+1;const x=new Array(n*16).fill(0);let i;\nfor(i=0;i<u.length;i++)x[i>>2]|=u.charCodeAt(i)<<((i%4)*8);x[i>>2]|=0x80<<((i%4)*8);x[n*16-2]=u.length*8;\nlet a=1732584193,b=-271733879,c=-1732584194,d=271733878;\nfor(i=0;i<x.length;i+=16){const oa=a,ob=b,oc=c,od=d;\na=ff(a,b,c,d,x[i+0],7,-680876936);d=ff(d,a,b,c,x[i+1],12,-389564586);c=ff(c,d,a,b,x[i+2],17,606105819);b=ff(b,c,d,a,x[i+3],22,-1044525330);\na=ff(a,b,c,d,x[i+4],7,-176418897);d=ff(d,a,b,c,x[i+5],12,1200080426);c=ff(c,d,a,b,x[i+6],17,-1473231341);b=ff(b,c,d,a,x[i+7],22,-45705983);\na=ff(a,b,c,d,x[i+8],7,1770035416);d=ff(d,a,b,c,x[i+9],12,-1958414417);c=ff(c,d,a,b,x[i+10],17,-42063);b=ff(b,c,d,a,x[i+11],22,-1990404162);\na=ff(a,b,c,d,x[i+12],7,1804603682);d=ff(d,a,b,c,x[i+13],12,-40341101);c=ff(c,d,a,b,x[i+14],17,-1502002290);b=ff(b,c,d,a,x[i+15],22,1236535329);\na=gg(a,b,c,d,x[i+1],5,-165796510);d=gg(d,a,b,c,x[i+6],9,-1069501632);c=gg(c,d,a,b,x[i+11],14,643717713);b=gg(b,c,d,a,x[i+0],20,-373897302);\na=gg(a,b,c,d,x[i+5],5,-701558691);d=gg(d,a,b,c,x[i+10],9,38016083);c=gg(c,d,a,b,x[i+15],14,-660478335);b=gg(b,c,d,a,x[i+4],20,-405537848);\na=gg(a,b,c,d,x[i+9],5,568446438);d=gg(d,a,b,c,x[i+14],9,-1019803690);c=gg(c,d,a,b,x[i+3],14,-187363961);b=gg(b,c,d,a,x[i+8],20,1163531501);\na=gg(a,b,c,d,x[i+13],5,-1444681467);d=gg(d,a,b,c,x[i+2],9,-51403784);c=gg(c,d,a,b,x[i+7],14,1735328473);b=gg(b,c,d,a,x[i+12],20,-1926607734);\na=hh(a,b,c,d,x[i+5],4,-378558);d=hh(d,a,b,c,x[i+8],11,-2022574463);c=hh(c,d,a,b,x[i+11],16,1839030562);b=hh(b,c,d,a,x[i+14],23,-35309556);\na=hh(a,b,c,d,x[i+1],4,-1530992060);d=hh(d,a,b,c,x[i+4],11,1272893353);c=hh(c,d,a,b,x[i+7],16,-155497632);b=hh(b,c,d,a,x[i+10],23,-1094730640);\na=hh(a,b,c,d,x[i+13],4,681279174);d=hh(d,a,b,c,x[i+0],11,-358537222);c=hh(c,d,a,b,x[i+3],16,-722521979);b=hh(b,c,d,a,x[i+6],23,76029189);\na=hh(a,b,c,d,x[i+9],4,-640364487);d=hh(d,a,b,c,x[i+12],11,-421815835);c=hh(c,d,a,b,x[i+15],16,530742520);b=hh(b,c,d,a,x[i+2],23,-995338651);\na=ii(a,b,c,d,x[i+0],6,-198630844);d=ii(d,a,b,c,x[i+7],10,1126891415);c=ii(c,d,a,b,x[i+14],15,-1416354905);b=ii(b,c,d,a,x[i+5],21,-57434055);\na=ii(a,b,c,d,x[i+12],6,1700485571);d=ii(d,a,b,c,x[i+3],10,-1894986606);c=ii(c,d,a,b,x[i+10],15,-1051523);b=ii(b,c,d,a,x[i+1],21,-2054922799);\na=ii(a,b,c,d,x[i+8],6,1873313359);d=ii(d,a,b,c,x[i+15],10,-30611744);c=ii(c,d,a,b,x[i+6],15,-1560198380);b=ii(b,c,d,a,x[i+13],21,1309151649);\na=ii(a,b,c,d,x[i+4],6,-145523070);d=ii(d,a,b,c,x[i+11],10,-1120210379);c=ii(c,d,a,b,x[i+2],15,718787259);b=ii(b,c,d,a,x[i+9],21,-343485551);\na=ad(a,oa);b=ad(b,ob);c=ad(c,oc);d=ad(d,od);}\nreturn rh(a)+rh(b)+rh(c)+rh(d);}\nfunction fmt(d) { try { return DateTime.fromISO(String(d).slice(0, 10)).toFormat('d LLL yyyy'); } catch (e) { return String(d || ''); } }\nfunction cut(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n) + ' ...' : s; }\nconst llrs = $('Pick LLRs Without Test Steps').all();\nconst prods = $('Get Product Ticket').all();\nconst epics = $('Get Epic').all();\nconst reqs = $('Build Lokalise Tag Requests').all();\nconst res = $input.all();\nconst out = [];\nfor (let i = 0; i < llrs.length; i++) {\n  const L = llrs[i].json;\n  const P = (prods[i] && prods[i].json) || {};\n  if (P.key !== L.product) { continue; }\n  const pf = P.fields || {};\n  const E = (epics[i] && epics[i].json) || {};\n  const epicKey = pf.parent && E.key === pf.parent.key ? E.key : '';\n  const ef = epicKey ? (E.fields || {}) : {};\n  const groups = {};\n  for (let j = 0; j < reqs.length; j++) {\n    const r = reqs[j].json;\n    if (r.i !== i || !r.project_id) { continue; }\n    const ks = (res[j] && res[j].json && res[j].json.keys) || [];\n    for (const k of ks) {\n      const kn = k.key_name || {};\n      const name = typeof kn === 'string' ? kn : (kn.web || kn.other || kn.ios || kn.android || '');\n      let en = '';\n      for (const t of (k.translations || [])) { if (String(t.language_iso || '').toLowerCase() === 'en') { en = t.translation || ''; } }\n      if (!groups[r.project_id]) { groups[r.project_id] = { project: r.project_name, keys: [] }; }\n      groups[r.project_id].keys.push({ name: name, en: cut(en, 500), description: cut(k.description, 500), tags: k.tags || [] });\n    }\n  }\n  const hash = md5(L.product);\n  const links = Object.keys(groups).map(function (pid) {\n    const n = groups[pid].keys.length;\n    return '[' + n + ' key' + (n === 1 ? '' : 's') + ' in ' + groups[pid].project + ' – click to see|https://app.lokalise.com/project/' + pid + '/?view=multi&filter=tag_' + hash + ']';\n  });\n  const keysLine = links.length ? 'Keys: ' + links.join(' · ') : 'Keys: none tagged ' + L.product + ' in Lokalise';\n  const status = pf.status ? pf.status.name : '';\n  const live = /^(done|closed|resolved)$/i.test(status);\n  const fv = pf.fixVersions || [];\n  let when = '';\n  if (live) {\n    when = 'Live since ' + (pf.resolutiondate ? fmt(pf.resolutiondate) : 'release') + (fv[0] ? ' (' + fv[0].name + ')' : '');\n  } else if (L.release_comment) {\n    when = 'Release: ' + L.release_comment + ' (LLR release note)';\n  } else {\n    const v = fv.filter(function (x) { return x.releaseDate; })[0];\n    if (v) { when = 'Release: ' + fmt(v.releaseDate) + ' (fix version ' + v.name + ')'; }\n    else if (ef.duedate) { when = 'Release: ' + fmt(ef.duedate) + ' (epic ' + epicKey + ' due date)'; }\n    else if (L.llr_due) { when = 'Release: ' + L.llr_due + ' (LLR due date)'; }\n    else { when = 'Release: no date set yet'; }\n  }\n  const input = {\n    llr: L.llr,\n    header: { env: live ? 'production' : 'stage (not live yet)', when: when, keys_line: keysLine },\n    product_ticket: { key: L.product, status: status, summary: pf.summary, labels: pf.labels || [], description: cut(pf.description, 6000),\n      comments: ((pf.comment && pf.comment.comments) || []).slice(-20).map(function (c) { return { author: c.author && c.author.displayName, created: String(c.created || '').slice(0, 10), body: cut(c.body, 1500) }; }) },\n    epic: epicKey ? { key: epicKey, summary: ef.summary } : null,\n    llr_comments: L.llr_comments,\n    readiness_check_date: L.readiness_date,\n    lokalise_keys: Object.keys(groups).map(function (pid) { return groups[pid]; })\n  };\n  out.push({ json: { llr: L.llr, product: L.product, has_qa_note: L.has_qa_note, readiness_date: L.readiness_date, prompt: 'INPUT:' + String.fromCharCode(10) + JSON.stringify(input) } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "1f0683a4-8c08-4819-9aa2-a67b70bf9e4a",
+      "name": "Write Test Steps",
+      "type": "@n8n/n8n-nodes-langchain.anthropic",
+      "typeVersion": 1,
+      "position": [
+        1980,
+        300
+      ],
+      "parameters": {
+        "resource": "text",
+        "operation": "message",
+        "modelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "claude-sonnet-4-6"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "={{ $json.prompt }}",
+              "role": "user"
+            }
+          ]
+        },
+        "simplify": true,
+        "options": {
+          "maxTokens": 3000,
+          "temperature": 0.2,
+          "includeMergedResponse": true,
+          "system": "You write short, easy-to-follow test steps for the internal i18n/QA team. They are posted as a Jira comment on an INTERNAT localization ticket (LLR). Readers know the products, Lokalise and VPNs, so do not explain basics. Write in English.\n\nYou get one JSON INPUT: the LLR key, fixed header lines, the product ticket (status, description, comments), the epic, the LLR comments, the date of an earlier i18n readiness check (may be empty), and the Lokalise keys tagged with the product ticket key (name, English source, developer description).\n\nHow to read the sources:\n- Later comments by the PO or ticket owner override the description and the Figma. QA \"failed\" comments show what was wrong and was fixed later.\n- Key descriptions written by developers often name the page or route, the condition, and how links behave. Use them in the steps.\n- Never invent URLs, key names, expected copy, ticket numbers, or how to trigger a condition (country, A/B variant, plan, login state). Anything you cannot answer from the sources goes under Open questions.\n\nOutput ONLY the comment, in Jira wiki markup, not Markdown: bold is *text*, numbered lines start with \"# \", bullets start with \"* \", links are [text|url], key names are {{key}}. No code fences, no preamble, no closing remarks. Keep it under about 25 lines. Use exactly this shape:\n\n*How to test — <product key>: <short feature name>*\nEnv: <header.env, plus a URL only if one is stated in the sources> · <header.when> · Accounts: <\"not needed\", or [Localization testing accounts|https://docs.google.com/spreadsheets/d/1K59EmrTEgBW8j7BHU1851XEfyj2gtp5B62VDbZP6yBc] when the flow needs login, sign-up or payment>\n<header.keys_line, copied exactly>\n\n*What changed:* <one or two sentences in user terms, as finally decided>\n\n*Steps*\n# <one action> → <expected result>\n(4 to 7 steps; include a step that repeats the check in another site language, and a control step for what must stay unchanged when the tickets say so)\n\n*Check in each language*\n* <the tagged keys are translated and read naturally; name them with {{key}} when there are 1 to 3>\n* <the text fits, no cut-off or overlap>\n* <links and buttons keep the selected language>\n* <anything specific to this change>\n\n*Don't report*\n* <only things the tickets explicitly say are out of scope or intended, with who decided, e.g. \"Non-US text unchanged on purpose (PO, VIN-578)\">\n* <when readiness_check_date is set: \"Findings already in the <date> readiness workbook\">\n(leave out this whole section when nothing qualifies)\n\n*Open questions*\n* <gaps; leave out this whole section when there are none>\n\n_Source: <product key>, <epic key if any>, Lokalise. Generated by Claude (n8n)._"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "anthropicApi": {
+          "id": null,
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "id": "01ffb9d9-b86d-45c4-9738-8f042c2c49d4",
+      "name": "Prepare Comments",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Comment 1 = Claude's test steps (skipped if empty), comment 2 = how to run the readiness check (once per LLR)\nconst NL = String.fromCharCode(10);\nconst FENCE = String.fromCharCode(96, 96, 96);\nconst meta = $('Build Prompts').all();\nconst llm = $input.all();\nconst out = [];\nfor (let i = 0; i < meta.length; i++) {\n  const m = meta[i].json;\n  const j = (llm[i] && llm[i].json) || {};\n  let t = j.merged_response || '';\n  if (!t && Array.isArray(j.content)) { t = j.content.filter(function (c) { return c.type === 'text'; }).map(function (c) { return c.text; }).join(''); }\n  t = String(t || '').split(FENCE + 'jira').join('').split(FENCE).join('').trim();\n  const p = t.indexOf('*How to test');\n  if (p < 0) { continue; }\n  out.push({ json: { llr: m.llr, kind: 'test_steps', body: t.slice(p) } });\n  if (!m.has_qa_note) {\n    const lines = [\n      '*First automatic QA check — i18n readiness*',\n      'To run it, open Claude and:',\n      '# Run the skill *i18n-readiness*',\n      '# Tap *Start right away*',\n      '# Select *Jira ticket*',\n      '# Enter *' + m.llr + '*',\n      '',\n      'The skill finds the linked product ticket (' + m.product + ') and its Lokalise keys by itself. It posts the Excel workbook link here when it is done.'\n    ];\n    if (m.readiness_date) { lines.push('Already run once on ' + m.readiness_date + ', see the readiness comment above.'); }\n    out.push({ json: { llr: m.llr, kind: 'qa_note', body: lines.join(NL) } });\n  }\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "3aad60a8-010a-4823-a6c2-3db315c31661",
+      "name": "Post Comment on LLR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2420,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://futuremedia.atlassian.net/rest/api/2/issue/{{ $json.llr }}/comment",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: $json.body }) }}",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 700
+            }
+          }
+        }
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "QJte7dJbX10mIzJI",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "id": "b526b3a3-8262-402b-9c90-94e16dce2c53",
+      "name": "Run for One LLR",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        500
+      ],
+      "parameters": {
+        "httpMethod": "GET",
+        "options": {},
+        "path": "llr-test-steps-run-7f3k9q",
+        "responseMode": "onReceived"
+      },
+      "webhookId": "590c431a-7bd7-4385-b8a2-193c3572b1ec"
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Find LLRs in DEV Verification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find LLRs in DEV Verification": {
+      "main": [
+        [
+          {
+            "node": "Pick LLRs Without Test Steps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick LLRs Without Test Steps": {
+      "main": [
+        [
+          {
+            "node": "Get Product Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Product Ticket": {
+      "main": [
+        [
+          {
+            "node": "Get Epic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Epic": {
+      "main": [
+        [
+          {
+            "node": "List Lokalise Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Lokalise Projects": {
+      "main": [
+        [
+          {
+            "node": "Build Lokalise Tag Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Lokalise Tag Requests": {
+      "main": [
+        [
+          {
+            "node": "Find Tagged Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Tagged Keys": {
+      "main": [
+        [
+          {
+            "node": "Build Prompts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Prompts": {
+      "main": [
+        [
+          {
+            "node": "Write Test Steps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Test Steps": {
+      "main": [
+        [
+          {
+            "node": "Prepare Comments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Comments": {
+      "main": [
+        [
+          {
+            "node": "Post Comment on LLR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run for One LLR": {
+      "main": [
+        [
+          {
+            "node": "Find LLRs in DEV Verification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [
+    {
+      "id": "76817842-8366-448d-823d-0a767fa400e2",
+      "name": "Find new LLRs",
+      "nodeIds": [
+        "c9f05f56-6896-4445-8ac6-940cf7c349f6",
+        "15ee9e7b-1e43-47c5-ad85-ad0cfa119bc2"
+      ],
+      "description": "INTERNAT LLRs moved to DEV Verification in the last 3 days, without a How to test comment yet"
+    },
+    {
+      "id": "6c5d68c5-b0bd-45cd-8dea-b4115a823e7c",
+      "name": "Read the tickets",
+      "nodeIds": [
+        "e02ee71f-b9f6-4f4a-ae8d-6165aa27bfe2",
+        "1037afb1-fe45-4156-a6f3-4bcbf86eaa04"
+      ],
+      "description": "Linked product ticket (description, comments, fix version) and its epic"
+    },
+    {
+      "id": "93522abd-240b-4bf5-9fd2-cf096756cae8",
+      "name": "Lokalise keys by tag",
+      "nodeIds": [
+        "cfd179e3-83e2-410c-af1d-d5d18c0a0859",
+        "47d0e3b0-0e94-4cfe-9324-b71356f230a1",
+        "fc656284-5588-4d2e-8183-15f63304c97c"
+      ],
+      "description": "Keys tagged with the product ticket key, across all Lokalise projects (read-only)"
+    },
+    {
+      "id": "4fda9957-365f-4e84-a497-670bf794f379",
+      "name": "Write and post",
+      "nodeIds": [
+        "4054fabd-679a-424f-989b-71e069331965",
+        "1f0683a4-8c08-4819-9aa2-a67b70bf9e4a",
+        "01ffb9d9-b86d-45c4-9738-8f042c2c49d4",
+        "3aad60a8-010a-4823-a6c2-3db315c31661"
+      ],
+      "description": "Release date + key links, Claude writes the steps, posts test steps + readiness check note on the LLR"
+    }
+  ],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:Every 15 Minutes": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    }
+  },
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "oDd7Nnar46olUvcX",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-10T09:30:26.575Z",
+      "updatedAt": "2026-11-10T09:30:26.575Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "3d3f9053-3856-4130-8d8f-02cf218f87d3",
+    "workflowId": "oDd7Nnar46olUvcX",
+    "nodes": [
+      {
+        "id": "1ca45311-2e54-4c7b-9272-08be628697eb",
+        "name": "Every 15 Minutes",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.4,
+        "position": [
+          0,
+          300
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "minutes",
+                "minutesInterval": 15
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "c9f05f56-6896-4445-8ac6-940cf7c349f6",
+        "name": "Find LLRs in DEV Verification",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          220,
+          300
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://futuremedia.atlassian.net/rest/api/2/search/jql",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "jiraSoftwareCloudApi",
+          "sendQuery": true,
+          "specifyQuery": "keypair",
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "jql",
+                "value": "project = INTERNAT AND labels = LLR AND status = \"DEV Verification\" AND status changed to \"DEV Verification\" after -3d ORDER BY updated DESC"
+              },
+              {
+                "name": "fields",
+                "value": "summary,status,issuelinks,comment,duedate"
+              },
+              {
+                "name": "maxResults",
+                "value": "50"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "credentials": {
+          "jiraSoftwareCloudApi": {
+            "id": "QJte7dJbX10mIzJI",
+            "name": "Jira SW Cloud account"
+          }
+        }
+      },
+      {
+        "id": "15ee9e7b-1e43-47c5-ad85-ad0cfa119bc2",
+        "name": "Pick LLRs Without Test Steps",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          440,
+          300
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "// One item per LLR that has a linked product ticket and no \"How to test\" comment yet\nconst NL = String.fromCharCode(10);\nfunction fmt(d) { try { return DateTime.fromISO(String(d).slice(0, 10)).toFormat('d LLL yyyy'); } catch (e) { return String(d || ''); } }\nconst issues = ($input.first().json.issues) || [];\nconst out = [];\nfor (const is of issues) {\n  const f = is.fields || {};\n  const comments = (f.comment && f.comment.comments) || [];\n  const bodies = comments.map(function (c) { return String(c.body || ''); });\n  if (bodies.some(function (b) { return b.toLowerCase().indexOf('how to test') >= 0; })) { continue; }\n  const link = (f.issuelinks || []).filter(function (l) { return l.type && String(l.type.name).trim() === 'Localization ticket' && l.inwardIssue; })[0];\n  if (!link) { continue; }\n  let release = '';\n  for (const b of bodies) { const p = b.toLowerCase().indexOf('release date:'); if (p >= 0) { release = b.slice(p + 13).split(NL)[0].split('*').join('').trim(); } }\n  const ready = comments.filter(function (c) { return String(c.body || '').toLowerCase().indexOf('i18n readiness check') >= 0; });\n  out.push({ json: {\n    llr: is.key,\n    product: link.inwardIssue.key,\n    llr_due: f.duedate ? fmt(f.duedate) : '',\n    release_comment: release,\n    readiness_date: ready.length ? fmt(ready[ready.length - 1].created) : '',\n    has_qa_note: bodies.some(function (b) { return b.indexOf('First automatic QA check') >= 0; }),\n    llr_comments: comments.slice(-15).map(function (c) { return { author: c.author && c.author.displayName, created: String(c.created || '').slice(0, 10), body: String(c.body || '').slice(0, 1500) }; })\n  } });\n}\nreturn out;"
+        }
+      },
+      {
+        "id": "e02ee71f-b9f6-4f4a-ae8d-6165aa27bfe2",
+        "name": "Get Product Ticket",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          660,
+          300
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "=https://futuremedia.atlassian.net/rest/api/2/issue/{{ $json.product }}?fields=summary,description,status,labels,parent,comment,fixVersions,issuetype,resolutiondate,duedate",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "jiraSoftwareCloudApi",
+          "options": {
+            "response": {
+              "response": {
+                "neverError": true
+              }
+            },
+            "timeout": 60000
+          }
+        },
+        "credentials": {
+          "jiraSoftwareCloudApi": {
+            "id": "QJte7dJbX10mIzJI",
+            "name": "Jira SW Cloud account"
+          }
+        }
+      },
+      {
+        "id": "1037afb1-fe45-4156-a6f3-4bcbf86eaa04",
+        "name": "Get Epic",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          880,
+          300
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "={{ $json.fields && $json.fields.parent ? \"https://futuremedia.atlassian.net/rest/api/2/issue/\" + $json.fields.parent.key + \"?fields=summary,duedate\" : \"https://futuremedia.atlassian.net/rest/api/2/myself\" }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "jiraSoftwareCloudApi",
+          "options": {
+            "response": {
+              "response": {
+                "neverError": true
+              }
+            },
+            "timeout": 60000
+          }
+        },
+        "credentials": {
+          "jiraSoftwareCloudApi": {
+            "id": "QJte7dJbX10mIzJI",
+            "name": "Jira SW Cloud account"
+          }
+        }
+      },
+      {
+        "id": "cfd179e3-83e2-410c-af1d-d5d18c0a0859",
+        "name": "List Lokalise Projects",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          1100,
+          300
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://api.lokalise.com/api2/projects?limit=100&include_statistics=0&include_settings=0",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "options": {
+            "response": {
+              "response": {
+                "neverError": true
+              }
+            },
+            "timeout": 60000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "VW7WtJP8PzJMR813",
+            "name": "Lokalise read-only"
+          }
+        },
+        "executeOnce": true
+      },
+      {
+        "id": "47d0e3b0-0e94-4cfe-9324-b71356f230a1",
+        "name": "Build Lokalise Tag Requests",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1320,
+          300
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "// One request per LLR x Lokalise project: keys tagged with the product ticket key\nconst llrs = $('Pick LLRs Without Test Steps').all();\nconst projects = (($input.first().json.projects) || []).filter(function (p) { return !/demo/i.test(p.name || ''); });\nconst out = [];\nfor (let i = 0; i < llrs.length; i++) {\n  const tag = llrs[i].json.product;\n  for (const p of projects) {\n    out.push({ json: { i: i, tag: tag, project_id: p.project_id, project_name: p.name, url: 'https://api.lokalise.com/api2/projects/' + p.project_id + '/keys?filter_tags=' + encodeURIComponent(tag) + '&filter_archived=exclude&include_translations=1&limit=100' } });\n  }\n  if (!projects.length) { out.push({ json: { i: i, tag: tag, project_id: '', project_name: '', url: 'https://api.lokalise.com/api2/projects?limit=1' } }); }\n}\nreturn out;"
+        }
+      },
+      {
+        "id": "fc656284-5588-4d2e-8183-15f63304c97c",
+        "name": "Find Tagged Keys",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          1540,
+          300
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "={{ $json.url }}",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "options": {
+            "response": {
+              "response": {
+                "neverError": true
+              }
+            },
+            "timeout": 60000,
+            "batching": {
+              "batch": {
+                "batchSize": 5,
+                "batchInterval": 1100
+              }
+            }
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "VW7WtJP8PzJMR813",
+            "name": "Lokalise read-only"
+          }
+        }
+      },
+      {
+        "id": "4054fabd-679a-424f-989b-71e069331965",
+        "name": "Build Prompts",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1760,
+          300
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "// Per LLR: release/live line, Lokalise key links (tag filter = md5 of the tag), and the JSON input for Claude\nfunction md5(str){function rh(n){let s='',j;for(j=0;j<=3;j++)s+=((n>>(j*8+4))&0x0F).toString(16)+((n>>(j*8))&0x0F).toString(16);return s}\nfunction ad(x,y){const l=(x&0xFFFF)+(y&0xFFFF);const m=(x>>16)+(y>>16)+(l>>16);return(m<<16)|(l&0xFFFF)}\nfunction rl(n,c){return(n<<c)|(n>>>(32-c))}\nfunction cm(q,a,b,x,s,t){return ad(rl(ad(ad(a,q),ad(x,t)),s),b)}\nfunction ff(a,b,c,d,x,s,t){return cm((b&c)|((~b)&d),a,b,x,s,t)}\nfunction gg(a,b,c,d,x,s,t){return cm((b&d)|(c&(~d)),a,b,x,s,t)}\nfunction hh(a,b,c,d,x,s,t){return cm(b^c^d,a,b,x,s,t)}\nfunction ii(a,b,c,d,x,s,t){return cm(c^(b|(~d)),a,b,x,s,t)}\nconst u=unescape(encodeURIComponent(str));const n=((u.length+8)>>6)+1;const x=new Array(n*16).fill(0);let i;\nfor(i=0;i<u.length;i++)x[i>>2]|=u.charCodeAt(i)<<((i%4)*8);x[i>>2]|=0x80<<((i%4)*8);x[n*16-2]=u.length*8;\nlet a=1732584193,b=-271733879,c=-1732584194,d=271733878;\nfor(i=0;i<x.length;i+=16){const oa=a,ob=b,oc=c,od=d;\na=ff(a,b,c,d,x[i+0],7,-680876936);d=ff(d,a,b,c,x[i+1],12,-389564586);c=ff(c,d,a,b,x[i+2],17,606105819);b=ff(b,c,d,a,x[i+3],22,-1044525330);\na=ff(a,b,c,d,x[i+4],7,-176418897);d=ff(d,a,b,c,x[i+5],12,1200080426);c=ff(c,d,a,b,x[i+6],17,-1473231341);b=ff(b,c,d,a,x[i+7],22,-45705983);\na=ff(a,b,c,d,x[i+8],7,1770035416);d=ff(d,a,b,c,x[i+9],12,-1958414417);c=ff(c,d,a,b,x[i+10],17,-42063);b=ff(b,c,d,a,x[i+11],22,-1990404162);\na=ff(a,b,c,d,x[i+12],7,1804603682);d=ff(d,a,b,c,x[i+13],12,-40341101);c=ff(c,d,a,b,x[i+14],17,-1502002290);b=ff(b,c,d,a,x[i+15],22,1236535329);\na=gg(a,b,c,d,x[i+1],5,-165796510);d=gg(d,a,b,c,x[i+6],9,-1069501632);c=gg(c,d,a,b,x[i+11],14,643717713);b=gg(b,c,d,a,x[i+0],20,-373897302);\na=gg(a,b,c,d,x[i+5],5,-701558691);d=gg(d,a,b,c,x[i+10],9,38016083);c=gg(c,d,a,b,x[i+15],14,-660478335);b=gg(b,c,d,a,x[i+4],20,-405537848);\na=gg(a,b,c,d,x[i+9],5,568446438);d=gg(d,a,b,c,x[i+14],9,-1019803690);c=gg(c,d,a,b,x[i+3],14,-187363961);b=gg(b,c,d,a,x[i+8],20,1163531501);\na=gg(a,b,c,d,x[i+13],5,-1444681467);d=gg(d,a,b,c,x[i+2],9,-51403784);c=gg(c,d,a,b,x[i+7],14,1735328473);b=gg(b,c,d,a,x[i+12],20,-1926607734);\na=hh(a,b,c,d,x[i+5],4,-378558);d=hh(d,a,b,c,x[i+8],11,-2022574463);c=hh(c,d,a,b,x[i+11],16,1839030562);b=hh(b,c,d,a,x[i+14],23,-35309556);\na=hh(a,b,c,d,x[i+1],4,-1530992060);d=hh(d,a,b,c,x[i+4],11,1272893353);c=hh(c,d,a,b,x[i+7],16,-155497632);b=hh(b,c,d,a,x[i+10],23,-1094730640);\na=hh(a,b,c,d,x[i+13],4,681279174);d=hh(d,a,b,c,x[i+0],11,-358537222);c=hh(c,d,a,b,x[i+3],16,-722521979);b=hh(b,c,d,a,x[i+6],23,76029189);\na=hh(a,b,c,d,x[i+9],4,-640364487);d=hh(d,a,b,c,x[i+12],11,-421815835);c=hh(c,d,a,b,x[i+15],16,530742520);b=hh(b,c,d,a,x[i+2],23,-995338651);\na=ii(a,b,c,d,x[i+0],6,-198630844);d=ii(d,a,b,c,x[i+7],10,1126891415);c=ii(c,d,a,b,x[i+14],15,-1416354905);b=ii(b,c,d,a,x[i+5],21,-57434055);\na=ii(a,b,c,d,x[i+12],6,1700485571);d=ii(d,a,b,c,x[i+3],10,-1894986606);c=ii(c,d,a,b,x[i+10],15,-1051523);b=ii(b,c,d,a,x[i+1],21,-2054922799);\na=ii(a,b,c,d,x[i+8],6,1873313359);d=ii(d,a,b,c,x[i+15],10,-30611744);c=ii(c,d,a,b,x[i+6],15,-1560198380);b=ii(b,c,d,a,x[i+13],21,1309151649);\na=ii(a,b,c,d,x[i+4],6,-145523070);d=ii(d,a,b,c,x[i+11],10,-1120210379);c=ii(c,d,a,b,x[i+2],15,718787259);b=ii(b,c,d,a,x[i+9],21,-343485551);\na=ad(a,oa);b=ad(b,ob);c=ad(c,oc);d=ad(d,od);}\nreturn rh(a)+rh(b)+rh(c)+rh(d);}\nfunction fmt(d) { try { return DateTime.fromISO(String(d).slice(0, 10)).toFormat('d LLL yyyy'); } catch (e) { return String(d || ''); } }\nfunction cut(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n) + ' ...' : s; }\nconst llrs = $('Pick LLRs Without Test Steps').all();\nconst prods = $('Get Product Ticket').all();\nconst epics = $('Get Epic').all();\nconst reqs = $('Build Lokalise Tag Requests').all();\nconst res = $input.all();\nconst out = [];\nfor (let i = 0; i < llrs.length; i++) {\n  const L = llrs[i].json;\n  const P = (prods[i] && prods[i].json) || {};\n  if (P.key !== L.product) { continue; }\n  const pf = P.fields || {};\n  const E = (epics[i] && epics[i].json) || {};\n  const epicKey = pf.parent && E.key === pf.parent.key ? E.key : '';\n  const ef = epicKey ? (E.fields || {}) : {};\n  const groups = {};\n  for (let j = 0; j < reqs.length; j++) {\n    const r = reqs[j].json;\n    if (r.i !== i || !r.project_id) { continue; }\n    const ks = (res[j] && res[j].json && res[j].json.keys) || [];\n    for (const k of ks) {\n      const kn = k.key_name || {};\n      const name = typeof kn === 'string' ? kn : (kn.web || kn.other || kn.ios || kn.android || '');\n      let en = '';\n      for (const t of (k.translations || [])) { if (String(t.language_iso || '').toLowerCase() === 'en') { en = t.translation || ''; } }\n      if (!groups[r.project_id]) { groups[r.project_id] = { project: r.project_name, keys: [] }; }\n      groups[r.project_id].keys.push({ name: name, en: cut(en, 500), description: cut(k.description, 500), tags: k.tags || [] });\n    }\n  }\n  const hash = md5(L.product);\n  const links = Object.keys(groups).map(function (pid) {\n    const n = groups[pid].keys.length;\n    return '[' + n + ' key' + (n === 1 ? '' : 's') + ' in ' + groups[pid].project + ' – click to see|https://app.lokalise.com/project/' + pid + '/?view=multi&filter=tag_' + hash + ']';\n  });\n  const keysLine = links.length ? 'Keys: ' + links.join(' · ') : 'Keys: none tagged ' + L.product + ' in Lokalise';\n  const status = pf.status ? pf.status.name : '';\n  const live = /^(done|closed|resolved)$/i.test(status);\n  const fv = pf.fixVersions || [];\n  let when = '';\n  if (live) {\n    when = 'Live since ' + (pf.resolutiondate ? fmt(pf.resolutiondate) : 'release') + (fv[0] ? ' (' + fv[0].name + ')' : '');\n  } else if (L.release_comment) {\n    when = 'Release: ' + L.release_comment + ' (LLR release note)';\n  } else {\n    const v = fv.filter(function (x) { return x.releaseDate; })[0];\n    if (v) { when = 'Release: ' + fmt(v.releaseDate) + ' (fix version ' + v.name + ')'; }\n    else if (ef.duedate) { when = 'Release: ' + fmt(ef.duedate) + ' (epic ' + epicKey + ' due date)'; }\n    else if (L.llr_due) { when = 'Release: ' + L.llr_due + ' (LLR due date)'; }\n    else { when = 'Release: no date set yet'; }\n  }\n  const input = {\n    llr: L.llr,\n    header: { env: live ? 'production' : 'stage (not live yet)', when: when, keys_line: keysLine },\n    product_ticket: { key: L.product, status: status, summary: pf.summary, labels: pf.labels || [], description: cut(pf.description, 6000),\n      comments: ((pf.comment && pf.comment.comments) || []).slice(-20).map(function (c) { return { author: c.author && c.author.displayName, created: String(c.created || '').slice(0, 10), body: cut(c.body, 1500) }; }) },\n    epic: epicKey ? { key: epicKey, summary: ef.summary } : null,\n    llr_comments: L.llr_comments,\n    readiness_check_date: L.readiness_date,\n    lokalise_keys: Object.keys(groups).map(function (pid) { return groups[pid]; })\n  };\n  out.push({ json: { llr: L.llr, product: L.product, has_qa_note: L.has_qa_note, readiness_date: L.readiness_date, prompt: 'INPUT:' + String.fromCharCode(10) + JSON.stringify(input) } });\n}\nreturn out;"
+        }
+      },
+      {
+        "id": "1f0683a4-8c08-4819-9aa2-a67b70bf9e4a",
+        "name": "Write Test Steps",
+        "type": "@n8n/n8n-nodes-langchain.anthropic",
+        "typeVersion": 1,
+        "position": [
+          1980,
+          300
+        ],
+        "parameters": {
+          "resource": "text",
+          "operation": "message",
+          "modelId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "claude-sonnet-4-6"
+          },
+          "messages": {
+            "values": [
+              {
+                "content": "={{ $json.prompt }}",
+                "role": "user"
+              }
+            ]
+          },
+          "simplify": true,
+          "options": {
+            "maxTokens": 3000,
+            "temperature": 0.2,
+            "includeMergedResponse": true,
+            "system": "You write short, easy-to-follow test steps for the internal i18n/QA team. They are posted as a Jira comment on an INTERNAT localization ticket (LLR). Readers know the products, Lokalise and VPNs, so do not explain basics. Write in English.\n\nYou get one JSON INPUT: the LLR key, fixed header lines, the product ticket (status, description, comments), the epic, the LLR comments, the date of an earlier i18n readiness check (may be empty), and the Lokalise keys tagged with the product ticket key (name, English source, developer description).\n\nHow to read the sources:\n- Later comments by the PO or ticket owner override the description and the Figma. QA \"failed\" comments show what was wrong and was fixed later.\n- Key descriptions written by developers often name the page or route, the condition, and how links behave. Use them in the steps.\n- Never invent URLs, key names, expected copy, ticket numbers, or how to trigger a condition (country, A/B variant, plan, login state). Anything you cannot answer from the sources goes under Open questions.\n\nOutput ONLY the comment, in Jira wiki markup, not Markdown: bold is *text*, numbered lines start with \"# \", bullets start with \"* \", links are [text|url], key names are {{key}}. No code fences, no preamble, no closing remarks. Keep it under about 25 lines. Use exactly this shape:\n\n*How to test — <product key>: <short feature name>*\nEnv: <header.env, plus a URL only if one is stated in the sources> · <header.when> · Accounts: <\"not needed\", or [Localization testing accounts|https://docs.google.com/spreadsheets/d/1K59EmrTEgBW8j7BHU1851XEfyj2gtp5B62VDbZP6yBc] when the flow needs login, sign-up or payment>\n<header.keys_line, copied exactly>\n\n*What changed:* <one or two sentences in user terms, as finally decided>\n\n*Steps*\n# <one action> → <expected result>\n(4 to 7 steps; include a step that repeats the check in another site language, and a control step for what must stay unchanged when the tickets say so)\n\n*Check in each language*\n* <the tagged keys are translated and read naturally; name them with {{key}} when there are 1 to 3>\n* <the text fits, no cut-off or overlap>\n* <links and buttons keep the selected language>\n* <anything specific to this change>\n\n*Don't report*\n* <only things the tickets explicitly say are out of scope or intended, with who decided, e.g. \"Non-US text unchanged on purpose (PO, VIN-578)\">\n* <when readiness_check_date is set: \"Findings already in the <date> readiness workbook\">\n(leave out this whole section when nothing qualifies)\n\n*Open questions*\n* <gaps; leave out this whole section when there are none>\n\n_Source: <product key>, <epic key if any>, Lokalise. Generated by Claude (n8n)._"
+          }
+        },
+        "onError": "continueRegularOutput",
+        "credentials": {
+          "anthropicApi": {
+            "id": null,
+            "name": "Gateway credits",
+            "__aiGatewayManaged": true
+          }
+        }
+      },
+      {
+        "id": "01ffb9d9-b86d-45c4-9738-8f042c2c49d4",
+        "name": "Prepare Comments",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2200,
+          300
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "// Comment 1 = Claude's test steps (skipped if empty), comment 2 = how to run the readiness check (once per LLR)\nconst NL = String.fromCharCode(10);\nconst FENCE = String.fromCharCode(96, 96, 96);\nconst meta = $('Build Prompts').all();\nconst llm = $input.all();\nconst out = [];\nfor (let i = 0; i < meta.length; i++) {\n  const m = meta[i].json;\n  const j = (llm[i] && llm[i].json) || {};\n  let t = j.merged_response || '';\n  if (!t && Array.isArray(j.content)) { t = j.content.filter(function (c) { return c.type === 'text'; }).map(function (c) { return c.text; }).join(''); }\n  t = String(t || '').split(FENCE + 'jira').join('').split(FENCE).join('').trim();\n  const p = t.indexOf('*How to test');\n  if (p < 0) { continue; }\n  out.push({ json: { llr: m.llr, kind: 'test_steps', body: t.slice(p) } });\n  if (!m.has_qa_note) {\n    const lines = [\n      '*First automatic QA check — i18n readiness*',\n      'To run it, open Claude and:',\n      '# Run the skill *i18n-readiness*',\n      '# Tap *Start right away*',\n      '# Select *Jira ticket*',\n      '# Enter *' + m.llr + '*',\n      '',\n      'The skill finds the linked product ticket (' + m.product + ') and its Lokalise keys by itself. It posts the Excel workbook link here when it is done.'\n    ];\n    if (m.readiness_date) { lines.push('Already run once on ' + m.readiness_date + ', see the readiness comment above.'); }\n    out.push({ json: { llr: m.llr, kind: 'qa_note', body: lines.join(NL) } });\n  }\n}\nreturn out;"
+        }
+      },
+      {
+        "id": "3aad60a8-010a-4823-a6c2-3db315c31661",
+        "name": "Post Comment on LLR",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          2420,
+          300
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "=https://futuremedia.atlassian.net/rest/api/2/issue/{{ $json.llr }}/comment",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "jiraSoftwareCloudApi",
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ body: $json.body }) }}",
+          "options": {
+            "timeout": 60000,
+            "batching": {
+              "batch": {
+                "batchSize": 1,
+                "batchInterval": 700
+              }
+            }
+          }
+        },
+        "credentials": {
+          "jiraSoftwareCloudApi": {
+            "id": "QJte7dJbX10mIzJI",
+            "name": "Jira SW Cloud account"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Every 15 Minutes": {
+        "main": [
+          [
+            {
+              "node": "Find LLRs in DEV Verification",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Find LLRs in DEV Verification": {
+        "main": [
+          [
+            {
+              "node": "Pick LLRs Without Test Steps",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Pick LLRs Without Test Steps": {
+        "main": [
+          [
+            {
+              "node": "Get Product Ticket",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Product Ticket": {
+        "main": [
+          [
+            {
+              "node": "Get Epic",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Epic": {
+        "main": [
+          [
+            {
+              "node": "List Lokalise Projects",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "List Lokalise Projects": {
+        "main": [
+          [
+            {
+              "node": "Build Lokalise Tag Requests",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Lokalise Tag Requests": {
+        "main": [
+          [
+            {
+              "node": "Find Tagged Keys",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Find Tagged Keys": {
+        "main": [
+          [
+            {
+              "node": "Build Prompts",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Prompts": {
+        "main": [
+          [
+            {
+              "node": "Write Test Steps",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Write Test Steps": {
+        "main": [
+          [
+            {
+              "node": "Prepare Comments",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Comments": {
+        "main": [
+          [
+            {
+              "node": "Post Comment on LLR",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [
+      {
+        "id": "76817842-8366-448d-823d-0a767fa400e2",
+        "name": "Find new LLRs",
+        "nodeIds": [
+          "c9f05f56-6896-4445-8ac6-940cf7c349f6",
+          "15ee9e7b-1e43-47c5-ad85-ad0cfa119bc2"
+        ],
+        "description": "INTERNAT LLRs moved to DEV Verification in the last 3 days, without a How to test comment yet"
+      },
+      {
+        "id": "6c5d68c5-b0bd-45cd-8dea-b4115a823e7c",
+        "name": "Read the tickets",
+        "nodeIds": [
+          "e02ee71f-b9f6-4f4a-ae8d-6165aa27bfe2",
+          "1037afb1-fe45-4156-a6f3-4bcbf86eaa04"
+        ],
+        "description": "Linked product ticket (description, comments, fix version) and its epic"
+      },
+      {
+        "id": "93522abd-240b-4bf5-9fd2-cf096756cae8",
+        "name": "Lokalise keys by tag",
+        "nodeIds": [
+          "cfd179e3-83e2-410c-af1d-d5d18c0a0859",
+          "47d0e3b0-0e94-4cfe-9324-b71356f230a1",
+          "fc656284-5588-4d2e-8183-15f63304c97c"
+        ],
+        "description": "Keys tagged with the product ticket key, across all Lokalise projects (read-only)"
+      },
+      {
+        "id": "4fda9957-365f-4e84-a497-670bf794f379",
+        "name": "Write and post",
+        "nodeIds": [
+          "4054fabd-679a-424f-989b-71e069331965",
+          "1f0683a4-8c08-4819-9aa2-a67b70bf9e4a",
+          "01ffb9d9-b86d-45c4-9738-8f042c2c49d4",
+          "3aad60a8-010a-4823-a6c2-3db315c31661"
+        ],
+        "description": "Release date + key links, Claude writes the steps, posts test steps + readiness check note on the LLR"
+      }
+    ],
+    "authors": "Maria Sica (via MCP)",
+    "name": "Release date + How to test matched case-insensitively",
+    "description": "Updated nodes: Pick LLRs Without Test Steps",
+    "autosaved": false,
+    "createdAt": "2026-11-10T09:32:21.814Z",
+    "updatedAt": "2026-11-10T09:34:27.000Z",
+    "workflowPublishHistory": [
+      {
+        "id": 3240,
+        "workflowId": "oDd7Nnar46olUvcX",
+        "versionId": "3d3f9053-3856-4130-8d8f-02cf218f87d3",
+        "event": "activated",
+        "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
+        "createdAt": "2026-11-10T09:34:27.853Z"
+      }
+    ]
+  },
+  "parentFolder": null
+}
