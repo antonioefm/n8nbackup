@@ -3,12 +3,12 @@
   "name": "Lokalise targets audit - language worker",
   "description": "Sub-workflow for the nightly targets audit: one language per call. Read-only Lokalise fetch, glossary + style-guide checks, OpenAI triage, returns findings only.",
   "active": true,
-  "activeVersionId": "aec204f6-0ffa-47a4-b3eb-8d5214c34367",
+  "activeVersionId": "8055384f-5a95-43c6-bce4-e8155fe3078e",
   "createdAt": "2026-09-25T11:27:58.428Z",
-  "updatedAt": "2026-10-09T07:18:58.684Z",
+  "updatedAt": "2026-11-10T15:12:05.976Z",
   "isArchived": false,
-  "versionId": "aec204f6-0ffa-47a4-b3eb-8d5214c34367",
-  "versionCounter": 23,
+  "versionId": "0e7b4539-ddf6-477a-a106-07cfb9256e11",
+  "versionCounter": 26,
   "sourceWorkflowId": null,
   "triggerCount": 0,
   "nodes": [
@@ -250,7 +250,7 @@
         320
       ],
       "parameters": {
-        "jsCode": "// ICU plural rule for triage (Maria 2026-10-09).\nconst NL = String.fromCharCode(10);\nconst j = $input.first().json;\nif (!j.openai_body) { return [{ json: j }]; }\nconst body = JSON.parse(j.openai_body);\nconst sys = body.messages[0].content.split(NL);\nsys.splice(sys.length - 3, 0, 'ICU PLURALS ARE FINE WHEN RESTRUCTURED (decision 2026-10-09): a translation may move text that sits outside the plural in English into every branch, leave nothing outside the ICU block, or use identical one/other branches. Example: EN \"Uploading {count, plural, one {# file} other {# files}}\" -> IT \"{count, plural, one {Caricamento di # file} other {Caricamento di # file}}\" is CORRECT. Never report that as a placeholder, plural, structure, length or accuracy problem. Report an ICU string only if the variable name or type changed, the other branch is missing, # was lost, or the meaning is wrong.');\nbody.messages[0].content = sys.join(NL);\nreturn [{ json: Object.assign({}, j, { openai_body: JSON.stringify(body) }) }];\n",
+        "jsCode": "// ICU plural rule for triage (Maria 2026-10-09) + glossary rules for the sample and unconfirmed terms (Maria 2026-11-10).\nconst NL = String.fromCharCode(10);\nconst j = $input.first().json;\nif (!j.openai_body) { return [{ json: j }]; }\nconst body = JSON.parse(j.openai_body);\nconst sys = body.messages[0].content.split(NL);\nsys.splice(sys.length - 3, 0, 'ICU PLURALS ARE FINE WHEN RESTRUCTURED (decision 2026-10-09): a translation may move text that sits outside the plural in English into every branch, leave nothing outside the ICU block, or use identical one/other branches. Example: EN \"Uploading {count, plural, one {# file} other {# files}}\" -> IT \"{count, plural, one {Caricamento di # file} other {Caricamento di # file}}\" is CORRECT. Never report that as a placeholder, plural, structure, length or accuracy problem. Report an ICU string only if the variable name or type changed, the other branch is missing, # was lost, or the meaning is wrong.');\nsys.splice(sys.length - 3, 0, 'SAMPLE = STYLE GUIDE ONLY (decision 2026-11-10): you are not given the glossary for the SAMPLE strings. Never report a glossary, terminology or \"approved term\" issue in sample_findings and never call any term approved. Glossary adherence is judged only through the glossary candidates, which carry the real approved target in \"expected\".');\nsys.splice(sys.length - 3, 0, 'UNCONFIRMED GLOSSARY TERMS (decision 2026-11-10): a glossary_note starting with \"[UNCONFIRMED: to_review]\" means the target was extracted automatically and is not confirmed by a linguist. Keep such a term_missing candidate only if the translation is clearly wrong; a reasonable alternative wording is not a defect - drop it.');\nbody.messages[0].content = sys.join(NL);\nreturn [{ json: Object.assign({}, j, { openai_body: JSON.stringify(body) }) }];\n",
         "mode": "runOnceForAllItems"
       }
     },
@@ -265,6 +265,78 @@
       ],
       "parameters": {
         "jsCode": "// ICU plural guard (Maria 2026-10-09). Accepted as CORRECT: the target moves text that sits outside the plural in EN\n// into every branch, has no text outside the ICU block, or uses identical branches. Example:\n//   EN  Uploading {count, plural, one {# file} other {# files}}\n//   IT  {count, plural, one {Caricamento di # file} other {Caricamento di # file}}\n// Placeholder / plural-structure / length findings on such strings are dropped when the ICU block is intact\n// (same variable and type, 'other' branch present, # kept, all other placeholders kept). Broken ICU is still reported.\nconst out = $input.first().json;\nfunction icu(s) {\n  s = String(s || ''); const blocks = []; const re = /\\{\\s*([A-Za-z_][\\w.]*)\\s*,\\s*(plural|selectordinal|select)\\s*,\\s*(?:offset:\\d+\\s*)?/g; let m;\n  while ((m = re.exec(s)) !== null) {\n    let j = re.lastIndex; const br = {}; let ok = false;\n    while (j < s.length) {\n      while (j < s.length && /\\s/.test(s[j])) { j++; }\n      if (s[j] === '}') { j++; ok = true; break; }\n      const sm = /(=\\d+|[A-Za-z_]\\w*)\\s*\\{/y; sm.lastIndex = j; const r = sm.exec(s); if (!r) { break; }\n      let k = sm.lastIndex, d = 1;\n      for (; k < s.length && d > 0; k++) { if (s[k] === '{') { d++; } else if (s[k] === '}') { d--; } }\n      if (d !== 0) { break; }\n      br[r[1]] = s.slice(sm.lastIndex, k - 1); j = k;\n    }\n    if (ok && Object.keys(br).length) { blocks.push({ v: m[1], type: m[2], br: br, a: m.index, b: j }); re.lastIndex = j; }\n  }\n  return blocks;\n}\nfunction flat(s, blocks) { let o = '', p = 0; for (const x of blocks) { o += s.slice(p, x.a) + ' ' + Object.values(x.br).join(' ') + ' '; p = x.b; } return o + s.slice(p); }\nconst PH = /\\[%[^\\]]*\\]|%\\d*\\$?[sd@]|\\{\\{[^}]*\\}\\}|\\{[A-Za-z_][\\w.]*\\}|<\\/?[A-Za-z][^>]*>/g;\nfunction phSet(s) { const o = {}; for (const x of (String(s).match(PH) || [])) { o[x] = true; } return o; }\nfunction icuOk(en, t) {\n  en = String(en || ''); t = String(t || '');\n  const E = icu(en); if (!E.length) { return false; }\n  const T = icu(t); if (!T.length) { return false; }\n  for (const e of E) {\n    const m = T.find(function (x) { return x.v === e.v && x.type === e.type; });\n    if (!m || m.br.other === undefined) { return false; }\n    const needHash = e.type !== 'select' && Object.values(e.br).some(function (x) { return x.indexOf('#') !== -1; });\n    if (needHash && m.br.other.indexOf('#') === -1 && m.br.other.indexOf('{' + e.v + '}') === -1) { return false; }\n  }\n  const pe = phSet(flat(en, E)), pt = phSet(flat(t, T));\n  for (const x in pe) { if (!pt[x]) { return false; } }\n  return true;\n}\n\nconst TOPIC = /placeholder|tag mismatch|plural|\\bicu\\b|branch|outside the|structure|length outlier|length ratio|identical (one|other|branch|plural)/i;\nconst before = (out.findings || []).length;\nconst findings = (out.findings || []).filter(function (f) {\n  if (!f || !f.key || f.key === '(multiple)') { return true; }\n  if (!TOPIC.test(String(f.rule || '') + ' ' + String(f.issue || ''))) { return true; }\n  return !icuOk(f.en, f.translation);\n});\nreturn [{ json: Object.assign({}, out, { findings: findings, icu_dropped: before - findings.length }) }];\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "651888a9-86be-4c7e-8d68-4574d45c1221",
+      "name": "Glossary guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1260,
+        -260
+      ],
+      "parameters": {
+        "jsCode": "// Glossary guard (Maria 2026-11-10, after the Thai 'Terms of Use' false positive in the daily audit).\n// 1) The LLM style-guide sample never sees the glossary, so it may not raise glossary / terminology findings\n//    (it invented an 'approved' Thai term). Glossary adherence comes only from the glossary check, which uses the live\n//    all-language glossary passed in by the parent (job.glossary).\n// 2) term_missing on a glossary entry still tagged to_review (target extracted automatically, not confirmed by a linguist)\n//    is kept as Low and starts with 'Could be correct'.\nconst out = $input.first().json;\nconst job = $('When called by parent').first().json;\nconst UNCONF = {};\nfor (const g of (job.glossary || [])) { if (g.rv || /^\\[UNCONFIRMED/.test(String(g.note || ''))) { UNCONF[String(g.src).toLowerCase()] = true; } }\nconst GLOSS = /glossar|term_missing|approved (term|translation|rendering)|terminolog/i;\nlet droppedSample = 0, downgraded = 0;\nconst findings = [];\nfor (const f of (out.findings || [])) {\n  if (String(f.found_by || '').indexOf('style-guide sample') !== -1 && GLOSS.test(String(f.rule || '') + ' ' + String(f.issue || ''))) { droppedSample++; continue; }\n  const m = String(f.rule || '').match(/^term_missing: (.+)$/);\n  if (f.check === 'Glossary' && m && UNCONF[m[1].toLowerCase()]) {\n    downgraded++;\n    findings.push(Object.assign({}, f, { severity: 'Low', issue: 'Could be correct \\u2014 glossary term not confirmed by a linguist yet (to_review). ' + String(f.issue || '') }));\n    continue;\n  }\n  findings.push(f);\n}\nreturn [{ json: Object.assign({}, out, { findings: findings, glossary_guard: { sample_glossary_dropped: droppedSample, unconfirmed_downgraded: downgraded } }) }];\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "8cd3000e-0658-4c35-8d03-e2a3e3a1d0fd",
+      "name": "Glossary note guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        420
+      ],
+      "parameters": {
+        "jsCode": "// Glossary note guard (Maria 2026-11-10): glossary notes are binding.\n// Sits between \"Context guard\" and \"ICU prompt note\" in the language worker (ME3cLqQy0Dlzm6si).\n// 1) Drops glossary term_missing candidates whose translation uses a variant the glossary note accepts\n//    without conditions (\"Both „Abonnement kündigen“ and „Abo kündigen“ are OK\").\n// 2) Variants the note accepts only in a context (\"borrar also possible for clearing data\") stay, with\n//    the variant named in rule_text, so triage can decide.\n// 3) Adds the NOTES rule to the triage prompt.\nconst NL = String.fromCharCode(10);\nconst j = $input.first().json;\nif (!j.openai_body) { return [{ json: j }]; }\nconst body = JSON.parse(j.openai_body);\nconst payload = JSON.parse(body.messages[1].content);\nconst QUOTED = /[„“”\"«»‚‘’']\\s*([^„“”\"«»‚‘’']{2,60}?)\\s*[“”\"«»‘’']/g;\nconst ACCEPT = /\\b(both|also|either|alternativ\\w*|acceptable|accepted|allowed|ok|okay|fine|can (?:also )?(?:use|be used)|or)\\b/i;\nconst SCOPE = /\\b(only|for|when|where|if|depending|context|contexts|in (?:some|certain))\\b/i;\nfunction norm(s) { return String(s).normalize('NFC').replace(/[\\u00A0\\u202F\\u2009]/g, ' ').toLowerCase(); }\nfunction words(s) { return (String(s).match(/[\\p{L}\\p{M}]+(?:['’\\-][\\p{L}\\p{M}]+)*/gu) || []).map(norm); }\nfunction looseContains(text, phrase) {\n  const toks = words(text); if (!toks.length) { return false; }\n  let ws = words(phrase); const lw = ws.filter(function (w) { return w.length >= 3; }); if (lw.length) { ws = lw; }\n  if (!ws.length) { return norm(text).indexOf(norm(phrase)) !== -1; }\n  return ws.every(function (w) { const need = w.length <= 4 ? w : w.slice(0, Math.max(4, Math.floor(w.length * 0.7))); return toks.some(function (t) { return t.indexOf(need) === 0; }); });\n}\nfunction rules(note) {\n  const allowed = [], scoped = [];\n  for (const s of String(note || '').split(/(?<=[.;!?])\\s+/)) {\n    if (!ACCEPT.test(s)) { continue; }\n    const forms = []; let m; QUOTED.lastIndex = 0; while ((m = QUOTED.exec(s)) !== null) { forms.push(m[1].trim()); }\n    const dest = SCOPE.test(s) ? scoped : allowed;\n    for (const f of forms) { dest.push(f); }\n  }\n  return { allowed: allowed, scoped: scoped };\n}\nlet dropped = 0, flagged = 0;\nconst kept = [];\nfor (const c of payload.candidates) {\n  if (c.check === 'glossary' && c.kind === 'term_missing' && c.glossary_note) {\n    const r = rules(c.glossary_note);\n    if (r.allowed.some(function (v) { return looseContains(c.target, v); })) { dropped++; continue; }\n    const ctx = r.scoped.filter(function (v) { return looseContains(c.target, v); });\n    if (ctx.length) { flagged++; c.rule_text = 'Glossary note allows \"' + ctx.join('\", \"') + '\" in a specific context: ' + c.glossary_note; c.confidence = 'low'; }\n  }\n  kept.push(c);\n}\npayload.candidates = kept;\nconst sys = body.messages[0].content.split(NL);\nsys.splice(sys.length - 3, 0, 'GLOSSARY NOTES ARE BINDING (decision 2026-11-10): glossary_note holds the glossary\\u2019s own guidance for this language (allowed variants, short forms for tight spaces, scope such as \"only for buttons\" or \"Personality uses \\u2026\", forms to avoid). A translation that follows the note is correct even when it differs from the approved target \\u2014 drop it. If the note allows a variant only in a context, keep the candidate only when this key is outside that context. If the note says a form is wrong and the translation uses it, keep it and quote the note in the issue.');\nbody.messages[0].content = sys.join(NL);\nbody.messages[1].content = JSON.stringify(payload);\nreturn [{ json: Object.assign({}, j, { openai_body: JSON.stringify(body), glossary_note_guard: { dropped: dropped, context_flagged: flagged } }) }];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "6b2d23d5-49af-460d-837b-94f953613166",
+      "name": "Read learnings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1230,
+        -420
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "method": "GET",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "options": {
+          "timeout": 60000
+        },
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/1hKJwT4MrNZymmiy9SA-aW2f6xRmWNJH0z6D65nwSrsk/values/All!A:N"
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Gt1NY0PXKDxBUQGy",
+          "name": "Google Sheets account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "executeOnce": true
+    },
+    {
+      "id": "1e63fdee-54ed-4208-8144-5a40064a3514",
+      "name": "Precedent guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1240,
+        -560
+      ],
+      "parameters": {
+        "jsCode": "// Precedent guard (Maria 2026-11-10): every Rejected row of the 'i18n audit learnings' sheet for this language is\n// binding, not only the 25 newest that reach the LLM. A finding is dropped when a rejected learning has the same\n// translation, the same English (when stored) and the same kind of check - the rule label may differ between runs.\n// Mechanics findings (placeholders, plurals, Unicode) are never dropped. Rows with Active = No are ignored.\nconst out = $('Parse triage').first().json;\nconst job = $('When called by parent').first().json;\nconst iso = job.iso;\nconst pname = String(job.project_name || '').toLowerCase();\nconst v = (($('Read learnings').first() || {}).json || {}).values || [];\nfunction norm(s) { return String(s || '').normalize('NFC').replace(/[\\u00A0\\u202F\\u2009]/g, ' ').replace(/\\s+/g, ' ').trim().replace(/[.!:;]+$/, '').toLowerCase(); }\nfunction fam(rule, check) {\n  const s = String(rule || '') + ' ' + String(check || '');\n  if (/placeholder|plural|unicode|whitespace|\\$t\\(|mechanics/i.test(s)) { return 'mechanics'; }\n  if (/term_missing|brand_not|forbidden|glossary/i.test(s)) { return 'glossary'; }\n  if (/accura|number|negation|omit|untranslated|copied/i.test(s)) { return 'accuracy'; }\n  if (/consisten/i.test(s)) { return 'consistency'; }\n  return 'style';\n}\nconst REJ = {};\nfor (const r of v.slice(1)) {\n  if (String(r[2] || '').trim() !== iso) { continue; }\n  if (String(r[4] || '').trim().toLowerCase() !== 'rejected') { continue; }\n  if (String(r[10] || 'Yes').trim().toLowerCase() === 'no') { continue; }\n  const scope = String(r[3] || 'All products').trim().toLowerCase();\n  if (scope && scope !== 'all products' && pname.indexOf(scope) === -1) { continue; }\n  const f = fam(r[5], '');\n  if (f === 'mechanics') { continue; }\n  const k = f + '|' + norm(r[7]);\n  (REJ[k] = REJ[k] || []).push(norm(r[6]));\n}\nlet dropped = 0;\nconst findings = (out.findings || []).filter(function (f) {\n  if (!f || !f.key || f.key === '(multiple)') { return true; }\n  const fm = fam(f.rule, f.check);\n  if (fm === 'mechanics') { return true; }\n  const ens = REJ[fm + '|' + norm(f.translation)];\n  if (!ens) { return true; }\n  const en = norm(f.en);\n  if (ens.some(function (e) { return !e || e === en; })) { dropped++; return false; }\n  return true;\n});\nreturn [{ json: Object.assign({}, out, { findings: findings, precedent_dropped: dropped }) }];",
         "mode": "runOnceForAllItems"
       }
     }
@@ -343,17 +415,6 @@
         ]
       ]
     },
-    "Context guard": {
-      "main": [
-        [
-          {
-            "node": "ICU prompt note",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "ICU prompt note": {
       "main": [
         [
@@ -365,7 +426,18 @@
         ]
       ]
     },
-    "Parse triage": {
+    "ICU plural guard": {
+      "main": [
+        [
+          {
+            "node": "Add key editors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Glossary guard": {
       "main": [
         [
           {
@@ -376,11 +448,55 @@
         ]
       ]
     },
-    "ICU plural guard": {
+    "Context guard": {
       "main": [
         [
           {
-            "node": "Add key editors",
+            "node": "Glossary note guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Glossary note guard": {
+      "main": [
+        [
+          {
+            "node": "ICU prompt note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse triage": {
+      "main": [
+        [
+          {
+            "node": "Read learnings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read learnings": {
+      "main": [
+        [
+          {
+            "node": "Precedent guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Precedent guard": {
+      "main": [
+        [
+          {
+            "node": "Glossary guard",
             "type": "main",
             "index": 0
           }
@@ -428,7 +544,7 @@
     }
   ],
   "activeVersion": {
-    "versionId": "aec204f6-0ffa-47a4-b3eb-8d5214c34367",
+    "versionId": "8055384f-5a95-43c6-bce4-e8155fe3078e",
     "workflowId": "ME3cLqQy0Dlzm6si",
     "nodes": [
       {
@@ -669,7 +785,7 @@
           320
         ],
         "parameters": {
-          "jsCode": "// ICU plural rule for triage (Maria 2026-10-09).\nconst NL = String.fromCharCode(10);\nconst j = $input.first().json;\nif (!j.openai_body) { return [{ json: j }]; }\nconst body = JSON.parse(j.openai_body);\nconst sys = body.messages[0].content.split(NL);\nsys.splice(sys.length - 3, 0, 'ICU PLURALS ARE FINE WHEN RESTRUCTURED (decision 2026-10-09): a translation may move text that sits outside the plural in English into every branch, leave nothing outside the ICU block, or use identical one/other branches. Example: EN \"Uploading {count, plural, one {# file} other {# files}}\" -> IT \"{count, plural, one {Caricamento di # file} other {Caricamento di # file}}\" is CORRECT. Never report that as a placeholder, plural, structure, length or accuracy problem. Report an ICU string only if the variable name or type changed, the other branch is missing, # was lost, or the meaning is wrong.');\nbody.messages[0].content = sys.join(NL);\nreturn [{ json: Object.assign({}, j, { openai_body: JSON.stringify(body) }) }];\n",
+          "jsCode": "// ICU plural rule for triage (Maria 2026-10-09) + glossary rules for the sample and unconfirmed terms (Maria 2026-11-10).\nconst NL = String.fromCharCode(10);\nconst j = $input.first().json;\nif (!j.openai_body) { return [{ json: j }]; }\nconst body = JSON.parse(j.openai_body);\nconst sys = body.messages[0].content.split(NL);\nsys.splice(sys.length - 3, 0, 'ICU PLURALS ARE FINE WHEN RESTRUCTURED (decision 2026-10-09): a translation may move text that sits outside the plural in English into every branch, leave nothing outside the ICU block, or use identical one/other branches. Example: EN \"Uploading {count, plural, one {# file} other {# files}}\" -> IT \"{count, plural, one {Caricamento di # file} other {Caricamento di # file}}\" is CORRECT. Never report that as a placeholder, plural, structure, length or accuracy problem. Report an ICU string only if the variable name or type changed, the other branch is missing, # was lost, or the meaning is wrong.');\nsys.splice(sys.length - 3, 0, 'SAMPLE = STYLE GUIDE ONLY (decision 2026-11-10): you are not given the glossary for the SAMPLE strings. Never report a glossary, terminology or \"approved term\" issue in sample_findings and never call any term approved. Glossary adherence is judged only through the glossary candidates, which carry the real approved target in \"expected\".');\nsys.splice(sys.length - 3, 0, 'UNCONFIRMED GLOSSARY TERMS (decision 2026-11-10): a glossary_note starting with \"[UNCONFIRMED: to_review]\" means the target was extracted automatically and is not confirmed by a linguist. Keep such a term_missing candidate only if the translation is clearly wrong; a reasonable alternative wording is not a defect - drop it.');\nbody.messages[0].content = sys.join(NL);\nreturn [{ json: Object.assign({}, j, { openai_body: JSON.stringify(body) }) }];\n",
           "mode": "runOnceForAllItems"
         }
       },
@@ -684,6 +800,20 @@
         ],
         "parameters": {
           "jsCode": "// ICU plural guard (Maria 2026-10-09). Accepted as CORRECT: the target moves text that sits outside the plural in EN\n// into every branch, has no text outside the ICU block, or uses identical branches. Example:\n//   EN  Uploading {count, plural, one {# file} other {# files}}\n//   IT  {count, plural, one {Caricamento di # file} other {Caricamento di # file}}\n// Placeholder / plural-structure / length findings on such strings are dropped when the ICU block is intact\n// (same variable and type, 'other' branch present, # kept, all other placeholders kept). Broken ICU is still reported.\nconst out = $input.first().json;\nfunction icu(s) {\n  s = String(s || ''); const blocks = []; const re = /\\{\\s*([A-Za-z_][\\w.]*)\\s*,\\s*(plural|selectordinal|select)\\s*,\\s*(?:offset:\\d+\\s*)?/g; let m;\n  while ((m = re.exec(s)) !== null) {\n    let j = re.lastIndex; const br = {}; let ok = false;\n    while (j < s.length) {\n      while (j < s.length && /\\s/.test(s[j])) { j++; }\n      if (s[j] === '}') { j++; ok = true; break; }\n      const sm = /(=\\d+|[A-Za-z_]\\w*)\\s*\\{/y; sm.lastIndex = j; const r = sm.exec(s); if (!r) { break; }\n      let k = sm.lastIndex, d = 1;\n      for (; k < s.length && d > 0; k++) { if (s[k] === '{') { d++; } else if (s[k] === '}') { d--; } }\n      if (d !== 0) { break; }\n      br[r[1]] = s.slice(sm.lastIndex, k - 1); j = k;\n    }\n    if (ok && Object.keys(br).length) { blocks.push({ v: m[1], type: m[2], br: br, a: m.index, b: j }); re.lastIndex = j; }\n  }\n  return blocks;\n}\nfunction flat(s, blocks) { let o = '', p = 0; for (const x of blocks) { o += s.slice(p, x.a) + ' ' + Object.values(x.br).join(' ') + ' '; p = x.b; } return o + s.slice(p); }\nconst PH = /\\[%[^\\]]*\\]|%\\d*\\$?[sd@]|\\{\\{[^}]*\\}\\}|\\{[A-Za-z_][\\w.]*\\}|<\\/?[A-Za-z][^>]*>/g;\nfunction phSet(s) { const o = {}; for (const x of (String(s).match(PH) || [])) { o[x] = true; } return o; }\nfunction icuOk(en, t) {\n  en = String(en || ''); t = String(t || '');\n  const E = icu(en); if (!E.length) { return false; }\n  const T = icu(t); if (!T.length) { return false; }\n  for (const e of E) {\n    const m = T.find(function (x) { return x.v === e.v && x.type === e.type; });\n    if (!m || m.br.other === undefined) { return false; }\n    const needHash = e.type !== 'select' && Object.values(e.br).some(function (x) { return x.indexOf('#') !== -1; });\n    if (needHash && m.br.other.indexOf('#') === -1 && m.br.other.indexOf('{' + e.v + '}') === -1) { return false; }\n  }\n  const pe = phSet(flat(en, E)), pt = phSet(flat(t, T));\n  for (const x in pe) { if (!pt[x]) { return false; } }\n  return true;\n}\n\nconst TOPIC = /placeholder|tag mismatch|plural|\\bicu\\b|branch|outside the|structure|length outlier|length ratio|identical (one|other|branch|plural)/i;\nconst before = (out.findings || []).length;\nconst findings = (out.findings || []).filter(function (f) {\n  if (!f || !f.key || f.key === '(multiple)') { return true; }\n  if (!TOPIC.test(String(f.rule || '') + ' ' + String(f.issue || ''))) { return true; }\n  return !icuOk(f.en, f.translation);\n});\nreturn [{ json: Object.assign({}, out, { findings: findings, icu_dropped: before - findings.length }) }];\n",
+          "mode": "runOnceForAllItems"
+        }
+      },
+      {
+        "id": "651888a9-86be-4c7e-8d68-4574d45c1221",
+        "name": "Glossary guard",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1260,
+          -260
+        ],
+        "parameters": {
+          "jsCode": "// Glossary guard (Maria 2026-11-10, after the Thai 'Terms of Use' false positive in the daily audit).\n// 1) The LLM style-guide sample never sees the glossary, so it may not raise glossary / terminology findings\n//    (it invented an 'approved' Thai term). Glossary adherence comes only from the glossary check, which uses the live\n//    all-language glossary passed in by the parent (job.glossary).\n// 2) term_missing on a glossary entry still tagged to_review (target extracted automatically, not confirmed by a linguist)\n//    is kept as Low and starts with 'Could be correct'.\nconst out = $input.first().json;\nconst job = $('When called by parent').first().json;\nconst UNCONF = {};\nfor (const g of (job.glossary || [])) { if (g.rv || /^\\[UNCONFIRMED/.test(String(g.note || ''))) { UNCONF[String(g.src).toLowerCase()] = true; } }\nconst GLOSS = /glossar|term_missing|approved (term|translation|rendering)|terminolog/i;\nlet droppedSample = 0, downgraded = 0;\nconst findings = [];\nfor (const f of (out.findings || [])) {\n  if (String(f.found_by || '').indexOf('style-guide sample') !== -1 && GLOSS.test(String(f.rule || '') + ' ' + String(f.issue || ''))) { droppedSample++; continue; }\n  const m = String(f.rule || '').match(/^term_missing: (.+)$/);\n  if (f.check === 'Glossary' && m && UNCONF[m[1].toLowerCase()]) {\n    downgraded++;\n    findings.push(Object.assign({}, f, { severity: 'Low', issue: 'Could be correct \\u2014 glossary term not confirmed by a linguist yet (to_review). ' + String(f.issue || '') }));\n    continue;\n  }\n  findings.push(f);\n}\nreturn [{ json: Object.assign({}, out, { findings: findings, glossary_guard: { sample_glossary_dropped: droppedSample, unconfirmed_downgraded: downgraded } }) }];\n",
           "mode": "runOnceForAllItems"
         }
       }
@@ -784,17 +914,6 @@
           ]
         ]
       },
-      "Parse triage": {
-        "main": [
-          [
-            {
-              "node": "ICU plural guard",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
       "ICU plural guard": {
         "main": [
           [
@@ -805,23 +924,45 @@
             }
           ]
         ]
+      },
+      "Parse triage": {
+        "main": [
+          [
+            {
+              "node": "Glossary guard",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Glossary guard": {
+        "main": [
+          [
+            {
+              "node": "ICU plural guard",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     },
     "nodeGroups": [],
     "authors": "Maria Sica (via MCP)",
-    "name": "ICU plural restructure accepted as correct",
-    "description": "Maria 2026-10-09: EN \"Uploading {count, plural, one {# file} other {# files}}\" -> IT \"{count, plural, one {Caricamento di # file} other {Caricamento di # file}}\" is correct. Added ICU prompt note before triage and ICU plural guard after triage (drops placeholder/plural/length findings when the ICU block is intact). Shared by nightly and daily audits.",
+    "name": "Glossary guard: no glossary claims from sample; to_review terms Low",
+    "description": "2026-11-10 (Maria): the LLM style-guide sample invented an 'approved' Thai term for Terms of Use. Sample findings may no longer raise glossary/terminology issues; glossary adherence comes only from the glossary check on the live all-language glossary. term_missing on glossary entries tagged to_review is kept as Low with 'Could be correct'. Prompt updated accordingly.",
     "autosaved": false,
-    "createdAt": "2026-10-09T07:18:58.686Z",
-    "updatedAt": "2026-10-09T07:18:58.686Z",
+    "createdAt": "2026-11-10T08:33:03.102Z",
+    "updatedAt": "2026-11-10T08:33:03.102Z",
     "workflowPublishHistory": [
       {
-        "id": 2510,
+        "id": 3235,
         "workflowId": "ME3cLqQy0Dlzm6si",
-        "versionId": "aec204f6-0ffa-47a4-b3eb-8d5214c34367",
+        "versionId": "8055384f-5a95-43c6-bce4-e8155fe3078e",
         "event": "activated",
         "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
-        "createdAt": "2026-10-09T07:24:13.507Z"
+        "createdAt": "2026-11-10T08:33:46.837Z"
       }
     ]
   },
