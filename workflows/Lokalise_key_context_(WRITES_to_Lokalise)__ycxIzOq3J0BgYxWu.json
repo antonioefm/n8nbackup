@@ -1,0 +1,382 @@
+{
+  "id": "ycxIzOq3J0BgYxWu",
+  "name": "Lokalise key context (WRITES to Lokalise)",
+  "description": "Writes key descriptions (empty only) and one screenshot to Lokalise keys. Params node holds the run's payload. Write nodes are disabled after each run.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-12T11:24:44.711Z",
+  "updatedAt": "2026-11-12T11:25:37.422Z",
+  "isArchived": false,
+  "versionId": "13479124-f19f-4485-9624-8ab6dd3ac128",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "fecd0b03-28c7-4a4f-9364-a10cf350f4c4",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "2b400001-12f1-43da-a306-41eaf0a354d6",
+      "name": "Params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// EDIT ME for each run.\nreturn [{ json: {\n \"project_id\": \"31393214664f295f94dd86.76792605\",\n \"descriptions\": {\n  \"978903953\": \"Checkout page, A/B test PERSO-016 (variant test_a). Accessibility label (aria-label) of the small back-arrow button next to the “Credit card” heading, shown after the user taps “Credit or Debit card”. Not visible on screen: screen readers read it aloud. It is an action: tapping it takes the user back to the list of payment method buttons (Apple Pay, Google Pay, card). Translate as an instruction (“Go back to payment methods”), not as a heading. “Payment methods” = the ways to pay (wallets, card). Ticket: PERSO-4510.\",\n  \"978903954\": \"Checkout page, A/B test PERSO-016 (variant test_a), section “Select a payment method”. Label of the full-width green button under the Apple Pay and Google Pay buttons; tapping it opens the card form (card number, expiry, CVC). Noun phrase naming the payment method (pay by credit or debit card), not a verb. Button text: keep it short, one line on mobile. The capital D in “Debit” is English styling only; use your language’s normal capitalisation. Ticket: PERSO-4510.\"\n },\n \"image_url\": \"https://www.figma.com/api/mcp/asset/8fc7b93c-f295-4045-913b-cb3b6392400a.png\",\n \"shot_title\": \"PERSO-4510 – Checkout: payment method buttons and card form\",\n \"shot_desc\": \"Figma design (Personality.co, node 29204-395788). Payment method buttons with “Credit or Debit card” (test_a), then the card form opened from it: the ‹ back arrow next to “Credit card” carries the aria-label “Back to payment methods”.\",\n \"shot_tag\": \"PERSO-4510\"\n} }];\n"
+      }
+    },
+    {
+      "id": "010100cd-155b-4d0e-941a-048d8ef9deef",
+      "name": "Get Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?include_screenshots=1&limit=500&filter_key_ids={{ Object.keys($json.descriptions).join(\",\") }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "f87409d7-829e-422c-b74c-1a6a859baf56",
+      "name": "Build",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const p = $('Params').first().json; const keys = ($input.first().json.body && $input.first().json.body.keys) || [];\nconst put = []; const kept = []; const shotIds = []; const hadShot = [];\nfor (const k of keys) {\n  if (k.is_archived) { continue; }\n  const d = p.descriptions[String(k.key_id)];\n  if (d && !(k.description || '').trim()) { put.push({ key_id: k.key_id, description: d }); } else { kept.push(k.key_id); }\n  if ((k.screenshots || []).length === 0) { shotIds.push(k.key_id); } else { hadShot.push(k.key_id); }\n}\nreturn [{ json: { project_id: p.project_id, body: { keys: put.length ? put : [{ key_id: 0 }] }, put_count: put.length, kept: kept, shot_ids: shotIds, had_shot: hadShot, image_url: p.image_url } }];"
+      }
+    },
+    {
+      "id": "cde57ec0-d87e-4bfb-b185-08210675d68b",
+      "name": "Put Descriptions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "disabled": true
+    },
+    {
+      "id": "ea9c11e1-e155-4d43-8e82-922f64e4df82",
+      "name": "Fetch Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Build').first().json.image_url }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "51bbc006-e531-402a-ad0a-bfc3e1d0fe9c",
+      "name": "Shot Body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const p = $('Params').first().json; const b = $('Build').first().json;\nconst buf = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst ids = b.shot_ids;\nreturn [{ json: { project_id: p.project_id, skip: ids.length === 0, body: { screenshots: [{ data: 'data:image/png;base64,' + buf.toString('base64'), title: p.shot_title, description: p.shot_desc, ocr: false, key_ids: ids, tags: [p.shot_tag] }] } } }];"
+      }
+    },
+    {
+      "id": "436f0d97-e54c-44cb-a266-e93e67ca1fc5",
+      "name": "Post Screenshot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1400,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/screenshots",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "disabled": true
+    },
+    {
+      "id": "301b0e76-2912-4102-af5a-51be33c54157",
+      "name": "Read Back",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1600,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $('Params').first().json.project_id }}/keys?include_screenshots=1&limit=500&filter_key_ids={{ Object.keys($('Params').first().json.descriptions).join(',') }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "ce85c820-25a9-4020-84a3-8b5a68de3818",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b = $('Build').first().json; const put = $('Put Descriptions').first().json; const shot = $('Post Screenshot').first().json;\nconst keys = ($input.first().json.body && $input.first().json.body.keys) || [];\nreturn [{ json: { put_count: b.put_count, kept: b.kept, put_status: put.statusCode, put_errors: put.body && put.body.errors, shot_status: shot.statusCode, shot_ids: b.shot_ids, shot_result: shot.body && (shot.body.screenshots || []).map(function (s) { return { id: s.screenshot_id, key_ids: s.key_ids, title: s.title }; }), shot_errors: shot.body && (shot.body.errors || shot.body.error), after: keys.map(function (k) { return { id: k.key_id, tags: k.tags, description: k.description, screenshots: (k.screenshots || []).length }; }) } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Params": {
+      "main": [
+        [
+          {
+            "node": "Get Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Keys": {
+      "main": [
+        [
+          {
+            "node": "Build",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build": {
+      "main": [
+        [
+          {
+            "node": "Put Descriptions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Put Descriptions": {
+      "main": [
+        [
+          {
+            "node": "Fetch Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Image": {
+      "main": [
+        [
+          {
+            "node": "Shot Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shot Body": {
+      "main": [
+        [
+          {
+            "node": "Post Screenshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Screenshot": {
+      "main": [
+        [
+          {
+            "node": "Read Back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Back": {
+      "main": [
+        [
+          {
+            "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "ycxIzOq3J0BgYxWu",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-12T11:24:44.713Z",
+      "updatedAt": "2026-11-12T11:24:44.713Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
