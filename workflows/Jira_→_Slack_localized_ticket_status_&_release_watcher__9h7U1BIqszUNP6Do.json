@@ -1,14 +1,14 @@
 {
   "id": "9h7U1BIqszUNP6Do",
   "name": "Jira → Slack: localized ticket status & release watcher",
-  "description": "Every 15 min, finds product tickets with a \"Has localization ticket\" link and posts to #i18n-team when their status, fix version or version release changes.",
+  "description": "Every 15 min: posts LQA, status and fix-version changes of localized tickets to #i18n-releases (version events grouped per version) and fills Original fix version/release date on LL tickets.",
   "active": true,
-  "activeVersionId": "9180e0f1-159e-4dea-a77f-b1c0ae0b6e19",
+  "activeVersionId": "7462132c-eb3d-45c6-81a9-c11e675224cf",
   "createdAt": "2026-10-09T11:59:44.660Z",
-  "updatedAt": "2026-10-09T12:49:29.500Z",
+  "updatedAt": "2026-11-12T11:04:42.368Z",
   "isArchived": false,
-  "versionId": "9180e0f1-159e-4dea-a77f-b1c0ae0b6e19",
-  "versionCounter": 5,
+  "versionId": "7462132c-eb3d-45c6-81a9-c11e675224cf",
+  "versionCounter": 8,
   "sourceWorkflowId": null,
   "triggerCount": 1,
   "nodes": [
@@ -85,7 +85,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const state = $getWorkflowStaticData('global');\nif (!state.issues) state.issues = {};\nconst firstRun = !state.seeded;\nconst now = Date.now();\nconst esc = function (s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };\nconst base = 'https://futuremedia.atlassian.net/browse/';\nconst issues = ($input.first().json.issues) || [];\nconst out = [];\nfor (const it of issues) {\n  const f = it.fields || {};\n  const llrs = (f.issuelinks || []).filter(function (l) { return l.type && l.type.id === '10079' && l.outwardIssue; }).map(function (l) { return l.outwardIssue; });\n  if (!llrs.length) continue;\n  const status = f.status ? f.status.name : '';\n  const versions = (f.fixVersions || []).map(function (v) { return { name: v.name, releaseDate: v.releaseDate || '', released: !!v.released }; });\n  const sigOf = function (v) { return v.name + '|' + v.releaseDate + '|' + v.released; };\n  const verSig = versions.map(sigOf).sort().join(';');\n  const prev = state.issues[it.key];\n  state.issues[it.key] = { status: status, verSig: verSig, seen: now, threadTs: prev && prev.threadTs ? prev.threadTs : '' };\n  if (firstRun || !prev) continue;\n  const changes = [];\n  if (prev.status !== status) {\n    const prodNote = status === 'QA PROD' ? ' :rocket: _deployed to prod_' : '';\n    changes.push('Status: ' + esc(prev.status) + ' → *' + esc(status) + '*' + prodNote);\n  }\n  if (prev.verSig !== verSig) {\n    const prevSigs = prev.verSig ? prev.verSig.split(';') : [];\n    for (const v of versions) {\n      const p = prevSigs.find(function (s) { return s.indexOf(v.name + '|') === 0; });\n      if (!p) changes.push('Fix version added: *' + esc(v.name) + '*' + (v.releaseDate ? ' (planned release ' + v.releaseDate + ')' : ''));\n      else if (v.released && p.slice(-5) !== '|true') changes.push(':rocket: Version *' + esc(v.name) + '* *released*' + (v.releaseDate ? ' on *' + v.releaseDate + '*' : ''));\n      else if (p !== sigOf(v)) changes.push('Fix version *' + esc(v.name) + '* updated (release date ' + (v.releaseDate || 'not set') + ')');\n    }\n  }\n  if (!changes.length) continue;\n  const verLine = versions.length ? versions.map(function (v) { return esc(v.name) + ' (' + (v.releaseDate || 'no date') + (v.released ? ', released' : ', not released') + ')'; }).join(', ') : 'none';\n  const llrLine = llrs.map(function (l) { const st = l.fields && l.fields.status ? l.fields.status.name : ''; return '<' + base + l.key + '|' + l.key + '>' + (st ? ' (' + esc(st) + ')' : ''); }).join(', ');\n  const text = ':bell: *<' + base + it.key + '|' + it.key + '>* – ' + esc(f.summary) + '\\n' + changes.join('\\n') + '\\nFix version: ' + verLine + '\\nLocalization ticket: ' + llrLine;\n  out.push({ json: { key: it.key, status: status, llrKeys: llrs.map(function (l) { return l.key; }), threadTs: state.issues[it.key].threadTs, changesText: changes.join('\\n'), text: text } });\n}\nfor (const k of Object.keys(state.issues)) { if (now - (state.issues[k].seen || 0) > 90 * 86400000) delete state.issues[k]; }\nstate.seeded = true;\nreturn out;\n"
+        "jsCode": "const state = $getWorkflowStaticData('global');\nif (!state.issues) state.issues = {};\nif (!state.lqa) state.lqa = {};\nif (!state.versions) state.versions = {};\nconst firstRun = !state.seeded;\nconst lqaFirstRun = !state.lqaSeeded;\nconst now = Date.now();\nconst LINK_TYPE_ID = '10079'; // \"Has localization ticket\"\nconst esc = function (s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };\nconst base = 'https://futuremedia.atlassian.net/browse/';\nconst link = function (k) { return '<' + base + k + '|' + k + '>'; };\nconst sigOf = function (v) { return v.name + '|' + v.releaseDate + '|' + v.released; };\nconst parseSig = function (s) { const parts = s.split('|'); const released = parts.pop() === 'true'; const releaseDate = parts.pop() || ''; return { name: parts.join('|'), releaseDate: releaseDate, released: released }; };\nconst verLineOf = function (versions) { if (!versions) return 'unknown'; return versions.length ? versions.map(function (v) { return esc(v.name) + ' (' + (v.releaseDate || 'no date') + (v.released ? ', released' : ', not released') + ')'; }).join(', ') : 'none'; };\nconst buildText = function (key, summary, changes, verLine, llrLine) {\n  return ':bell: *' + link(key) + '* – ' + esc(summary) + '\\n' + changes.join('\\n') + '\\nFix version: ' + verLine + '\\nLocalization ticket: ' + llrLine;\n};\n\nconst productIssues = (($('Fetch localized product tickets').first().json || {}).issues) || [];\nlet llrIssues = [];\ntry { llrIssues = ($input.first().json.issues) || []; } catch (e) { llrIssues = []; }\nconst llrByKey = {};\nfor (const l of llrIssues) llrByKey[l.key] = l;\n\n// 1) LQA status changes on localization (INTERNAT) tickets\nconst lqaChanges = {}; // product key -> { lines, llrKeys, issue }\nfor (const l of llrIssues) {\n  const f = l.fields || {};\n  const val = f.customfield_11581 ? f.customfield_11581.value : '';\n  const prev = state.lqa[l.key];\n  state.lqa[l.key] = { value: val, seen: now };\n  if (lqaFirstRun) continue;\n  let changed = false;\n  let fromTxt = '';\n  // An LL ticket seen for the first time is only recorded, never reported\n  if (prev && prev.value !== val) { changed = true; fromTxt = prev.value || 'not set'; }\n  if (!changed) continue;\n  const products = (f.issuelinks || []).filter(function (x) { return x.type && x.type.id === LINK_TYPE_ID && x.inwardIssue; }).map(function (x) { return x.inwardIssue; });\n  for (const p of products) {\n    if (!lqaChanges[p.key]) lqaChanges[p.key] = { lines: [], llrKeys: [], issue: p };\n    lqaChanges[p.key].lines.push(':mag: LQA status (' + l.key + '): ' + esc(fromTxt) + ' → ' + '*' + esc(val || 'not set') + '*');\n    lqaChanges[p.key].llrKeys.push(l.key);\n  }\n}\n\nconst out = [];\nconst groups = {}; // version-level events, one message per version + event\nconst groupOrder = [];\n// 2) Product tickets: ticket-level changes go per ticket, version-level events are grouped per version\nfor (const it of productIssues) {\n  const f = it.fields || {};\n  const llrs = (f.issuelinks || []).filter(function (l) { return l.type && l.type.id === LINK_TYPE_ID && l.outwardIssue; }).map(function (l) { return l.outwardIssue; });\n  if (!llrs.length) continue;\n  const status = f.status ? f.status.name : '';\n  const versions = (f.fixVersions || []).map(function (v) { return { id: v.id, name: v.name, releaseDate: v.releaseDate || '', released: !!v.released }; });\n  const verSig = versions.map(sigOf).sort().join(';');\n  const prev = state.issues[it.key];\n  state.issues[it.key] = { status: status, verSig: verSig, seen: now, threadTs: prev && prev.threadTs ? prev.threadTs : '', summary: f.summary || '', llrKeys: llrs.map(function (l) { return l.key; }) };\n  const lqa = lqaChanges[it.key];\n  delete lqaChanges[it.key];\n  const llrLine = llrs.map(function (l) { const st = l.fields && l.fields.status ? l.fields.status.name : ''; return link(l.key) + (st ? ' (' + esc(st) + ')' : ''); }).join(', ');\n  const changes = [];\n  if (!firstRun && prev) {\n    if (prev.status !== null && prev.status !== undefined && prev.status !== status) {\n      const prodNote = status === 'QA PROD' ? ' :rocket: _deployed to prod_' : '';\n      changes.push('Status: ' + esc(prev.status) + ' → *' + esc(status) + '*' + prodNote);\n    }\n    if (prev.verSig !== null && prev.verSig !== undefined && prev.verSig !== verSig) {\n      const prevVers = prev.verSig ? prev.verSig.split(';').map(parseSig) : [];\n      for (const v of versions) {\n        const p = prevVers.find(function (x) { return x.name === v.name; });\n        let event = '';\n        if (!p) changes.push('Fix version added: *' + esc(v.name) + '*' + (v.releaseDate ? ' (planned release ' + v.releaseDate + ')' : ''));\n        else if (v.released && !p.released) event = ':rocket: *released*' + (v.releaseDate ? ' on *' + v.releaseDate + '*' : '');\n        else if (!v.released && p.released) event = ':warning: release *reverted* (marked as not released again)';\n        else if (p.releaseDate !== v.releaseDate) event = ':calendar: release date moved: ' + (p.releaseDate || 'not set') + ' → *' + (v.releaseDate || 'not set') + '*';\n        if (event) {\n          const gk = (v.id || v.name) + '#' + event;\n          if (!groups[gk]) { groups[gk] = { versionId: v.id || v.name, version: v, project: it.key.split('-')[0], event: event, tickets: [], llrKeys: [] }; groupOrder.push(gk); }\n          groups[gk].tickets.push('• ' + link(it.key) + ' – ' + esc(f.summary) + ' · ' + esc(status) + ' · LL: ' + llrLine);\n          for (const l of llrs) if (groups[gk].llrKeys.indexOf(l.key) < 0) groups[gk].llrKeys.push(l.key);\n        }\n      }\n      for (const p of prevVers) {\n        if (!versions.find(function (v) { return v.name === p.name; })) changes.push('Fix version removed: *' + esc(p.name) + '*');\n      }\n    }\n  }\n  if (lqa) for (const line of lqa.lines) changes.push(line);\n  if (!changes.length) continue;\n  out.push({ json: { kind: 'ticket', groupKey: '', key: it.key, status: status, llrKeys: llrs.map(function (l) { return l.key; }), threadTs: state.issues[it.key].threadTs, changesText: changes.join('\\n'), text: buildText(it.key, f.summary, changes, verLineOf(versions), llrLine) } });\n}\n\n// 3) One message per version event, listing every localized ticket in that version\nfor (const gk of groupOrder) {\n  const g = groups[gk];\n  const v = g.version;\n  const vs = state.versions[g.versionId] || { threadTs: '' };\n  vs.seen = now;\n  state.versions[g.versionId] = vs;\n  const header = ':package: *Version ' + esc(v.name) + '* (' + esc(g.project) + ') – ' + g.event;\n  const body = 'Release: ' + (v.releaseDate || 'no date') + (v.released ? ', released' : ', not released') + '\\nLocalized tickets (' + g.tickets.length + '):\\n' + g.tickets.join('\\n');\n  out.push({ json: { kind: 'version', groupKey: String(g.versionId), key: 'Version ' + v.name, status: '', llrKeys: g.llrKeys, threadTs: vs.threadTs || '', changesText: header + '\\n' + g.tickets.join('\\n'), text: header + '\\n' + body } });\n}\n\n// 4) LQA changes whose product ticket was not in this run's product fetch\nfor (const key of Object.keys(lqaChanges)) {\n  const c = lqaChanges[key];\n  const pf = c.issue.fields || {};\n  let st = state.issues[key];\n  if (!st) {\n    st = { status: null, verSig: null, seen: now, threadTs: '', summary: pf.summary || '', llrKeys: c.llrKeys };\n    state.issues[key] = st;\n  }\n  const llrKeys = st.llrKeys && st.llrKeys.length ? st.llrKeys : c.llrKeys;\n  const versions = st.verSig ? st.verSig.split(';').map(parseSig) : (st.verSig === '' ? [] : null);\n  const llrLine = llrKeys.map(function (k) { const li = llrByKey[k]; const s = li && li.fields && li.fields.status ? li.fields.status.name : ''; return link(k) + (s ? ' (' + esc(s) + ')' : ''); }).join(', ');\n  out.push({ json: { kind: 'ticket', groupKey: '', key: key, status: pf.status ? pf.status.name : (st.status || ''), llrKeys: llrKeys, threadTs: st.threadTs || '', changesText: c.lines.join('\\n'), text: buildText(key, pf.summary || st.summary, c.lines, verLineOf(versions), llrLine) } });\n}\n\nconst old = function (o) { return now - ((o && o.seen) || 0) > 90 * 86400000; };\nfor (const k of Object.keys(state.issues)) if (old(state.issues[k])) delete state.issues[k];\nfor (const k of Object.keys(state.lqa)) if (old(state.lqa[k])) delete state.lqa[k];\nfor (const k of Object.keys(state.versions)) if (old(state.versions[k])) delete state.versions[k];\nstate.seeded = true;\nstate.lqaSeeded = true;\nreturn out;\n"
       }
     },
     {
@@ -134,7 +134,7 @@
         300
       ],
       "parameters": {
-        "content": "## Localized ticket release watcher\nEvery 15 min: product tickets that have an INTERNAT localization ticket (link \"Has localization ticket\"). Posts to #i18n-team when status, fix version or version release changes. First production run only records the current state (no messages). State lives in workflow static data.",
+        "content": "## Localized ticket release watcher\nEvery 15 min: product tickets that have an INTERNAT localization (LL) ticket (link \"Has localization ticket\").\n\n**Slack (#i18n-releases)**\n- Version events (release date moved / released / release reverted): ONE message per version listing all localized tickets in it; later events for the same version reply in that thread.\n- Ticket events (status, fix version added/removed, LQA status of the LL ticket): per ticket; first = new post, later = thread reply.\n\n**Jira**: when the product ticket has a fix version with a release date, fills \"Original fix version\" and \"Original release date\" on the LL ticket if they are empty (never overwrites).\n\nFirst production run of each check only records state. State lives in workflow static data.",
         "color": 4
       }
     },
@@ -215,6 +215,18 @@
               "name": "threadTs",
               "type": "string",
               "value": "={{ $('Detect status and release changes').item.json.threadTs }}"
+            },
+            {
+              "id": "kind",
+              "name": "kind",
+              "type": "string",
+              "value": "={{ $('Detect status and release changes').item.json.kind }}"
+            },
+            {
+              "id": "group-key",
+              "name": "groupKey",
+              "type": "string",
+              "value": "={{ $('Detect status and release changes').item.json.groupKey }}"
             }
           ]
         },
@@ -306,10 +318,94 @@
         400
       ],
       "parameters": {
-        "jsCode": "const state = $getWorkflowStaticData('global');\nconst key = $('Add LQA line').item.json.key;\nconst ts = $json.message_timestamp || ($json.message && $json.message.ts);\nif (key && ts && state.issues && state.issues[key]) state.issues[key].threadTs = ts;\nreturn { json: { key: key, threadTs: ts } };",
+        "jsCode": "const state = $getWorkflowStaticData('global');\nconst src = $('Add LQA line').item.json;\nconst ts = $json.message_timestamp || ($json.message && $json.message.ts);\nif (ts) {\n  if (src.kind === 'version') {\n    if (!state.versions) state.versions = {};\n    const v = state.versions[src.groupKey] || {};\n    v.threadTs = ts;\n    v.seen = Date.now();\n    state.versions[src.groupKey] = v;\n  } else if (src.key && state.issues && state.issues[src.key]) {\n    state.issues[src.key].threadTs = ts;\n  }\n}\nreturn { json: { key: src.key, threadTs: ts } };\n",
         "language": "javaScript",
         "mode": "runOnceForEachItem"
       }
+    },
+    {
+      "id": "04a6d462-fb60-4b14-be67-402ce39b11c8",
+      "name": "Fetch localization tickets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        390,
+        480
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "method": "GET",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {},
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "jql",
+              "value": "={{ (function (issues) { const ks = []; (issues || []).forEach(function (i) { ((i.fields || {}).issuelinks || []).forEach(function (l) { if (l.type && l.type.id === '10079' && l.outwardIssue && ks.indexOf(l.outwardIssue.key) < 0) ks.push(l.outwardIssue.key); }); }); return 'project = INTERNAT AND (updated >= -1d' + (ks.length ? ' OR key in (' + ks.join(',') + ')' : '') + ') ORDER BY updated DESC'; })($json.issues) }}"
+            },
+            {
+              "name": "fields",
+              "value": "summary,status,customfield_11581,customfield_11702,customfield_11703,issuelinks"
+            },
+            {
+              "name": "maxResults",
+              "value": "100"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "url": "https://futuremedia.atlassian.net/rest/api/3/search/jql"
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "QJte7dJbX10mIzJI",
+          "name": "Jira SW Cloud account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "18dc0238-e91b-49e4-b811-66047ead9984",
+      "name": "Plan LL ticket updates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        560
+      ],
+      "parameters": {
+        "jsCode": "// Fill \"Original fix version\" / \"Original release date\" on the localization (LL) ticket\n// when the product ticket has a fix version with a release date. Only empty fields are filled.\nconst LINK_TYPE_ID = '10079';\nconst productIssues = (($('Fetch localized product tickets').first().json || {}).issues) || [];\nlet llrIssues = [];\ntry { llrIssues = ($input.first().json.issues) || []; } catch (e) { llrIssues = []; }\nconst llrByKey = {};\nfor (const l of llrIssues) llrByKey[l.key] = l;\nconst updates = {};\nfor (const it of productIssues) {\n  const f = it.fields || {};\n  const dated = (f.fixVersions || []).filter(function (v) { return v.name && v.releaseDate; });\n  if (!dated.length) continue;\n  // If several versions are set, use the earliest unreleased one, else the earliest one\n  dated.sort(function (a, b) { return (a.released === b.released ? 0 : (a.released ? 1 : -1)) || a.releaseDate.localeCompare(b.releaseDate); });\n  const v = dated[0];\n  const llrs = (f.issuelinks || []).filter(function (l) { return l.type && l.type.id === LINK_TYPE_ID && l.outwardIssue; }).map(function (l) { return l.outwardIssue.key; });\n  for (const k of llrs) {\n    const li = llrByKey[k];\n    if (!li || updates[k]) continue;\n    const lf = li.fields || {};\n    const fields = {};\n    if (!lf.customfield_11702) fields.customfield_11702 = v.name;\n    if (!lf.customfield_11703) fields.customfield_11703 = v.releaseDate;\n    if (Object.keys(fields).length) updates[k] = { key: k, productKey: it.key, fields: fields };\n  }\n}\nreturn Object.keys(updates).map(function (k) { return { json: updates[k] }; });\n",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "0fc938a6-5017-43e7-b935-11eaf0873975",
+      "name": "Update LL ticket fields",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1040,
+        560
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "jsonBody": "={{ JSON.stringify({ fields: $json.fields }) }}",
+        "method": "PUT",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "={{ 'https://futuremedia.atlassian.net/rest/api/3/issue/' + $json.key }}"
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "QJte7dJbX10mIzJI",
+          "name": "Jira SW Cloud account"
+        }
+      },
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -318,17 +414,6 @@
         [
           {
             "node": "Fetch localized product tickets",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Fetch localized product tickets": {
-      "main": [
-        [
-          {
-            "node": "Detect status and release changes",
             "type": "main",
             "index": 0
           }
@@ -396,20 +481,49 @@
           }
         ]
       ]
+    },
+    "Fetch localized product tickets": {
+      "main": [
+        [
+          {
+            "node": "Fetch localization tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch localization tickets": {
+      "main": [
+        [
+          {
+            "node": "Detect status and release changes",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Plan LL ticket updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan LL ticket updates": {
+      "main": [
+        [
+          {
+            "node": "Update LL ticket fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "nodeGroups": [
     {
-      "id": "e76752c1-c4ee-412e-aa9c-e2e194664803",
-      "name": "Detect changes",
-      "nodeIds": [
-        "d8829628-a277-43e4-aa4c-23e65db53e8a",
-        "36c428ec-b6f4-461a-adb4-b710ef27f468"
-      ],
-      "description": "Finds product tickets with a localization link and detects status, fix-version and release changes since last run"
-    },
-    {
-      "id": "67ae595c-e6bb-496b-8a00-7fb73fe6cafb",
+      "id": "8b684c87-b9ae-4ff7-bb35-23727349cf74",
       "name": "Add LQA info",
       "nodeIds": [
         "4304cc73-1206-4cf5-a957-3b567a72c721",
@@ -418,7 +532,7 @@
       "description": "Looks up the localization ticket's LQA status and its Test Plan, and builds the message text"
     },
     {
-      "id": "5bccbccf-e31b-444f-a5dc-1654ad0b70ab",
+      "id": "a7260f04-d022-42fb-8be1-665eea00ea6f",
       "name": "Post to Slack",
       "nodeIds": [
         "b9d19182-e5a7-41fa-b44f-129cabed786c",
@@ -426,7 +540,16 @@
         "c80c4bb3-da24-4d94-a043-d6f5c7346edc",
         "bfc8e60b-0a8d-494d-9759-84e5cb890ab7"
       ],
-      "description": "First change for a ticket posts in #i18n-releases; later changes reply in that ticket's thread"
+      "description": "First change posts in #i18n-releases; later changes reply in that ticket's or version's thread"
+    },
+    {
+      "id": "7ea158c3-3f53-438d-9e24-69aaad848932",
+      "name": "Fill LL ticket fields",
+      "nodeIds": [
+        "18dc0238-e91b-49e4-b811-66047ead9984",
+        "0fc938a6-5017-43e7-b935-11eaf0873975"
+      ],
+      "description": "Fills Original fix version / Original release date on LL tickets when empty"
     }
   ],
   "settings": {
@@ -447,8 +570,12 @@
         "MYQRCODE-11006": {
           "status": "Done",
           "verSig": "2.2.20|2026-10-09|true",
-          "seen": 1794448119179,
-          "threadTs": "1791550821.952389"
+          "seen": 1794620917797,
+          "threadTs": "1791550821.952389",
+          "summary": "Rename the checkout \"Total due:\" label to \"Total due today:\"",
+          "llrKeys": [
+            "INTERNAT-2364"
+          ]
         },
         "RESUME-2256": {
           "status": "Done",
@@ -501,8 +628,12 @@
         "RESUME-2238": {
           "status": "Done",
           "verSig": "1.15.3|2026-09-29|true",
-          "seen": 1794448119179,
-          "threadTs": ""
+          "seen": 1794593019367,
+          "threadTs": "1794481430.988609",
+          "summary": "[BU Resume] ResumeWise Compliance: Total due today in the checkout form",
+          "llrKeys": [
+            "INTERNAT-2367"
+          ]
         },
         "PDFHELP-2472": {
           "status": "BLOCKED",
@@ -591,8 +722,12 @@
         "UNICOPY-1368": {
           "status": "Done",
           "verSig": "1.8.1|2026-10-08|true",
-          "seen": 1794448119179,
-          "threadTs": ""
+          "seen": 1794611919382,
+          "threadTs": "",
+          "summary": "[Design + FE] New design for the file upload state on the funnel input",
+          "llrKeys": [
+            "INTERNAT-2375"
+          ]
         },
         "UNICOPY-1367": {
           "status": "Done",
@@ -651,26 +786,42 @@
         "RESUME-1920": {
           "status": "Done",
           "verSig": "1.15.0|2026-09-01|true",
-          "seen": 1794448119179,
-          "threadTs": "1794306818.286849"
+          "seen": 1794620917797,
+          "threadTs": "1794306818.286849",
+          "summary": "[FE] Cover Letters Builder - edit modals",
+          "llrKeys": [
+            "INTERNAT-2021"
+          ]
         },
         "RESUME-1935": {
           "status": "Done",
           "verSig": "1.15.0|2026-09-01|true",
-          "seen": 1794448119179,
-          "threadTs": "1794306818.437769"
+          "seen": 1794620917797,
+          "threadTs": "1794306818.437769",
+          "summary": "[FE] Cover Letters - Dashboard - Edit content",
+          "llrKeys": [
+            "INTERNAT-2031"
+          ]
         },
         "RESUME-1924": {
           "status": "Done",
           "verSig": "1.15.0|2026-09-01|true",
-          "seen": 1794448119179,
-          "threadTs": "1794394119.580799"
+          "seen": 1794620917797,
+          "threadTs": "1794394119.580799",
+          "summary": "[BE] Cover Letters Builder - email",
+          "llrKeys": [
+            "INTERNAT-2064"
+          ]
         },
         "RESUME-2229": {
           "status": "Done",
           "verSig": "1.15.3|2026-09-29|true",
-          "seen": 1794448119179,
-          "threadTs": "1794306818.130119"
+          "seen": 1794620917797,
+          "threadTs": "1794306818.130119",
+          "summary": "Landing page improvements",
+          "llrKeys": [
+            "INTERNAT-2371"
+          ]
         },
         "MOBITR-1111": {
           "status": "Done",
@@ -687,8 +838,12 @@
         "MYQRCODE-10972": {
           "status": "Done",
           "verSig": "2.3.0 - PMS for qrcreate only|2026-10-05|true",
-          "seen": 1794448119179,
-          "threadTs": ""
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "Move unpaid users to premium_in_debt on the PMS event, drop the day countdown",
+          "llrKeys": [
+            "INTERNAT-2324"
+          ]
         },
         "PERSO-3409": {
           "status": "Done",
@@ -700,13 +855,17 @@
           "status": "Done",
           "verSig": "06.10.2026|2026-10-06|true",
           "seen": 1792516505507,
-          "threadTs": ""
+          "threadTs": "1794562421.748079"
         },
         "PERSO-4223": {
           "status": "Done",
           "verSig": "1.87.0 - Remove_name_from_checkout|2026-10-06|true",
-          "seen": 1794448119179,
-          "threadTs": ""
+          "seen": 1794569619599,
+          "threadTs": "",
+          "summary": "[Personality] Remove name field from checkout",
+          "llrKeys": [
+            "INTERNAT-2429"
+          ]
         },
         "MYQRCODE-10710": {
           "status": "Done",
@@ -771,8 +930,12 @@
         "MYQRCODE-10976": {
           "status": "Done",
           "verSig": "2.2.17|2026-09-30|true",
-          "seen": 1794448119179,
-          "threadTs": ""
+          "seen": 1794593019367,
+          "threadTs": "1794481431.142829",
+          "summary": "Replace the \"QR codes created today\" counter on the myqrcode homepage with a live total scans counter",
+          "llrKeys": [
+            "INTERNAT-2325"
+          ]
         },
         "AICHAT-1289": {
           "status": "Done",
@@ -891,8 +1054,12 @@
         "AICHAT-1509": {
           "status": "Done",
           "verSig": "30.10.2026|2026-10-30|true",
-          "seen": 1794448119179,
-          "threadTs": "1791808206.546839"
+          "seen": 1794593019367,
+          "threadTs": "1791808206.546839",
+          "summary": "[BE][FE] Implement Quality Improvement funnel",
+          "llrKeys": [
+            "INTERNAT-2478"
+          ]
         },
         "MYQRCODE-11048": {
           "status": "PENDING IMPLEMENTATION",
@@ -903,8 +1070,12 @@
         "AICHAT-1514": {
           "status": "Done",
           "verSig": "30.10.2026|2026-10-30|true",
-          "seen": 1794448119179,
-          "threadTs": "1791892806.442549"
+          "seen": 1794593019367,
+          "threadTs": "1791892806.442549",
+          "summary": "[BE][FE] Implement Selfie Retouching funnel",
+          "llrKeys": [
+            "INTERNAT-2487"
+          ]
         },
         "MYQRCODE-10949": {
           "status": "PENDING IMPLEMENTATION",
@@ -927,8 +1098,12 @@
         "AICHAT-1133": {
           "status": "Done",
           "verSig": "30.10.2026|2026-10-30|true",
-          "seen": 1794448119179,
-          "threadTs": "1791892806.275499"
+          "seen": 1794593019367,
+          "threadTs": "1791892806.275499",
+          "summary": "[FE] Temp disabling HEIC on desktops, copy adjustments in tools ",
+          "llrKeys": [
+            "INTERNAT-2269"
+          ]
         },
         "PDFHELP-2487": {
           "status": "Done",
@@ -938,9 +1113,13 @@
         },
         "PDFHELP-1952": {
           "status": "BLOCKED",
-          "verSig": "",
-          "seen": 1791882903801,
-          "threadTs": ""
+          "verSig": "MyPDF v1.0.0|2026-12-01|false",
+          "seen": 1794620917797,
+          "threadTs": "1794567818.914089",
+          "summary": "Onepdf.com MVP launch (Clone)",
+          "llrKeys": [
+            "INTERNAT-2237"
+          ]
         },
         "PAY-3553": {
           "status": "DRAFT",
@@ -951,14 +1130,22 @@
         "PDFHELP-2491": {
           "status": "Done",
           "verSig": "PDF Help v1.2.0|2026-10-22|true",
-          "seen": 1794448119179,
-          "threadTs": "1792142106.214539"
+          "seen": 1794593019367,
+          "threadTs": "1792142106.214539",
+          "summary": "Clean all unused translation keys",
+          "llrKeys": [
+            "INTERNAT-2327"
+          ]
         },
         "IQTST-903": {
           "status": "Done",
           "verSig": "1.9.0 - Members_Area_v2_Quiz_v3|2026-10-23|true",
-          "seen": 1794448119179,
-          "threadTs": "1792426504.405219"
+          "seen": 1794593019367,
+          "threadTs": "1792426504.405219",
+          "summary": "[BrainIQ] Results screen redesign — score, comparisons, cognitive profile, certificate, sharing",
+          "llrKeys": [
+            "INTERNAT-2497"
+          ]
         },
         "REALCHECK-382": {
           "status": "Done",
@@ -981,8 +1168,12 @@
         "VIN-360": {
           "status": "Done",
           "verSig": "",
-          "seen": 1794448119179,
-          "threadTs": "1791979206.634569"
+          "seen": 1794494919478,
+          "threadTs": "1791979206.634569",
+          "summary": "Full report working, displayed and downloadable",
+          "llrKeys": [
+            "INTERNAT-2500"
+          ]
         },
         "IQTST-888": {
           "status": "Done",
@@ -993,8 +1184,12 @@
         "AICHAT-1535": {
           "status": "Done",
           "verSig": "16.10.2026|2026-10-16|true",
-          "seen": 1794448119179,
-          "threadTs": "1791908104.817189"
+          "seen": 1794590319203,
+          "threadTs": "1791908104.817189",
+          "summary": "[FE] Wallet payment decline throws IntegrationError and hides the error message",
+          "llrKeys": [
+            "INTERNAT-2507"
+          ]
         },
         "REALCHECK-511": {
           "status": "Done",
@@ -1059,20 +1254,32 @@
         "MYQRCODE-11041": {
           "status": "Done",
           "verSig": "2.4.4|2026-11-03|true",
-          "seen": 1794448119179,
-          "threadTs": "1792482306.507369"
+          "seen": 1794620917797,
+          "threadTs": "1792482306.507369",
+          "summary": "[Builder] Add a password option to builder step 3",
+          "llrKeys": [
+            "INTERNAT-2424"
+          ]
         },
         "MYQRCODE-11042": {
           "status": "Done",
           "verSig": "2.4.4|2026-11-03|true",
-          "seen": 1794448119179,
-          "threadTs": "1792482306.681859"
+          "seen": 1794620917797,
+          "threadTs": "1792482306.681859",
+          "summary": "Show a password screen when a protected QR code is scanned",
+          "llrKeys": [
+            "INTERNAT-2425"
+          ]
         },
         "MYQRCODE-11043": {
           "status": "Done",
           "verSig": "2.4.4|2026-11-03|true",
-          "seen": 1794448119179,
-          "threadTs": "1792482306.866949"
+          "seen": 1794620917797,
+          "threadTs": "1792482306.866949",
+          "summary": "[Library] Add the password lock and Enable/Disable password to the QR codes list",
+          "llrKeys": [
+            "INTERNAT-2426"
+          ]
         },
         "REALCHECK-480": {
           "status": "DRAFT",
@@ -1083,8 +1290,12 @@
         "MYQRCODE-10969": {
           "status": "Done",
           "verSig": "2.4.2|2026-10-27|true",
-          "seen": 1794448119179,
-          "threadTs": "1792156504.534079"
+          "seen": 1794620917797,
+          "threadTs": "1792156504.534079",
+          "summary": "[Auth] Log in existing accounts with a code or password inside the sign up modal",
+          "llrKeys": [
+            "INTERNAT-2220"
+          ]
         },
         "MYQRCODE-11019": {
           "status": "Done",
@@ -1107,20 +1318,32 @@
         "AICHAT-1547": {
           "status": "Done",
           "verSig": "21.10.2026|2026-10-21|true",
-          "seen": 1794448119179,
-          "threadTs": "1792161005.202799"
+          "seen": 1794569619599,
+          "threadTs": "1792161005.202799",
+          "summary": "Dev: [A/B] Sign-up update: Google auth prioritized, copy edit + small fixes",
+          "llrKeys": [
+            "INTERNAT-2525"
+          ]
         },
         "AICHAT-1527": {
           "status": "Done",
           "verSig": "27.10.2026|2026-10-27|true",
-          "seen": 1794448119179,
-          "threadTs": "1792156504.361949"
+          "seen": 1794585819319,
+          "threadTs": "1792156504.361949",
+          "summary": "[FE] Build compliant main page and move chat page to a separate URL",
+          "llrKeys": [
+            "INTERNAT-2526"
+          ]
         },
         "REALCHECK-589": {
           "status": "Done",
           "verSig": "FE 1.7.2|2026-10-27|true",
-          "seen": 1794448119179,
-          "threadTs": "1792493104.272899"
+          "seen": 1794620917797,
+          "threadTs": "1792493104.272899",
+          "summary": "Dev: [A/B] Add \"Phone owner won't be notified\" badge",
+          "llrKeys": [
+            "INTERNAT-2527"
+          ]
         },
         "REALCHECK-586": {
           "status": "Done",
@@ -1131,14 +1354,22 @@
         "MYIMAGE-389": {
           "status": "BLOCKED",
           "verSig": "",
-          "seen": 1793809119093,
-          "threadTs": "1792412106.785489"
+          "seen": 1794620917797,
+          "threadTs": "1792412106.785489",
+          "summary": "Ability to sign up / login with Google",
+          "llrKeys": [
+            "INTERNAT-1567"
+          ]
         },
         "PERSO-4422": {
           "status": "Done",
           "verSig": "1.93.1 - Political_Views_Test|2026-10-21|true",
-          "seen": 1794448119179,
-          "threadTs": "1792398604.592159"
+          "seen": 1794491319486,
+          "threadTs": "1792398604.592159",
+          "summary": "[Personality] Political Views personalized test (funnel)",
+          "llrKeys": [
+            "INTERNAT-2529"
+          ]
         },
         "PERSO-3413": {
           "status": "Done",
@@ -1197,8 +1428,12 @@
         "MYQRCODE-10897": {
           "status": "Done",
           "verSig": "2.4.2|2026-10-27|true",
-          "seen": 1794448119179,
-          "threadTs": "1792576804.730039"
+          "seen": 1794620917797,
+          "threadTs": "1792576804.730039",
+          "summary": "Remove the AI generator from the FAQ and archive its page code in qr-frontend",
+          "llrKeys": [
+            "INTERNAT-2228"
+          ]
         },
         "REALCHECK-585": {
           "status": "Done",
@@ -1227,44 +1462,72 @@
         "REALCHECK-587": {
           "status": "Done",
           "verSig": "",
-          "seen": 1793960317366,
-          "threadTs": "1793278119.452969"
+          "seen": 1794564219712,
+          "threadTs": "1793278119.452969",
+          "summary": "[REALCHECKER-001] Add \"Phone owner won't be notified\" badge — build",
+          "llrKeys": [
+            "INTERNAT-2543"
+          ]
         },
         "PDFHELP-2401": {
           "status": "Done",
           "verSig": "PDF Help v1.4.0|2026-11-06|true",
-          "seen": 1794448119179,
-          "threadTs": "1793183405.779869"
+          "seen": 1794620917797,
+          "threadTs": "1793183405.779869",
+          "summary": "[PDFHELP-016] Design Implementation: Cloud upload option",
+          "llrKeys": [
+            "INTERNAT-2230"
+          ]
         },
         "PDFHELP-2578": {
           "status": "Done",
           "verSig": "PDF Help v1.2.0|2026-10-22|true",
-          "seen": 1794448119179,
-          "threadTs": "1792577704.574899"
+          "seen": 1794605619397,
+          "threadTs": "1792577704.574899",
+          "summary": "UK Wave 1: Starter checklist, P60, P45 and PIP2 form funnels",
+          "llrKeys": [
+            "INTERNAT-2546"
+          ]
         },
         "PDFHELP-2581": {
           "status": "Done",
           "verSig": "PDF Help v1.2.0|2026-10-22|true",
-          "seen": 1794448119179,
-          "threadTs": "1792577704.741919"
+          "seen": 1794593019367,
+          "threadTs": "1792577704.741919",
+          "summary": "Germany Wave 1: E15 naturalisation application form funnel",
+          "llrKeys": [
+            "INTERNAT-2545"
+          ]
         },
         "AICHAT-1568": {
           "status": "Done",
           "verSig": "27.10.2026|2026-10-27|true",
-          "seen": 1794448119179,
-          "threadTs": "1792581306.451899"
+          "seen": 1794620917797,
+          "threadTs": "1792581306.451899",
+          "summary": "Sign-up A/B test variant changes at sign-up - account_activated carries a different variant than the visitor saw and the person is exposed to both variants",
+          "llrKeys": [
+            "INTERNAT-2547"
+          ]
         },
         "PDFHELP-2579": {
           "status": "Done",
           "verSig": "PDF Help v1.4.0|2026-11-06|true",
-          "seen": 1794448119179,
-          "threadTs": "1793104206.120909"
+          "seen": 1794620917797,
+          "threadTs": "1793104206.120909",
+          "summary": "Canada Wave 1: TD1, T4, T2201 and IMM 5257 form funnels",
+          "llrKeys": [
+            "INTERNAT-2550"
+          ]
         },
         "AICHAT-1561": {
           "status": "Done",
           "verSig": "21.10.2026|2026-10-21|true",
-          "seen": 1794448119179,
-          "threadTs": "1792584006.584009"
+          "seen": 1794593019367,
+          "threadTs": "1792584006.584009",
+          "summary": "Change trial period 7d -> 3d",
+          "llrKeys": [
+            "INTERNAT-2553"
+          ]
         },
         "VIN-449": {
           "status": "PENDING IMPLEMENTATION",
@@ -1281,14 +1544,22 @@
         "MYQRCODE-10898": {
           "status": "Done",
           "verSig": "2.4.2|2026-10-27|true",
-          "seen": 1794448119179,
-          "threadTs": "1792674004.517319"
+          "seen": 1794620917797,
+          "threadTs": "1792674004.517319",
+          "summary": "Move the minimum QR code size guide from the WordPress blog to a localized page on the main site",
+          "llrKeys": [
+            "INTERNAT-2556"
+          ]
         },
         "PDFHELP-2532": {
           "status": "Done",
           "verSig": "PDF Help v1.3.0|2026-10-29|true",
-          "seen": 1794448119179,
-          "threadTs": "1792773904.258049"
+          "seen": 1794593019367,
+          "threadTs": "1792773904.258049",
+          "summary": "PDF23-Design Implementation Cancel modal loss warning",
+          "llrKeys": [
+            "INTERNAT-2557"
+          ]
         },
         "PERSO-4433": {
           "status": "Done",
@@ -1311,38 +1582,62 @@
         "AICHAT-1127": {
           "status": "Done",
           "verSig": "27.10.2026|2026-10-27|true",
-          "seen": 1794448119179,
-          "threadTs": "1793086206.220859"
+          "seen": 1794586717724,
+          "threadTs": "1793086206.220859",
+          "summary": "Implement Trustpilot Integration",
+          "llrKeys": [
+            "INTERNAT-2559"
+          ]
         },
         "PDFHELP-2535": {
           "status": "Done",
           "verSig": "PDF Help v1.3.0|2026-10-29|true",
-          "seen": 1794448119179,
-          "threadTs": "1793090704.447129"
+          "seen": 1794593019367,
+          "threadTs": "1793090704.447129",
+          "summary": "[PDFHELP-024] Dev: Success page upload next document",
+          "llrKeys": [
+            "INTERNAT-2560"
+          ]
         },
         "REALCHECK-678": {
           "status": "Done",
           "verSig": "FE 1.7.8|2026-11-10|true",
-          "seen": 1794448119179,
-          "threadTs": "1793088006.523349"
+          "seen": 1794620917797,
+          "threadTs": "1793088006.523349",
+          "summary": "Update copy Vin Number lookup",
+          "llrKeys": [
+            "INTERNAT-2554"
+          ]
         },
         "VIN-346": {
           "status": "Done",
-          "verSig": "1.0.2|2026-11-13|false",
-          "seen": 1794415717358,
-          "threadTs": "1793116805.886009"
+          "verSig": "1.0.2|2026-11-13|true",
+          "seen": 1794620917797,
+          "threadTs": "1793116805.886009",
+          "summary": "[VINReady] ES Implement localised hero mockup with one consistent vehicle",
+          "llrKeys": [
+            "INTERNAT-2561"
+          ]
         },
         "REALCHECK-630": {
           "status": "Done",
           "verSig": "FE 1.7.5|2026-11-02|true",
-          "seen": 1794448119179,
-          "threadTs": "1793093406.282689"
+          "seen": 1794620917797,
+          "threadTs": "1793093406.282689",
+          "summary": "[DEV FE] name people-lookup landing (hidden on prod)",
+          "llrKeys": [
+            "INTERNAT-2562"
+          ]
         },
         "AICHAT-1537": {
           "status": "Done",
           "verSig": "30.10.2026|2026-10-30|true",
-          "seen": 1794448119179,
-          "threadTs": "1793284418.699349"
+          "seen": 1794593019367,
+          "threadTs": "1793284418.699349",
+          "summary": "[BE][FE] Implement Photo Retouching funnel",
+          "llrKeys": [
+            "INTERNAT-2567"
+          ]
         },
         "REALCHECK-686": {
           "status": "Done",
@@ -1353,8 +1648,12 @@
         "PDFHELP-2607": {
           "status": "Done",
           "verSig": "PDF Help v1.3.0|2026-10-29|true",
-          "seen": 1794448119179,
-          "threadTs": "1793178007.104189"
+          "seen": 1794620917797,
+          "threadTs": "1793178007.104189",
+          "summary": "Paywall – align checkout UI with Figma design",
+          "llrKeys": [
+            "INTERNAT-2573"
+          ]
         },
         "REALCHECK-664": {
           "status": "Done",
@@ -1365,8 +1664,12 @@
         "AICHAT-1538": {
           "status": "Done",
           "verSig": "30.10.2026|2026-10-30|true",
-          "seen": 1794448119179,
-          "threadTs": "1793277219.658469"
+          "seen": 1794593019367,
+          "threadTs": "1793277219.658469",
+          "summary": "[BE][FE] Implement Lighting & Color Correction funnel",
+          "llrKeys": [
+            "INTERNAT-2575"
+          ]
         },
         "VIN-509": {
           "status": "PENDING QA",
@@ -1383,20 +1686,32 @@
         "REALCHECK-477": {
           "status": "Done",
           "verSig": "BE 1.5.3|2026-10-28|true;FE 1.7.4|2026-10-28|true",
-          "seen": 1794448119179,
-          "threadTs": "1793201404.517479"
+          "seen": 1794620917797,
+          "threadTs": "1793201404.517479",
+          "summary": "Move upsells and card updates to the payments SDK",
+          "llrKeys": [
+            "INTERNAT-2577"
+          ]
         },
         "MYIMAGE-1197": {
           "status": "Done",
           "verSig": "1.0.61|2026-11-02|true",
-          "seen": 1794448119179,
-          "threadTs": "1793263719.708559"
+          "seen": 1794569619599,
+          "threadTs": "1793263719.708559",
+          "summary": "Crop editor: \"Crop all images to an exact size of\" label not updated in non-English languages",
+          "llrKeys": [
+            "INTERNAT-2579"
+          ]
         },
         "MYIMAGE-1199": {
           "status": "Done",
           "verSig": "1.0.61|2026-11-02|true",
-          "seen": 1794448119179,
-          "threadTs": "1793263719.872319"
+          "seen": 1794593019367,
+          "threadTs": "1793263719.872319",
+          "summary": "Upload requirements tooltip on initial page is not localized (English on all locales)",
+          "llrKeys": [
+            "INTERNAT-2580"
+          ]
         },
         "AICHAT-1635": {
           "status": "To Do",
@@ -1419,14 +1734,22 @@
         "MYIMAGE-1126": {
           "status": "Done",
           "verSig": "1.0.61|2026-11-02|true",
-          "seen": 1794448119179,
-          "threadTs": "1793369917.837309"
+          "seen": 1794593019367,
+          "threadTs": "1793369917.837309",
+          "summary": "[Emails] «Dear null» in payment confirmation and credits purchase emails",
+          "llrKeys": [
+            "INTERNAT-2583"
+          ]
         },
         "VIN-529": {
           "status": "Done",
           "verSig": "",
-          "seen": 1794448119179,
-          "threadTs": "1793271819.170909"
+          "seen": 1794509317811,
+          "threadTs": "1793271819.170909",
+          "summary": "[Report] Recall details, EU vehicle data and info tooltips on check rows (parity with RealChecker)",
+          "llrKeys": [
+            "INTERNAT-2587"
+          ]
         },
         "VIN-528": {
           "status": "Done",
@@ -1437,44 +1760,72 @@
         "VIN-527": {
           "status": "Done",
           "verSig": "",
-          "seen": 1794448119179,
-          "threadTs": "1793271819.488899"
+          "seen": 1794494019867,
+          "threadTs": "1793271819.488899",
+          "summary": "[Report] Fix provider check labels on /es, colour swatch URL and empty states (parity with RealChecker)",
+          "llrKeys": [
+            "INTERNAT-2585"
+          ]
         },
         "VIN-520": {
           "status": "Done",
           "verSig": "",
-          "seen": 1794448119179,
-          "threadTs": "1793272719.361649"
+          "seen": 1794509317811,
+          "threadTs": "1793272719.361649",
+          "summary": "[Sample report] Update page content to match the updated Figma design",
+          "llrKeys": [
+            "INTERNAT-2584"
+          ]
         },
         "VIN-369": {
           "status": "Done",
           "verSig": "1.0.1|2026-11-06|true",
-          "seen": 1794448119179,
-          "threadTs": "1793373520.713549"
+          "seen": 1794620917797,
+          "threadTs": "1793373520.713549",
+          "summary": "[Member area] Subscription in \"Pending payment\" status: \"Cancel subscription\" button is missing, and \"Update payment details\" is shown instead of a pay button",
+          "llrKeys": [
+            "INTERNAT-2588"
+          ]
         },
         "VIN-407": {
           "status": "Done",
-          "verSig": "1.0.2|2026-11-13|false",
-          "seen": 1794411219066,
-          "threadTs": "1793277219.493669"
+          "verSig": "1.0.2|2026-11-13|true",
+          "seen": 1794620917797,
+          "threadTs": "1793277219.493669",
+          "summary": "[ES] Members area: downloaded report PDF entirely in English",
+          "llrKeys": [
+            "INTERNAT-2589"
+          ]
         },
         "VIN-497": {
-          "status": "IN CODE REVIEW",
+          "status": "Done",
           "verSig": "",
-          "seen": 1794411219066,
-          "threadTs": "1793277219.328769"
+          "seen": 1794557919689,
+          "threadTs": "1793277219.328769",
+          "summary": "[ES] Sample Report page – many labels, values and dates not translated/localized",
+          "llrKeys": [
+            "INTERNAT-2590"
+          ]
         },
         "MYIMAGE-932": {
           "status": "Done",
           "verSig": "1.0.61|2026-11-02|true",
-          "seen": 1794448119179,
-          "threadTs": "1793363618.593939"
+          "seen": 1794593019367,
+          "threadTs": "1793363618.593939",
+          "summary": "Bulk image edit for crop image",
+          "llrKeys": [
+            "INTERNAT-2591"
+          ]
         },
         "PERSO-4288": {
           "status": "Done",
           "verSig": "1.99.0 - Members_Area_v2|2026-10-30|true",
-          "seen": 1794448119179,
-          "threadTs": "1793355519.526399"
+          "seen": 1794620917797,
+          "threadTs": "1793355519.526399",
+          "summary": "Members area revamp",
+          "llrKeys": [
+            "INTERNAT-2592"
+          ]
         },
         "AICHAT-1645": {
           "status": "Backlog",
@@ -1503,14 +1854,22 @@
         "PDFHELP-2651": {
           "status": "Done",
           "verSig": "PDF Help v1.4.0|2026-11-06|true",
-          "seen": 1794448119179,
-          "threadTs": "1793367219.039869"
+          "seen": 1794620917797,
+          "threadTs": "1793367219.039869",
+          "summary": "[FE/BE] Enable da, no, fi, pl locales across PDF Help",
+          "llrKeys": [
+            "INTERNAT-2602"
+          ]
         },
         "REALCHECK-580": {
           "status": "Done",
           "verSig": "FE 1.7.5|2026-11-02|true",
-          "seen": 1794448119179,
-          "threadTs": "1793373521.038529"
+          "seen": 1794620917797,
+          "threadTs": "1793373521.038529",
+          "summary": "Email from abandoned checkout is blocked on return instead of going to checkout",
+          "llrKeys": [
+            "INTERNAT-2604"
+          ]
         },
         "MYQRCODE-10458": {
           "status": "PENDING IMPLEMENTATION",
@@ -1531,10 +1890,14 @@
           "threadTs": "1793619218.045299"
         },
         "MYQRCODE-11170": {
-          "status": "PENDING QA",
+          "status": "QA",
           "verSig": "",
-          "seen": 1794420219115,
-          "threadTs": "1793824419.073419"
+          "seen": 1794582219417,
+          "threadTs": "1793824419.073419",
+          "summary": "Move checkout onto the payments SDK with Stripe",
+          "llrKeys": [
+            "INTERNAT-2605"
+          ]
         },
         "RESUME-2211": {
           "status": "Done",
@@ -1545,8 +1908,12 @@
         "IQTST-1023": {
           "status": "Done",
           "verSig": "1.13.0 - Compliance_Checkout_No_Checkboxes|2026-11-04|true",
-          "seen": 1794448119179,
-          "threadTs": "1793603917.826959"
+          "seen": 1794620917797,
+          "threadTs": "1793603917.826959",
+          "summary": "[BU Perso] BrainIQtest Compliance: checkout: legal text without checkboxes - US only",
+          "llrKeys": [
+            "INTERNAT-2608"
+          ]
         },
         "IQTST-930": {
           "status": "PENDING IMPLEMENTATION",
@@ -1562,45 +1929,73 @@
         },
         "MYQRCODE-11225": {
           "status": "Done",
-          "verSig": "2.4.6|2026-11-11|false",
-          "seen": 1794448119179,
-          "threadTs": "1793973818.870759"
+          "verSig": "2.4.6|2026-11-11|true",
+          "seen": 1794620917797,
+          "threadTs": "1793973818.870759",
+          "summary": "[Auth] Show the US sign-up disclaimer with blue, underlined legal links",
+          "llrKeys": [
+            "INTERNAT-2613"
+          ]
         },
         "MYQRCODE-11226": {
           "status": "Done",
-          "verSig": "2.4.6|2026-11-11|false",
-          "seen": 1794448119179,
-          "threadTs": "1793787517.982129"
+          "verSig": "2.4.6|2026-11-11|true",
+          "seen": 1794620917797,
+          "threadTs": "1793787517.982129",
+          "summary": "Show the US legal disclaimer on /checkout for the trial and the yearly plan",
+          "llrKeys": [
+            "INTERNAT-2614"
+          ]
         },
         "REALCHECK-751": {
           "status": "Done",
           "verSig": "FE 1.7.7|2026-11-05|true",
-          "seen": 1794448119179,
-          "threadTs": "1793716418.091959"
+          "seen": 1794620917797,
+          "threadTs": "1793716418.091959",
+          "summary": "Compliance: checkout: legal text without checkboxes - US only",
+          "llrKeys": [
+            "INTERNAT-2616"
+          ]
         },
         "REALCHECK-750": {
           "status": "Done",
           "verSig": "FE 1.7.7|2026-11-05|true",
-          "seen": 1794448119179,
-          "threadTs": "1793716418.253619"
+          "seen": 1794620917797,
+          "threadTs": "1793716418.253619",
+          "summary": "Compliance: legal links underline on sign-up - US only",
+          "llrKeys": [
+            "INTERNAT-2615"
+          ]
         },
         "PERSO-4363": {
           "status": "Done",
           "verSig": "1.101.0 - Compliance_Nov|2026-11-09|true",
-          "seen": 1794448119179,
-          "threadTs": "1793778518.439339"
+          "seen": 1794620917797,
+          "threadTs": "1793778518.439339",
+          "summary": "[BU Perso] Personality Compliance: 2 checkout checkboxes - US only",
+          "llrKeys": [
+            "INTERNAT-2618"
+          ]
         },
         "PERSO-4362": {
           "status": "Done",
           "verSig": "1.101.0 - Compliance_Nov|2026-11-09|true",
-          "seen": 1794448119179,
-          "threadTs": "1793778518.278449"
+          "seen": 1794620917797,
+          "threadTs": "1793778518.278449",
+          "summary": "[BU Perso] Personality Compliance: checkout CTA - US only",
+          "llrKeys": [
+            "INTERNAT-2617"
+          ]
         },
         "REALCHECK-722": {
           "status": "Done",
           "verSig": "FE 1.7.8|2026-11-10|true",
-          "seen": 1794448119179,
-          "threadTs": "1793792019.262789"
+          "seen": 1794620917797,
+          "threadTs": "1793792019.262789",
+          "summary": "[A/B] [DEV] Hero copy test: product category vs user outcome",
+          "llrKeys": [
+            "INTERNAT-2619"
+          ]
         },
         "MYIMAGE-1227": {
           "status": "To Do",
@@ -1611,38 +2006,62 @@
         "MYIMAGE-1224": {
           "status": "Done",
           "verSig": "1.0.62|2026-11-05|true",
-          "seen": 1794448119179,
-          "threadTs": "1793873920.134079"
+          "seen": 1794620917797,
+          "threadTs": "1793873920.134079",
+          "summary": "[BU Mobi] MyImage Compliance: legal links underline on sign-up - US only",
+          "llrKeys": [
+            "INTERNAT-2621"
+          ]
         },
         "AICHAT-1619": {
           "status": "Done",
           "verSig": "10.11.2026|2026-11-10|true",
-          "seen": 1794448119179,
-          "threadTs": "1793806418.197029"
+          "seen": 1794620917797,
+          "threadTs": "1793806418.197029",
+          "summary": "[BE] AC-3 + AC-7: Per-IP rate limit on register and user lookup, stop returning the internal id",
+          "llrKeys": [
+            "INTERNAT-2622"
+          ]
         },
         "PDFHELP-2730": {
           "status": "Done",
           "verSig": "PDF Help v1.4.0|2026-11-06|true",
-          "seen": 1794448119179,
-          "threadTs": "1793873919.972279"
+          "seen": 1794620917797,
+          "threadTs": "1793873919.972279",
+          "summary": "Invalid multiple uploading files bypass validation",
+          "llrKeys": [
+            "INTERNAT-2623"
+          ]
         },
         "VIN-376": {
           "status": "Done",
-          "verSig": "1.0.2|2026-11-13|false",
-          "seen": 1794411219066,
-          "threadTs": "1793954018.870069"
+          "verSig": "1.0.2|2026-11-13|true",
+          "seen": 1794620917797,
+          "threadTs": "1793954018.870069",
+          "summary": "[ES] Checkout: \"24-hour\" untranslated in trial terms, locked as a placeholder in Lokalise",
+          "llrKeys": [
+            "INTERNAT-2625"
+          ]
         },
         "REALCHECK-747": {
           "status": "Done",
           "verSig": "FE 1.7.8|2026-11-10|true",
-          "seen": 1794448119179,
-          "threadTs": "1793971119.996869"
+          "seen": 1794620917797,
+          "threadTs": "1793971119.996869",
+          "summary": "Update Terms of Use and Privacy Policy pages to include new funnels",
+          "llrKeys": [
+            "INTERNAT-2624"
+          ]
         },
         "PDFHELP-2536": {
-          "status": "PENDING QA",
-          "verSig": "PDF Help v1.5.0|2026-11-12|false",
-          "seen": 1794407619111,
-          "threadTs": "1793888319.481249"
+          "status": "Done",
+          "verSig": "PDF Help v1.5.0|2026-11-12|true",
+          "seen": 1794620917797,
+          "threadTs": "1793888319.481249",
+          "summary": "PDF25-Design Implementation Dashboard activation stepper",
+          "llrKeys": [
+            "INTERNAT-2626"
+          ]
         },
         "MYIMAGE-1058": {
           "status": "Backlog",
@@ -1671,14 +2090,22 @@
         "AICHAT-1317": {
           "status": "Done",
           "verSig": "10.11.2026|2026-11-10|true",
-          "seen": 1794448119179,
-          "threadTs": "1793957619.492489"
+          "seen": 1794620917797,
+          "threadTs": "1793957619.492489",
+          "summary": "Image size / aspect ratio / models",
+          "llrKeys": [
+            "INTERNAT-2628"
+          ]
         },
         "AICHAT-1319": {
           "status": "Done",
           "verSig": "10.11.2026|2026-11-10|true",
-          "seen": 1794448119179,
-          "threadTs": "1794218620.206089"
+          "seen": 1794620917797,
+          "threadTs": "1794218620.206089",
+          "summary": "Image retry",
+          "llrKeys": [
+            "INTERNAT-2629"
+          ]
         },
         "VIN-578": {
           "status": "Done",
@@ -1688,27 +2115,43 @@
         },
         "PERSO-4545": {
           "status": "IN IMPLEMENTATION",
-          "verSig": "",
-          "seen": 1794399517413,
-          "threadTs": "1793969318.250249"
+          "verSig": "1.104.0 - A/BTests_Checkout_Payment_Buttons_Remove_Name_Checkout|2026-11-13|true",
+          "seen": 1794620917797,
+          "threadTs": "1793969318.250249",
+          "summary": "[PERSO-019] Checkout: Remove the name field",
+          "llrKeys": [
+            "INTERNAT-2631"
+          ]
         },
         "AICHAT-1636": {
           "status": "Done",
           "verSig": "10.11.2026|2026-11-10|true",
-          "seen": 1794448119179,
-          "threadTs": "1793973819.030089"
+          "seen": 1794620917797,
+          "threadTs": "1793973819.030089",
+          "summary": "[Dev] /images: rotating placeholder suggestions behind a 50/50 flag",
+          "llrKeys": [
+            "INTERNAT-2632"
+          ]
         },
         "IQTST-998": {
           "status": "PENDING IMPLEMENTATION",
           "verSig": "",
-          "seen": 1794054817379,
-          "threadTs": ""
+          "seen": 1794575919743,
+          "threadTs": "",
+          "summary": "[BrainIQ] A/B test: updated members area",
+          "llrKeys": [
+            "INTERNAT-2633"
+          ]
         },
         "AICHAT-1729": {
-          "status": "BLOCKED",
-          "verSig": "12.11.2026|2026-11-11|false",
-          "seen": 1794448119179,
-          "threadTs": "1793985517.955139"
+          "status": "In Progress",
+          "verSig": "17.11.2026|2026-11-17|false",
+          "seen": 1794620917797,
+          "threadTs": "1793985517.955139",
+          "summary": "[BE][FE] Images: Redesign the share modal",
+          "llrKeys": [
+            "INTERNAT-2636"
+          ]
         },
         "AICHAT-1725": {
           "status": "Backlog",
@@ -1723,34 +2166,54 @@
           "threadTs": ""
         },
         "MYIMAGE-1236": {
-          "status": "Backlog",
-          "verSig": "",
-          "seen": 1794054817379,
-          "threadTs": ""
+          "status": "QA dev",
+          "verSig": "1.0.65|2026-11-19|false",
+          "seen": 1794620917797,
+          "threadTs": "1794572322.129179",
+          "summary": "[i18n] Resizer landing: EN source «Crop size» → «Output size»",
+          "llrKeys": [
+            "INTERNAT-2637"
+          ]
         },
         "MYIMAGE-1241": {
-          "status": "Backlog",
-          "verSig": "",
-          "seen": 1794059319120,
-          "threadTs": ""
+          "status": "To Do",
+          "verSig": "1.0.65|2026-11-19|false",
+          "seen": 1794620917797,
+          "threadTs": "1794572321.353729",
+          "summary": "[Login] Password reset still emails a plain-text password instead of a one-time reset link (prod)",
+          "llrKeys": [
+            "INTERNAT-2638"
+          ]
         },
         "PDFHELP-2572": {
           "status": "Done",
           "verSig": "PDF Help v1.4.0|2026-11-06|true",
-          "seen": 1794448119179,
-          "threadTs": ""
+          "seen": 1794620917797,
+          "threadTs": "1794481430.831399",
+          "summary": "[BU PDF] PDFHelp Compliance: 1 checkout checkbox below buttons - US only (non-forms funnels)",
+          "llrKeys": [
+            "INTERNAT-2639"
+          ]
         },
         "AICHAT-1694": {
           "status": "Done",
           "verSig": "10.11.2026|2026-11-10|true",
-          "seen": 1794448119179,
-          "threadTs": "1794249220.365189"
+          "seen": 1794620917797,
+          "threadTs": "1794249220.365189",
+          "summary": "[A/B/C test] Create pricing campaigns for the A/B/C pricing test",
+          "llrKeys": [
+            "INTERNAT-2640"
+          ]
         },
         "MYIMAGE-1243": {
-          "status": "Backlog",
+          "status": "Ready for estimate",
           "verSig": "",
-          "seen": 1794065619037,
-          "threadTs": ""
+          "seen": 1794620917797,
+          "threadTs": "1794572320.375569",
+          "summary": "[Billing] Dates still shown as «11.13.2026» (US order with dots) — use the user's locale format",
+          "llrKeys": [
+            "INTERNAT-2641"
+          ]
         },
         "MYQRCODE-11248": {
           "status": "PENDING IMPLEMENTATION",
@@ -1759,16 +2222,24 @@
           "threadTs": ""
         },
         "MYIMAGE-1244": {
-          "status": "Backlog",
+          "status": "Ready for estimate",
           "verSig": "",
-          "seen": 1794307717397,
-          "threadTs": ""
+          "seen": 1794620917797,
+          "threadTs": "1794572322.288589",
+          "summary": "[Pricing] Public pricing page says «per month», but the subscription renews every 4 weeks",
+          "llrKeys": [
+            "INTERNAT-2643"
+          ]
         },
         "IQTST-966": {
-          "status": "IN IMPLEMENTATION",
-          "verSig": "1.15.0 - A/BTest_Celebrity_Picker|2026-11-12|false",
-          "seen": 1794393219071,
-          "threadTs": "1794307718.320989"
+          "status": "PENDING QA",
+          "verSig": "1.15.0 - A/BTest_Celebrity_Picker|2026-11-16|false",
+          "seen": 1794620917797,
+          "threadTs": "1794307718.320989",
+          "summary": "[Build] [BRAINIQTEST-003] Post-quiz: Celebrity picker with picked person shown on the paywall hero",
+          "llrKeys": [
+            "INTERNAT-2644"
+          ]
         },
         "VIN-623": {
           "status": "Done",
@@ -1777,43 +2248,1217 @@
           "threadTs": "1794304118.155999"
         },
         "PDFHELP-2708": {
-          "status": "PENDING QA",
-          "verSig": "PDF Help v1.5.0|2026-11-12|false",
-          "seen": 1794407619111,
-          "threadTs": "1794322120.274289"
+          "status": "Done",
+          "verSig": "PDF Help v1.5.0|2026-11-12|true",
+          "seen": 1794620917797,
+          "threadTs": "1794322120.274289",
+          "summary": "[i18n] Subscription cancellation email: greeting shows English fallback name \"Customer\"",
+          "llrKeys": [
+            "INTERNAT-2649"
+          ]
         },
         "AICHAT-1653": {
-          "status": "QA dev",
-          "verSig": "12.11.2026|2026-11-11|false",
-          "seen": 1794448119179,
-          "threadTs": ""
+          "status": "Done",
+          "verSig": "13.11.2026|2026-11-13|true",
+          "seen": 1794620917797,
+          "threadTs": "1794470620.566969",
+          "summary": "[BU AIChat] ChatbotOnline Compliance: legal links underline on sign-up - ALL locations",
+          "llrKeys": [
+            "INTERNAT-2651"
+          ]
         },
         "AICHAT-1678": {
-          "status": "Ready for STG",
-          "verSig": "12.11.2026|2026-11-11|false",
-          "seen": 1794448119179,
-          "threadTs": "1794322120.435359"
+          "status": "QA PROD",
+          "verSig": "13.11.2026|2026-11-13|true",
+          "seen": 1794620917797,
+          "threadTs": "1794322120.435359",
+          "summary": "[BU AIChat] ChatbotOnline Compliance: checkout: legal text without checkboxes - US only",
+          "llrKeys": [
+            "INTERNAT-2652"
+          ]
         },
         "AICHAT-1732": {
-          "status": "QA dev",
-          "verSig": "12.11.2026|2026-11-11|false",
-          "seen": 1794448119179,
-          "threadTs": ""
+          "status": "Done",
+          "verSig": "13.11.2026|2026-11-13|true",
+          "seen": 1794620917797,
+          "threadTs": "1794470620.721289",
+          "summary": "[FE] Drag & drop for images on the Images page",
+          "llrKeys": [
+            "INTERNAT-2654"
+          ]
         },
         "IQTST-1045": {
-          "status": "PENDING QA",
-          "verSig": "1.15.0 - Posthog_Alignment_Footer_Update|2026-11-12|false",
-          "seen": 1794448119179,
-          "threadTs": "1794402218.026919"
+          "status": "Done",
+          "verSig": "1.15.0 - Posthog_Alignment_Footer_Update|2026-11-12|true",
+          "seen": 1794620917797,
+          "threadTs": "1794402218.026919",
+          "summary": "[BrainIQ] Footer: add legal entity and address (Google Ads consistency)",
+          "llrKeys": [
+            "INTERNAT-2655"
+          ]
         },
         "REALCHECK-235": {
           "status": "Done",
           "verSig": "",
-          "seen": 1794448119179,
-          "threadTs": ""
+          "seen": 1794510219533,
+          "threadTs": "",
+          "summary": "Copy update",
+          "llrKeys": [
+            "INTERNAT-2142"
+          ]
+        },
+        "AICHAT-1722": {
+          "status": "QA PROD",
+          "verSig": "13.11.2026|2026-11-13|true",
+          "seen": 1794620917797,
+          "threadTs": "1794470620.404399",
+          "summary": "[FE] Images: Zoom and pan in the open image view",
+          "llrKeys": [
+            "INTERNAT-2657"
+          ]
+        },
+        "MYQRCODE-11267": {
+          "status": "PENDING PROD",
+          "verSig": "2.4.7||false",
+          "seen": 1794576819277,
+          "threadTs": "1794481430.657309",
+          "summary": "Checkout - legal consent text wraps early leaving an empty gap on the right on MyQRCode",
+          "llrKeys": [
+            "INTERNAT-2658"
+          ]
+        },
+        "MYIMAGE-1261": {
+          "status": "To Do",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "[Billing] Localize the \"Reactivate subscription\" confirmation dialog (shown in English on non-EN locales)",
+          "llrKeys": [
+            "INTERNAT-2661"
+          ]
+        },
+        "MYIMAGE-1251": {
+          "status": "qa stg",
+          "verSig": "1.0.64|2026-11-16|false",
+          "seen": 1794620917797,
+          "threadTs": "1794499418.628429",
+          "summary": "Align PostHog events with the PostHog Event Standard (frontend + backend)",
+          "llrKeys": [
+            "INTERNAT-2660"
+          ]
+        },
+        "MYIMAGE-1255": {
+          "status": "qa stg",
+          "verSig": "1.0.64|2026-11-16|false",
+          "seen": 1794620917797,
+          "threadTs": "1794480520.233129",
+          "summary": "[FE] Checkout: legal text without checkboxes - US only",
+          "llrKeys": [
+            "INTERNAT-2659"
+          ]
+        },
+        "MYIMAGE-1242": {
+          "status": "qa stg",
+          "verSig": "1.0.64|2026-11-16|false",
+          "seen": 1794620917797,
+          "threadTs": "1794574119.962569",
+          "summary": "[Checkout] Legal note is missing the statement descriptor, support email and phone required by the Checkout page - NON US only",
+          "llrKeys": [
+            "INTERNAT-2662"
+          ]
+        },
+        "MYQRCODE-11274": {
+          "status": "PENDING IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "[Builder] Warn before leaving the QR editor with unsaved changes",
+          "llrKeys": [
+            "INTERNAT-2664"
+          ]
+        },
+        "PERSO-4510": {
+          "status": "IN IMPLEMENTATION",
+          "verSig": "1.104.0 - A/BTests_Checkout_Payment_Buttons_Remove_Name_Checkout|2026-11-13|true",
+          "seen": 1794620917797,
+          "threadTs": "1794568718.512499",
+          "summary": "[PERSO-016] Checkout: Payment method buttons",
+          "llrKeys": [
+            "INTERNAT-2663"
+          ]
+        },
+        "PDFHELP-2763": {
+          "status": "To Do",
+          "verSig": "",
+          "seen": 1794574119491,
+          "threadTs": "",
+          "summary": "PDF25-Dev Stepper: auto-complete steps on real actions + step 1 not done for users with 0 files",
+          "llrKeys": [
+            "INTERNAT-2665"
+          ]
+        },
+        "MYIMAGE-1264": {
+          "status": "Ready for estimate",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "1794572321.154569",
+          "summary": "[FR][DE][PL][PT][IT][NL][ES] Abandoned-cart emails (Klaviyo): translation errors",
+          "llrKeys": [
+            "INTERNAT-2666"
+          ]
+        },
+        "MYIMAGE-1265": {
+          "status": "Ready for estimate",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "1794572320.994399",
+          "summary": "[ALL] Abandoned-cart emails (Klaviyo): new Email 1 is English-only, and 11 site languages get no emails",
+          "llrKeys": [
+            "INTERNAT-2667"
+          ]
+        },
+        "MYQRCODE-11269": {
+          "status": "PENDING IMPLEMENTATION",
+          "verSig": "2.4.7|2026-11-18|false",
+          "seen": 1794620917797,
+          "threadTs": "1794567819.069579",
+          "summary": "[Auth] Stop Google, Apple and Facebook sign-in taps doing nothing or showing a false error",
+          "llrKeys": [
+            "INTERNAT-2668"
+          ]
+        },
+        "MYIMAGE-1267": {
+          "status": "Ready for estimate",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "1794572320.844779",
+          "summary": "[EN] Abandoned-cart emails (Klaviyo): fix the EN source before translation, and the footer address",
+          "llrKeys": [
+            "INTERNAT-2669"
+          ]
+        },
+        "DATA-536": {
+          "status": "DRAFT",
+          "verSig": "",
+          "seen": 1794562419737,
+          "threadTs": "",
+          "summary": "[DE][Ingestion] Payments backend new tables - fraud payment alerts and country based pricing",
+          "llrKeys": [
+            "DATA-507"
+          ]
+        },
+        "REALCHECK-821": {
+          "status": "PENDING QA",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "1794580419.937979",
+          "summary": "Deep Search – Email when the summary is ready",
+          "llrKeys": [
+            "INTERNAT-2671"
+          ]
+        },
+        "REALCHECK-819": {
+          "status": "PENDING QA",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "1794606518.435689",
+          "summary": "Deep Search – Flow A: pop-up after the report opens",
+          "llrKeys": [
+            "INTERNAT-2670"
+          ]
+        },
+        "MYQRCODE-11275": {
+          "status": "Done",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "1794567819.226129",
+          "summary": "[Auth] Stop Google sign-in taps doing nothing when the popup or script is blocked",
+          "llrKeys": [
+            "INTERNAT-2672"
+          ]
+        },
+        "AICHAT-1096": {
+          "status": null,
+          "verSig": null,
+          "seen": 1794562419737,
+          "threadTs": "1794562421.903209",
+          "summary": "[BE][FE][Background Remover] Build the target image funnel: upload, prompt, blurred result, email, paywall",
+          "llrKeys": [
+            "INTERNAT-2235"
+          ]
+        },
+        "AICHAT-952": {
+          "status": null,
+          "verSig": null,
+          "seen": 1794562419737,
+          "threadTs": "1794562422.058799",
+          "summary": "[BE] Image Enhancer — new standalone tool page",
+          "llrKeys": [
+            "INTERNAT-2221"
+          ]
+        },
+        "PERSO-4470": {
+          "status": "IN IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "Order localization keys",
+          "llrKeys": [
+            "INTERNAT-2673"
+          ]
+        },
+        "MYIMAGE-1278": {
+          "status": "Ready for estimate",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "1794572321.511149",
+          "summary": "[KO][UK][VI][NO][PL] Transactional emails: small punctuation and wording issues",
+          "llrKeys": [
+            "INTERNAT-2680"
+          ]
+        },
+        "MYIMAGE-1277": {
+          "status": "Ready for estimate",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "1794572321.824029",
+          "summary": "[ALL] Email templates: page title hard-coded in English, credits email titled «Payment Confirmation», no lang attribute",
+          "llrKeys": [
+            "INTERNAT-2679"
+          ]
+        },
+        "MYIMAGE-1276": {
+          "status": "Ready for estimate",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "1794572321.975469",
+          "summary": "[EN] Transactional emails: source copy errors in payment confirmation and cancellation emails",
+          "llrKeys": [
+            "INTERNAT-2678"
+          ]
+        },
+        "MYIMAGE-1275": {
+          "status": "Ready for estimate",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "1794572321.666589",
+          "summary": "[DA] Transactional emails: payment confirmation misses a full stop, reset password misses «på»",
+          "llrKeys": [
+            "INTERNAT-2677"
+          ]
+        },
+        "MYIMAGE-1274": {
+          "status": "Ready for estimate",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "1794572320.531799",
+          "summary": "[DE] Transactional emails: missing space, missing «dass» and wrong words in payment, credits and welcome emails",
+          "llrKeys": [
+            "INTERNAT-2676"
+          ]
+        },
+        "MYIMAGE-1273": {
+          "status": "Done",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "1794572320.685289",
+          "summary": "[ALL] Payment confirmation email: billing text promises access to «test results» (EN source and 16 translations)",
+          "llrKeys": [
+            "INTERNAT-2674",
+            "INTERNAT-2675"
+          ]
+        },
+        "VIN-651": {
+          "status": "PENDING QA",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "[DEV] [Pricing] Show full billing details on the plan card and fix the broken last bullet",
+          "llrKeys": [
+            "INTERNAT-2681"
+          ]
+        },
+        "VIN-652": {
+          "status": "PENDING IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "1794592119.836769",
+          "summary": "[DEV] [Pricing] Make `billingTermsMultiDayTrial` a plural key on `trialDays`",
+          "llrKeys": [
+            "INTERNAT-2682"
+          ]
+        },
+        "VIN-405": {
+          "status": "IN IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "[ES] Members area: prices not in Spanish format (\"$1.45\", \"PLN 6.95\")",
+          "llrKeys": [
+            "INTERNAT-2695"
+          ]
+        },
+        "VIN-395": {
+          "status": "IN IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "[ES] Home: \"Valor de mercado\" card shows prices in non-Spanish format (\"$26 964\")",
+          "llrKeys": [
+            "INTERNAT-2691"
+          ]
+        },
+        "VIN-386": {
+          "status": "IN IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "[ES] Pricing & Checkout: prices shown in US format (\"$1.95\", \"$49.95\")",
+          "llrKeys": [
+            "INTERNAT-2687"
+          ]
+        },
+        "VIN-382": {
+          "status": "IN IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "[ES] Home: features showcase sales history uses US price, number and date formats",
+          "llrKeys": [
+            "INTERNAT-2684"
+          ]
+        },
+        "VIN-627": {
+          "status": "PENDING IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "[ES] Home hero: \"Registros del cuentakilómetros\" card title truncated to \"Registros del cuenta…\"",
+          "llrKeys": [
+            "INTERNAT-2698"
+          ]
+        },
+        "VIN-415": {
+          "status": "PENDING IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "[ES] Homepage: feature tab cards have a fixed size with no room for longer translations",
+          "llrKeys": [
+            "INTERNAT-2697"
+          ]
+        },
+        "VIN-412": {
+          "status": "PENDING IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "[ES] Funnel step 5: percentage sign hardcoded in progress bar (all values, e.g. \"50%\")",
+          "llrKeys": [
+            "INTERNAT-2696"
+          ]
+        },
+        "VIN-403": {
+          "status": "PENDING IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "[ES] About us: hero subtitle breaks into lines as if in a narrow container (orphan words \"contrastada.\", \"usar.\")",
+          "llrKeys": [
+            "INTERNAT-2694"
+          ]
+        },
+        "VIN-402": {
+          "status": "PENDING IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "[ES] About us: impact numbers hardcoded (\"8 800 000+\"), not formatted for the locale",
+          "llrKeys": [
+            "INTERNAT-2693"
+          ]
+        },
+        "VIN-401": {
+          "status": "PENDING IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "[ES] About us: brand name spelled three ways (\"Vinready\", \"VINReady\", \"VinReady\"), also in English source",
+          "llrKeys": [
+            "INTERNAT-2692"
+          ]
+        },
+        "VIN-393": {
+          "status": "PENDING IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "[ES] Home: \"Historial de propietarios\" card uses US thousands separator (\"3,634 km\")",
+          "llrKeys": [
+            "INTERNAT-2690"
+          ]
+        },
+        "VIN-389": {
+          "status": "PENDING IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "[ES] Error page: 500 illustration has \"Oops!\" baked in",
+          "llrKeys": [
+            "INTERNAT-2689"
+          ]
+        },
+        "VIN-388": {
+          "status": "PENDING IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "[ES] Funnel step 5: images have English text baked in",
+          "llrKeys": [
+            "INTERNAT-2688"
+          ]
+        },
+        "VIN-385": {
+          "status": "PENDING IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "[ES] Home (mobile): \"N.º de bastidor\" tab label truncated in the search box above the footer",
+          "llrKeys": [
+            "INTERNAT-2686"
+          ]
+        },
+        "VIN-383": {
+          "status": "PENDING IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "[ES] Home: vehicle specs show \"País de la planta de fabricación\" in Turkish with broken encoding",
+          "llrKeys": [
+            "INTERNAT-2685"
+          ]
+        },
+        "VIN-380": {
+          "status": "PENDING IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "[ES] Home: stats use US thousands separator (\"3,700,000+\")",
+          "llrKeys": [
+            "INTERNAT-2683"
+          ]
+        },
+        "VIN-654": {
+          "status": "DRAFT",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "[Offer] Promo banner hardcodes \"$1.45\" in the copy instead of the visitor's offer price and currency",
+          "llrKeys": [
+            "INTERNAT-2699"
+          ]
+        },
+        "REALCHECK-822": {
+          "status": "IN IMPLEMENTATION",
+          "verSig": "",
+          "seen": 1794620917797,
+          "threadTs": "",
+          "summary": "Deep Search – Predefined messages for every reason",
+          "llrKeys": [
+            "INTERNAT-2700"
+          ]
         }
       },
-      "seeded": true
+      "seeded": true,
+      "lqa": {
+        "INTERNAT-2652": {
+          "value": "Skipped",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2655": {
+          "value": "Skipped",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2659": {
+          "value": "Skipped",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2662": {
+          "value": "To do",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2599": {
+          "value": "Added to test plan",
+          "seen": 1794498519485
+        },
+        "INTERNAT-2626": {
+          "value": "To do",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2480": {
+          "value": "Added to test plan",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2661": {
+          "value": "N/A",
+          "seen": 1794593019367
+        },
+        "INTERNAT-2660": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2658": {
+          "value": "N/A",
+          "seen": 1794576819277
+        },
+        "INTERNAT-2657": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2654": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2142": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2622": {
+          "value": "Skipped",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2632": {
+          "value": "Skipped",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2656": {
+          "value": "N/A",
+          "seen": 1794498519485
+        },
+        "INTERNAT-2614": {
+          "value": "Skipped",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2557": {
+          "value": "Added to test plan",
+          "seen": 1794593019367
+        },
+        "INTERNAT-2651": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2628": {
+          "value": "Skipped",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2636": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2629": {
+          "value": "Skipped",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2640": {
+          "value": "Tested",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2619": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2613": {
+          "value": "Skipped",
+          "seen": 1794585819319
+        },
+        "INTERNAT-2617": {
+          "value": "Skipped",
+          "seen": 1794584919516
+        },
+        "INTERNAT-2618": {
+          "value": "Skipped",
+          "seen": 1794487719724
+        },
+        "INTERNAT-2644": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2602": {
+          "value": "Added to test plan",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2543": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2624": {
+          "value": "Skipped",
+          "seen": 1794593019367
+        },
+        "INTERNAT-2556": {
+          "value": "Skipped",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2639": {
+          "value": "Skipped",
+          "seen": 1794485917832
+        },
+        "INTERNAT-2230": {
+          "value": "Skipped",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2608": {
+          "value": "Skipped",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2577": {
+          "value": "Skipped",
+          "seen": 1794485017948
+        },
+        "INTERNAT-2587": {
+          "value": "To do",
+          "seen": 1794485017948
+        },
+        "INTERNAT-2584": {
+          "value": "To do",
+          "seen": 1794485017948
+        },
+        "INTERNAT-2585": {
+          "value": "Skipped",
+          "seen": 1794485017948
+        },
+        "INTERNAT-2633": {
+          "value": "N/A",
+          "seen": 1794485017948
+        },
+        "INTERNAT-2631": {
+          "value": "N/A",
+          "seen": 1794485017948
+        },
+        "INTERNAT-2562": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2325": {
+          "value": "Skipped",
+          "seen": 1794593019367
+        },
+        "INTERNAT-2367": {
+          "value": "Skipped",
+          "seen": 1794593019367
+        },
+        "INTERNAT-2588": {
+          "value": "N/A",
+          "seen": 1794593019367
+        },
+        "INTERNAT-2590": {
+          "value": "N/A",
+          "seen": 1794485017948
+        },
+        "INTERNAT-2592": {
+          "value": "To do",
+          "seen": 1794485017948
+        },
+        "INTERNAT-2604": {
+          "value": "To do",
+          "seen": 1794485017948
+        },
+        "INTERNAT-2623": {
+          "value": "To do",
+          "seen": 1794593019367
+        },
+        "INTERNAT-2616": {
+          "value": "Skipped",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2615": {
+          "value": "Skipped",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2621": {
+          "value": "Skipped",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2424": {
+          "value": "To do",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2425": {
+          "value": "To do",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2426": {
+          "value": "To do",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2573": {
+          "value": "Added to test plan",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2269": {
+          "value": "Tested",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2497": {
+          "value": "To do",
+          "seen": 1794593019367
+        },
+        "INTERNAT-2550": {
+          "value": "Added to test plan",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2546": {
+          "value": "Added to test plan",
+          "seen": 1794605619397
+        },
+        "INTERNAT-2567": {
+          "value": "Tested",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2591": {
+          "value": "Skipped",
+          "seen": 1794485017948
+        },
+        "INTERNAT-2364": {
+          "value": "Skipped",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2583": {
+          "value": "Skipped",
+          "seen": 1794485017948
+        },
+        "INTERNAT-2580": {
+          "value": "To do",
+          "seen": 1794593019367
+        },
+        "INTERNAT-2579": {
+          "value": "Skipped",
+          "seen": 1794569619599
+        },
+        "INTERNAT-2529": {
+          "value": "To do",
+          "seen": 1794567818012
+        },
+        "INTERNAT-2575": {
+          "value": "Tested",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2478": {
+          "value": "Tested",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2487": {
+          "value": "Tested",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2559": {
+          "value": "Tested",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2526": {
+          "value": "Tested",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2547": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2527": {
+          "value": "Skipped",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2560": {
+          "value": "Skipped",
+          "seen": 1794593019367
+        },
+        "INTERNAT-2545": {
+          "value": "Added to test plan",
+          "seen": 1794593019367
+        },
+        "INTERNAT-2525": {
+          "value": "Skipped",
+          "seen": 1794569619599
+        },
+        "INTERNAT-2220": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2554": {
+          "value": "Skipped",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2228": {
+          "value": "Skipped",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2507": {
+          "value": "Skipped",
+          "seen": 1794590319203
+        },
+        "INTERNAT-2553": {
+          "value": "Skipped",
+          "seen": 1794593019367
+        },
+        "INTERNAT-2375": {
+          "value": "N/A",
+          "seen": 1794611919382
+        },
+        "INTERNAT-2031": {
+          "value": "To do",
+          "seen": 1794593019367
+        },
+        "INTERNAT-2021": {
+          "value": "To do",
+          "seen": 1794593019367
+        },
+        "INTERNAT-2064": {
+          "value": "To do",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2371": {
+          "value": "N/A",
+          "seen": 1794593019367
+        },
+        "INTERNAT-2500": {
+          "value": "Skipped",
+          "seen": 1794485017948
+        },
+        "INTERNAT-2327": {
+          "value": "N/A",
+          "seen": 1794593019367
+        },
+        "INTERNAT-2324": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2429": {
+          "value": "N/A",
+          "seen": 1794569619599
+        },
+        "INTERNAT-2664": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2663": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2581": {
+          "value": "N/A",
+          "seen": 1794570517882
+        },
+        "INTERNAT-2221": {
+          "value": "Tested",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2235": {
+          "value": "Tested",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2411": {
+          "value": "Tested",
+          "seen": 1794620917797
+        },
+        "INTERNAT-1642": {
+          "value": "Added to test plan",
+          "seen": 1794571419590
+        },
+        "INTERNAT-1648": {
+          "value": "Added to test plan",
+          "seen": 1794571419590
+        },
+        "INTERNAT-1650": {
+          "value": "Added to test plan",
+          "seen": 1794571419590
+        },
+        "INTERNAT-1659": {
+          "value": "Added to test plan",
+          "seen": 1794571419590
+        },
+        "INTERNAT-1678": {
+          "value": "Added to test plan",
+          "seen": 1794571419590
+        },
+        "INTERNAT-1680": {
+          "value": "Added to test plan",
+          "seen": 1794571419590
+        },
+        "INTERNAT-1822": {
+          "value": "Added to test plan",
+          "seen": 1794571419590
+        },
+        "INTERNAT-1827": {
+          "value": "Added to test plan",
+          "seen": 1794571419590
+        },
+        "INTERNAT-1857": {
+          "value": "Added to test plan",
+          "seen": 1794571419590
+        },
+        "INTERNAT-1865": {
+          "value": "Added to test plan",
+          "seen": 1794571419590
+        },
+        "INTERNAT-1869": {
+          "value": "Added to test plan",
+          "seen": 1794571419590
+        },
+        "INTERNAT-1871": {
+          "value": "Added to test plan",
+          "seen": 1794571419590
+        },
+        "INTERNAT-1962": {
+          "value": "Added to test plan",
+          "seen": 1794571419590
+        },
+        "INTERNAT-2045": {
+          "value": "Added to test plan",
+          "seen": 1794571419590
+        },
+        "INTERNAT-2541": {
+          "value": "Added to test plan",
+          "seen": 1794571419590
+        },
+        "INTERNAT-2605": {
+          "value": "N/A",
+          "seen": 1794582219417
+        },
+        "INTERNAT-2649": {
+          "value": "N/A",
+          "seen": 1794487719724
+        },
+        "INTERNAT-2667": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2666": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2665": {
+          "value": "N/A",
+          "seen": 1794574119491
+        },
+        "INTERNAT-2668": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2669": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2524": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2586": {
+          "value": "To do",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2646": {
+          "value": "To do",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2653": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2671": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2670": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2308": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2672": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2673": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2600": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2680": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2679": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2678": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2677": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2676": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2675": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2674": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2638": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2637": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2641": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2643": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2561": {
+          "value": "To do",
+          "seen": 1794593019367
+        },
+        "INTERNAT-2625": {
+          "value": "Skipped",
+          "seen": 1794584919516
+        },
+        "INTERNAT-2611": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2681": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2682": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2691": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2684": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2695": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2687": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2698": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2697": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2696": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2694": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2693": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2692": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2690": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2689": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2688": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2686": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2685": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2683": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2699": {
+          "value": "N/A",
+          "seen": 1794620917797
+        },
+        "INTERNAT-2700": {
+          "value": "N/A",
+          "seen": 1794620917797
+        }
+      },
+      "lqaSeeded": true,
+      "versions": {
+        "25426": {
+          "threadTs": "1794493120.750109",
+          "seen": 1794493120895
+        },
+        "25439": {
+          "threadTs": "1794593918.191189",
+          "seen": 1794593918320
+        },
+        "25446": {
+          "threadTs": "1794492220.261059",
+          "seen": 1794492220385
+        },
+        "25450": {
+          "threadTs": "1794593019.840589",
+          "seen": 1794593019966
+        },
+        "25451": {
+          "threadTs": "1794584019.935029",
+          "seen": 1794584020062
+        },
+        "25453": {
+          "threadTs": "1794494920.157829",
+          "seen": 1794494920282
+        },
+        "25454": {
+          "threadTs": "1794571420.109199",
+          "seen": 1794571420243
+        },
+        "25503": {
+          "threadTs": "1794570518.376969",
+          "seen": 1794570518498
+        }
+      }
     }
   },
   "pinData": null,
@@ -1846,7 +3491,7 @@
     }
   ],
   "activeVersion": {
-    "versionId": "9180e0f1-159e-4dea-a77f-b1c0ae0b6e19",
+    "versionId": "7462132c-eb3d-45c6-81a9-c11e675224cf",
     "workflowId": "9h7U1BIqszUNP6Do",
     "nodes": [
       {
@@ -1922,7 +3567,7 @@
         "parameters": {
           "mode": "runOnceForAllItems",
           "language": "javaScript",
-          "jsCode": "const state = $getWorkflowStaticData('global');\nif (!state.issues) state.issues = {};\nconst firstRun = !state.seeded;\nconst now = Date.now();\nconst esc = function (s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };\nconst base = 'https://futuremedia.atlassian.net/browse/';\nconst issues = ($input.first().json.issues) || [];\nconst out = [];\nfor (const it of issues) {\n  const f = it.fields || {};\n  const llrs = (f.issuelinks || []).filter(function (l) { return l.type && l.type.id === '10079' && l.outwardIssue; }).map(function (l) { return l.outwardIssue; });\n  if (!llrs.length) continue;\n  const status = f.status ? f.status.name : '';\n  const versions = (f.fixVersions || []).map(function (v) { return { name: v.name, releaseDate: v.releaseDate || '', released: !!v.released }; });\n  const sigOf = function (v) { return v.name + '|' + v.releaseDate + '|' + v.released; };\n  const verSig = versions.map(sigOf).sort().join(';');\n  const prev = state.issues[it.key];\n  state.issues[it.key] = { status: status, verSig: verSig, seen: now, threadTs: prev && prev.threadTs ? prev.threadTs : '' };\n  if (firstRun || !prev) continue;\n  const changes = [];\n  if (prev.status !== status) {\n    const prodNote = status === 'QA PROD' ? ' :rocket: _deployed to prod_' : '';\n    changes.push('Status: ' + esc(prev.status) + ' → *' + esc(status) + '*' + prodNote);\n  }\n  if (prev.verSig !== verSig) {\n    const prevSigs = prev.verSig ? prev.verSig.split(';') : [];\n    for (const v of versions) {\n      const p = prevSigs.find(function (s) { return s.indexOf(v.name + '|') === 0; });\n      if (!p) changes.push('Fix version added: *' + esc(v.name) + '*' + (v.releaseDate ? ' (planned release ' + v.releaseDate + ')' : ''));\n      else if (v.released && p.slice(-5) !== '|true') changes.push(':rocket: Version *' + esc(v.name) + '* *released*' + (v.releaseDate ? ' on *' + v.releaseDate + '*' : ''));\n      else if (p !== sigOf(v)) changes.push('Fix version *' + esc(v.name) + '* updated (release date ' + (v.releaseDate || 'not set') + ')');\n    }\n  }\n  if (!changes.length) continue;\n  const verLine = versions.length ? versions.map(function (v) { return esc(v.name) + ' (' + (v.releaseDate || 'no date') + (v.released ? ', released' : ', not released') + ')'; }).join(', ') : 'none';\n  const llrLine = llrs.map(function (l) { const st = l.fields && l.fields.status ? l.fields.status.name : ''; return '<' + base + l.key + '|' + l.key + '>' + (st ? ' (' + esc(st) + ')' : ''); }).join(', ');\n  const text = ':bell: *<' + base + it.key + '|' + it.key + '>* – ' + esc(f.summary) + '\\n' + changes.join('\\n') + '\\nFix version: ' + verLine + '\\nLocalization ticket: ' + llrLine;\n  out.push({ json: { key: it.key, status: status, llrKeys: llrs.map(function (l) { return l.key; }), threadTs: state.issues[it.key].threadTs, changesText: changes.join('\\n'), text: text } });\n}\nfor (const k of Object.keys(state.issues)) { if (now - (state.issues[k].seen || 0) > 90 * 86400000) delete state.issues[k]; }\nstate.seeded = true;\nreturn out;\n"
+          "jsCode": "const state = $getWorkflowStaticData('global');\nif (!state.issues) state.issues = {};\nif (!state.lqa) state.lqa = {};\nif (!state.versions) state.versions = {};\nconst firstRun = !state.seeded;\nconst lqaFirstRun = !state.lqaSeeded;\nconst now = Date.now();\nconst LINK_TYPE_ID = '10079'; // \"Has localization ticket\"\nconst esc = function (s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };\nconst base = 'https://futuremedia.atlassian.net/browse/';\nconst link = function (k) { return '<' + base + k + '|' + k + '>'; };\nconst sigOf = function (v) { return v.name + '|' + v.releaseDate + '|' + v.released; };\nconst parseSig = function (s) { const parts = s.split('|'); const released = parts.pop() === 'true'; const releaseDate = parts.pop() || ''; return { name: parts.join('|'), releaseDate: releaseDate, released: released }; };\nconst verLineOf = function (versions) { if (!versions) return 'unknown'; return versions.length ? versions.map(function (v) { return esc(v.name) + ' (' + (v.releaseDate || 'no date') + (v.released ? ', released' : ', not released') + ')'; }).join(', ') : 'none'; };\nconst buildText = function (key, summary, changes, verLine, llrLine) {\n  return ':bell: *' + link(key) + '* – ' + esc(summary) + '\\n' + changes.join('\\n') + '\\nFix version: ' + verLine + '\\nLocalization ticket: ' + llrLine;\n};\n\nconst productIssues = (($('Fetch localized product tickets').first().json || {}).issues) || [];\nlet llrIssues = [];\ntry { llrIssues = ($input.first().json.issues) || []; } catch (e) { llrIssues = []; }\nconst llrByKey = {};\nfor (const l of llrIssues) llrByKey[l.key] = l;\n\n// 1) LQA status changes on localization (INTERNAT) tickets\nconst lqaChanges = {}; // product key -> { lines, llrKeys, issue }\nfor (const l of llrIssues) {\n  const f = l.fields || {};\n  const val = f.customfield_11581 ? f.customfield_11581.value : '';\n  const prev = state.lqa[l.key];\n  state.lqa[l.key] = { value: val, seen: now };\n  if (lqaFirstRun) continue;\n  let changed = false;\n  let fromTxt = '';\n  // An LL ticket seen for the first time is only recorded, never reported\n  if (prev && prev.value !== val) { changed = true; fromTxt = prev.value || 'not set'; }\n  if (!changed) continue;\n  const products = (f.issuelinks || []).filter(function (x) { return x.type && x.type.id === LINK_TYPE_ID && x.inwardIssue; }).map(function (x) { return x.inwardIssue; });\n  for (const p of products) {\n    if (!lqaChanges[p.key]) lqaChanges[p.key] = { lines: [], llrKeys: [], issue: p };\n    lqaChanges[p.key].lines.push(':mag: LQA status (' + l.key + '): ' + esc(fromTxt) + ' → ' + '*' + esc(val || 'not set') + '*');\n    lqaChanges[p.key].llrKeys.push(l.key);\n  }\n}\n\nconst out = [];\nconst groups = {}; // version-level events, one message per version + event\nconst groupOrder = [];\n// 2) Product tickets: ticket-level changes go per ticket, version-level events are grouped per version\nfor (const it of productIssues) {\n  const f = it.fields || {};\n  const llrs = (f.issuelinks || []).filter(function (l) { return l.type && l.type.id === LINK_TYPE_ID && l.outwardIssue; }).map(function (l) { return l.outwardIssue; });\n  if (!llrs.length) continue;\n  const status = f.status ? f.status.name : '';\n  const versions = (f.fixVersions || []).map(function (v) { return { id: v.id, name: v.name, releaseDate: v.releaseDate || '', released: !!v.released }; });\n  const verSig = versions.map(sigOf).sort().join(';');\n  const prev = state.issues[it.key];\n  state.issues[it.key] = { status: status, verSig: verSig, seen: now, threadTs: prev && prev.threadTs ? prev.threadTs : '', summary: f.summary || '', llrKeys: llrs.map(function (l) { return l.key; }) };\n  const lqa = lqaChanges[it.key];\n  delete lqaChanges[it.key];\n  const llrLine = llrs.map(function (l) { const st = l.fields && l.fields.status ? l.fields.status.name : ''; return link(l.key) + (st ? ' (' + esc(st) + ')' : ''); }).join(', ');\n  const changes = [];\n  if (!firstRun && prev) {\n    if (prev.status !== null && prev.status !== undefined && prev.status !== status) {\n      const prodNote = status === 'QA PROD' ? ' :rocket: _deployed to prod_' : '';\n      changes.push('Status: ' + esc(prev.status) + ' → *' + esc(status) + '*' + prodNote);\n    }\n    if (prev.verSig !== null && prev.verSig !== undefined && prev.verSig !== verSig) {\n      const prevVers = prev.verSig ? prev.verSig.split(';').map(parseSig) : [];\n      for (const v of versions) {\n        const p = prevVers.find(function (x) { return x.name === v.name; });\n        let event = '';\n        if (!p) changes.push('Fix version added: *' + esc(v.name) + '*' + (v.releaseDate ? ' (planned release ' + v.releaseDate + ')' : ''));\n        else if (v.released && !p.released) event = ':rocket: *released*' + (v.releaseDate ? ' on *' + v.releaseDate + '*' : '');\n        else if (!v.released && p.released) event = ':warning: release *reverted* (marked as not released again)';\n        else if (p.releaseDate !== v.releaseDate) event = ':calendar: release date moved: ' + (p.releaseDate || 'not set') + ' → *' + (v.releaseDate || 'not set') + '*';\n        if (event) {\n          const gk = (v.id || v.name) + '#' + event;\n          if (!groups[gk]) { groups[gk] = { versionId: v.id || v.name, version: v, project: it.key.split('-')[0], event: event, tickets: [], llrKeys: [] }; groupOrder.push(gk); }\n          groups[gk].tickets.push('• ' + link(it.key) + ' – ' + esc(f.summary) + ' · ' + esc(status) + ' · LL: ' + llrLine);\n          for (const l of llrs) if (groups[gk].llrKeys.indexOf(l.key) < 0) groups[gk].llrKeys.push(l.key);\n        }\n      }\n      for (const p of prevVers) {\n        if (!versions.find(function (v) { return v.name === p.name; })) changes.push('Fix version removed: *' + esc(p.name) + '*');\n      }\n    }\n  }\n  if (lqa) for (const line of lqa.lines) changes.push(line);\n  if (!changes.length) continue;\n  out.push({ json: { kind: 'ticket', groupKey: '', key: it.key, status: status, llrKeys: llrs.map(function (l) { return l.key; }), threadTs: state.issues[it.key].threadTs, changesText: changes.join('\\n'), text: buildText(it.key, f.summary, changes, verLineOf(versions), llrLine) } });\n}\n\n// 3) One message per version event, listing every localized ticket in that version\nfor (const gk of groupOrder) {\n  const g = groups[gk];\n  const v = g.version;\n  const vs = state.versions[g.versionId] || { threadTs: '' };\n  vs.seen = now;\n  state.versions[g.versionId] = vs;\n  const header = ':package: *Version ' + esc(v.name) + '* (' + esc(g.project) + ') – ' + g.event;\n  const body = 'Release: ' + (v.releaseDate || 'no date') + (v.released ? ', released' : ', not released') + '\\nLocalized tickets (' + g.tickets.length + '):\\n' + g.tickets.join('\\n');\n  out.push({ json: { kind: 'version', groupKey: String(g.versionId), key: 'Version ' + v.name, status: '', llrKeys: g.llrKeys, threadTs: vs.threadTs || '', changesText: header + '\\n' + g.tickets.join('\\n'), text: header + '\\n' + body } });\n}\n\n// 4) LQA changes whose product ticket was not in this run's product fetch\nfor (const key of Object.keys(lqaChanges)) {\n  const c = lqaChanges[key];\n  const pf = c.issue.fields || {};\n  let st = state.issues[key];\n  if (!st) {\n    st = { status: null, verSig: null, seen: now, threadTs: '', summary: pf.summary || '', llrKeys: c.llrKeys };\n    state.issues[key] = st;\n  }\n  const llrKeys = st.llrKeys && st.llrKeys.length ? st.llrKeys : c.llrKeys;\n  const versions = st.verSig ? st.verSig.split(';').map(parseSig) : (st.verSig === '' ? [] : null);\n  const llrLine = llrKeys.map(function (k) { const li = llrByKey[k]; const s = li && li.fields && li.fields.status ? li.fields.status.name : ''; return link(k) + (s ? ' (' + esc(s) + ')' : ''); }).join(', ');\n  out.push({ json: { kind: 'ticket', groupKey: '', key: key, status: pf.status ? pf.status.name : (st.status || ''), llrKeys: llrKeys, threadTs: st.threadTs || '', changesText: c.lines.join('\\n'), text: buildText(key, pf.summary || st.summary, c.lines, verLineOf(versions), llrLine) } });\n}\n\nconst old = function (o) { return now - ((o && o.seen) || 0) > 90 * 86400000; };\nfor (const k of Object.keys(state.issues)) if (old(state.issues[k])) delete state.issues[k];\nfor (const k of Object.keys(state.lqa)) if (old(state.lqa[k])) delete state.lqa[k];\nfor (const k of Object.keys(state.versions)) if (old(state.versions[k])) delete state.versions[k];\nstate.seeded = true;\nstate.lqaSeeded = true;\nreturn out;\n"
         }
       },
       {
@@ -1971,7 +3616,7 @@
           300
         ],
         "parameters": {
-          "content": "## Localized ticket release watcher\nEvery 15 min: product tickets that have an INTERNAT localization ticket (link \"Has localization ticket\"). Posts to #i18n-team when status, fix version or version release changes. First production run only records the current state (no messages). State lives in workflow static data.",
+          "content": "## Localized ticket release watcher\nEvery 15 min: product tickets that have an INTERNAT localization (LL) ticket (link \"Has localization ticket\").\n\n**Slack (#i18n-releases)**\n- Version events (release date moved / released / release reverted): ONE message per version listing all localized tickets in it; later events for the same version reply in that thread.\n- Ticket events (status, fix version added/removed, LQA status of the LL ticket): per ticket; first = new post, later = thread reply.\n\n**Jira**: when the product ticket has a fix version with a release date, fills \"Original fix version\" and \"Original release date\" on the LL ticket if they are empty (never overwrites).\n\nFirst production run of each check only records state. State lives in workflow static data.",
           "color": 4
         }
       },
@@ -2052,6 +3697,18 @@
                 "name": "threadTs",
                 "type": "string",
                 "value": "={{ $('Detect status and release changes').item.json.threadTs }}"
+              },
+              {
+                "id": "kind",
+                "name": "kind",
+                "type": "string",
+                "value": "={{ $('Detect status and release changes').item.json.kind }}"
+              },
+              {
+                "id": "group-key",
+                "name": "groupKey",
+                "type": "string",
+                "value": "={{ $('Detect status and release changes').item.json.groupKey }}"
               }
             ]
           },
@@ -2143,10 +3800,94 @@
           400
         ],
         "parameters": {
-          "jsCode": "const state = $getWorkflowStaticData('global');\nconst key = $('Add LQA line').item.json.key;\nconst ts = $json.message_timestamp || ($json.message && $json.message.ts);\nif (key && ts && state.issues && state.issues[key]) state.issues[key].threadTs = ts;\nreturn { json: { key: key, threadTs: ts } };",
+          "jsCode": "const state = $getWorkflowStaticData('global');\nconst src = $('Add LQA line').item.json;\nconst ts = $json.message_timestamp || ($json.message && $json.message.ts);\nif (ts) {\n  if (src.kind === 'version') {\n    if (!state.versions) state.versions = {};\n    const v = state.versions[src.groupKey] || {};\n    v.threadTs = ts;\n    v.seen = Date.now();\n    state.versions[src.groupKey] = v;\n  } else if (src.key && state.issues && state.issues[src.key]) {\n    state.issues[src.key].threadTs = ts;\n  }\n}\nreturn { json: { key: src.key, threadTs: ts } };\n",
           "language": "javaScript",
           "mode": "runOnceForEachItem"
         }
+      },
+      {
+        "id": "04a6d462-fb60-4b14-be67-402ce39b11c8",
+        "name": "Fetch localization tickets",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          390,
+          480
+        ],
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "method": "GET",
+          "nodeCredentialType": "jiraSoftwareCloudApi",
+          "options": {},
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "jql",
+                "value": "={{ (function (issues) { const ks = []; (issues || []).forEach(function (i) { ((i.fields || {}).issuelinks || []).forEach(function (l) { if (l.type && l.type.id === '10079' && l.outwardIssue && ks.indexOf(l.outwardIssue.key) < 0) ks.push(l.outwardIssue.key); }); }); return 'project = INTERNAT AND (updated >= -1d' + (ks.length ? ' OR key in (' + ks.join(',') + ')' : '') + ') ORDER BY updated DESC'; })($json.issues) }}"
+              },
+              {
+                "name": "fields",
+                "value": "summary,status,customfield_11581,customfield_11702,customfield_11703,issuelinks"
+              },
+              {
+                "name": "maxResults",
+                "value": "100"
+              }
+            ]
+          },
+          "sendQuery": true,
+          "specifyQuery": "keypair",
+          "url": "https://futuremedia.atlassian.net/rest/api/3/search/jql"
+        },
+        "credentials": {
+          "jiraSoftwareCloudApi": {
+            "id": "QJte7dJbX10mIzJI",
+            "name": "Jira SW Cloud account"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "18dc0238-e91b-49e4-b811-66047ead9984",
+        "name": "Plan LL ticket updates",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          780,
+          560
+        ],
+        "parameters": {
+          "jsCode": "// Fill \"Original fix version\" / \"Original release date\" on the localization (LL) ticket\n// when the product ticket has a fix version with a release date. Only empty fields are filled.\nconst LINK_TYPE_ID = '10079';\nconst productIssues = (($('Fetch localized product tickets').first().json || {}).issues) || [];\nlet llrIssues = [];\ntry { llrIssues = ($input.first().json.issues) || []; } catch (e) { llrIssues = []; }\nconst llrByKey = {};\nfor (const l of llrIssues) llrByKey[l.key] = l;\nconst updates = {};\nfor (const it of productIssues) {\n  const f = it.fields || {};\n  const dated = (f.fixVersions || []).filter(function (v) { return v.name && v.releaseDate; });\n  if (!dated.length) continue;\n  // If several versions are set, use the earliest unreleased one, else the earliest one\n  dated.sort(function (a, b) { return (a.released === b.released ? 0 : (a.released ? 1 : -1)) || a.releaseDate.localeCompare(b.releaseDate); });\n  const v = dated[0];\n  const llrs = (f.issuelinks || []).filter(function (l) { return l.type && l.type.id === LINK_TYPE_ID && l.outwardIssue; }).map(function (l) { return l.outwardIssue.key; });\n  for (const k of llrs) {\n    const li = llrByKey[k];\n    if (!li || updates[k]) continue;\n    const lf = li.fields || {};\n    const fields = {};\n    if (!lf.customfield_11702) fields.customfield_11702 = v.name;\n    if (!lf.customfield_11703) fields.customfield_11703 = v.releaseDate;\n    if (Object.keys(fields).length) updates[k] = { key: k, productKey: it.key, fields: fields };\n  }\n}\nreturn Object.keys(updates).map(function (k) { return { json: updates[k] }; });\n",
+          "language": "javaScript",
+          "mode": "runOnceForAllItems"
+        }
+      },
+      {
+        "id": "0fc938a6-5017-43e7-b935-11eaf0873975",
+        "name": "Update LL ticket fields",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          1040,
+          560
+        ],
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "jsonBody": "={{ JSON.stringify({ fields: $json.fields }) }}",
+          "method": "PUT",
+          "nodeCredentialType": "jiraSoftwareCloudApi",
+          "options": {},
+          "sendBody": true,
+          "specifyBody": "json",
+          "url": "={{ 'https://futuremedia.atlassian.net/rest/api/3/issue/' + $json.key }}"
+        },
+        "credentials": {
+          "jiraSoftwareCloudApi": {
+            "id": "QJte7dJbX10mIzJI",
+            "name": "Jira SW Cloud account"
+          }
+        },
+        "onError": "continueRegularOutput"
       }
     ],
     "connections": {
@@ -2155,17 +3896,6 @@
           [
             {
               "node": "Fetch localized product tickets",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Fetch localized product tickets": {
-        "main": [
-          [
-            {
-              "node": "Detect status and release changes",
               "type": "main",
               "index": 0
             }
@@ -2233,20 +3963,49 @@
             }
           ]
         ]
+      },
+      "Fetch localized product tickets": {
+        "main": [
+          [
+            {
+              "node": "Fetch localization tickets",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch localization tickets": {
+        "main": [
+          [
+            {
+              "node": "Detect status and release changes",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Plan LL ticket updates",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Plan LL ticket updates": {
+        "main": [
+          [
+            {
+              "node": "Update LL ticket fields",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     },
     "nodeGroups": [
       {
-        "id": "e76752c1-c4ee-412e-aa9c-e2e194664803",
-        "name": "Detect changes",
-        "nodeIds": [
-          "d8829628-a277-43e4-aa4c-23e65db53e8a",
-          "36c428ec-b6f4-461a-adb4-b710ef27f468"
-        ],
-        "description": "Finds product tickets with a localization link and detects status, fix-version and release changes since last run"
-      },
-      {
-        "id": "67ae595c-e6bb-496b-8a00-7fb73fe6cafb",
+        "id": "8b684c87-b9ae-4ff7-bb35-23727349cf74",
         "name": "Add LQA info",
         "nodeIds": [
           "4304cc73-1206-4cf5-a957-3b567a72c721",
@@ -2255,7 +4014,7 @@
         "description": "Looks up the localization ticket's LQA status and its Test Plan, and builds the message text"
       },
       {
-        "id": "5bccbccf-e31b-444f-a5dc-1654ad0b70ab",
+        "id": "a7260f04-d022-42fb-8be1-665eea00ea6f",
         "name": "Post to Slack",
         "nodeIds": [
           "b9d19182-e5a7-41fa-b44f-129cabed786c",
@@ -2263,23 +4022,32 @@
           "c80c4bb3-da24-4d94-a043-d6f5c7346edc",
           "bfc8e60b-0a8d-494d-9759-84e5cb890ab7"
         ],
-        "description": "First change for a ticket posts in #i18n-releases; later changes reply in that ticket's thread"
+        "description": "First change posts in #i18n-releases; later changes reply in that ticket's or version's thread"
+      },
+      {
+        "id": "7ea158c3-3f53-438d-9e24-69aaad848932",
+        "name": "Fill LL ticket fields",
+        "nodeIds": [
+          "18dc0238-e91b-49e4-b811-66047ead9984",
+          "0fc938a6-5017-43e7-b935-11eaf0873975"
+        ],
+        "description": "Fills Original fix version / Original release date on LL tickets when empty"
       }
     ],
     "authors": "Maria Sica (via MCP)",
-    "name": "Group nodes",
-    "description": "Updated workflow",
+    "name": "Fix: never report LQA status for first-seen LL tickets",
+    "description": "The 11:03 run reported ~50 LL tickets as LQA changes because the wider LL fetch saw them for the first time. Now a first-seen LL ticket is only recorded.",
     "autosaved": false,
-    "createdAt": "2026-10-09T12:49:29.502Z",
-    "updatedAt": "2026-10-09T12:49:29.502Z",
+    "createdAt": "2026-11-12T11:04:42.369Z",
+    "updatedAt": "2026-11-12T11:04:42.369Z",
     "workflowPublishHistory": [
       {
-        "id": 2532,
+        "id": 3250,
         "workflowId": "9h7U1BIqszUNP6Do",
-        "versionId": "9180e0f1-159e-4dea-a77f-b1c0ae0b6e19",
+        "versionId": "7462132c-eb3d-45c6-81a9-c11e675224cf",
         "event": "activated",
         "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
-        "createdAt": "2026-10-09T12:49:31.738Z"
+        "createdAt": "2026-11-12T11:04:43.674Z"
       }
     ]
   },
