@@ -1,0 +1,201 @@
+{
+  "id": "9ydmdhUMWeWx1n0c",
+  "name": "Lokalise READ - MyImage renew-period probe (READ ONLY)",
+  "description": "READ ONLY. Finds MyImage keys whose EN mentions renew or whose targets contain 'weeks'. Read-only credential.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-13T11:45:47.325Z",
+  "updatedAt": "2026-11-13T11:45:47.325Z",
+  "isArchived": false,
+  "versionId": "b00ca000-d123-458f-8b1c-8c91041dfbd3",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "3f14740b-b777-47d5-b461-0724d6554ddf",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "f43731da-8cc9-4fc3-ac37-184d63f5535c",
+      "name": "Fetch Project",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/3070657967b5854be32cb1.65162854",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "028d45cd-3220-4135-af5f-9f8754959ccc",
+      "name": "Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const p = $input.first().json;\nconst total = (p.statistics && p.statistics.keys_total) || 500;\nconst n = Math.max(1, Math.ceil(total / 500));\nconst out = [];\nfor (let i = 1; i <= n; i++) { out.push({ json: { page: i, name: p.name, base: p.base_language_iso, keys_total: total } }); }\nreturn out;"
+      }
+    },
+    {
+      "id": "521b3919-dccd-4b93-bdea-ed292a5ba395",
+      "name": "Fetch Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/3070657967b5854be32cb1.65162854/keys?include_translations=1&limit=500&page={{ $json.page }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "2b63ae88-4e6c-4245-ba2a-1020a5fe1918",
+      "name": "Match",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const meta = $('Pages').first().json;\nconst out = []; let scanned = 0; const statuses = [];\nfor (const it of $input.all()) {\n  const r = it.json; statuses.push(r.statusCode);\n  for (const k of ((r.body && r.body.keys) || [])) {\n    if (k.is_archived) { continue; }\n    scanned++;\n    let en = ''; let hitTarget = false; const tr = {};\n    for (const t of (k.translations || [])) {\n      const iso = (t.language_iso || '').toLowerCase();\n      const v = typeof t.translation === 'string' ? t.translation : JSON.stringify(t.translation);\n      if (iso === 'en') { en = v; } else if (/weeks?\\b/i.test(v)) { hitTarget = true; }\n      tr[iso] = { v: v, reviewed: t.is_reviewed, tid: t.translation_id, modified: t.modified_at };\n    }\n    if (/renew/i.test(en) || hitTarget) {\n      out.push({ key_id: k.key_id, name: (k.key_name && k.key_name.web) || k.key_name, tags: k.tags, filenames: k.filenames, description: k.description, en: en, translations: tr });\n    }\n  }\n}\nreturn [{ json: { project: meta.name, keys_total: meta.keys_total, scanned: scanned, statuses: statuses, matched: out.length, keys: out } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Project": {
+      "main": [
+        [
+          {
+            "node": "Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pages": {
+      "main": [
+        [
+          {
+            "node": "Fetch Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Keys": {
+      "main": [
+        [
+          {
+            "node": "Match",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "9ydmdhUMWeWx1n0c",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-13T11:45:47.334Z",
+      "updatedAt": "2026-11-13T11:45:47.334Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
