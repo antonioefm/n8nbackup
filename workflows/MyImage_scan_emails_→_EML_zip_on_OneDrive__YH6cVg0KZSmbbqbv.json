@@ -1,0 +1,467 @@
+{
+  "id": "YH6cVg0KZSmbbqbv",
+  "name": "MyImage scan emails → EML zip on OneDrive",
+  "description": "Exports one day's MyImage scan emails (maria+myimage-<locale>) from Outlook as .eml files, zips them with a manifest, uploads to OneDrive and shares.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-15T12:31:08.161Z",
+  "updatedAt": "2026-11-15T12:32:52.621Z",
+  "isArchived": false,
+  "versionId": "d9b407ea-a5b5-4368-9dac-537dde7ea86c",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "1a787aef-df98-4587-b0c6-736bad16ba2e",
+      "name": "Run Export",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "59baa033-dd85-4c51-b3bd-90f7587816fc",
+      "name": "Scan Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "day-start",
+              "name": "dayStartUtc",
+              "value": "2026-11-12T00:00:00Z",
+              "type": "string"
+            },
+            {
+              "id": "day-end",
+              "name": "dayEndUtc",
+              "value": "2026-11-13T00:00:00Z",
+              "type": "string"
+            },
+            {
+              "id": "sender-domain",
+              "name": "senderDomain",
+              "value": "@myimage.io",
+              "type": "string"
+            },
+            {
+              "id": "recipient-tag",
+              "name": "recipientTag",
+              "value": "+myimage-",
+              "type": "string"
+            },
+            {
+              "id": "zip-name",
+              "name": "zipName",
+              "value": "myimage-scan-emails-2026-11-12.zip",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "1397081d-77b6-46ce-a182-5e03d44f7360",
+      "name": "List Emails Of The Day",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOutlookOAuth2Api",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "$filter",
+              "value": "=receivedDateTime ge {{ $json.dayStartUtc }} and receivedDateTime lt {{ $json.dayEndUtc }}"
+            },
+            {
+              "name": "$select",
+              "value": "id,subject,receivedDateTime,from,toRecipients,body"
+            },
+            {
+              "name": "$orderby",
+              "value": "receivedDateTime asc"
+            },
+            {
+              "name": "$top",
+              "value": "1000"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "EolDENntQmcAHoSi",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "id": "f2b5dd4a-a044-4894-bfd5-98d7ce1cfa11",
+      "name": "One Item Per Email",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "fieldToSplitOut": "value",
+        "include": "noOtherFields"
+      }
+    },
+    {
+      "id": "59ea80e5-e5a7-4333-8e7d-6fde1f226c3d",
+      "name": "Keep MyImage Scan Emails",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.4,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "from-myimage",
+              "leftValue": "={{ $json.from?.emailAddress?.address ?? \"\" }}",
+              "rightValue": "={{ $('Scan Settings').first().json.senderDomain }}",
+              "operator": {
+                "type": "string",
+                "operation": "endsWith"
+              }
+            },
+            {
+              "id": "to-scan-account",
+              "leftValue": "={{ ($json.toRecipients || []).map(r => r.emailAddress.address).join(\";\") }}",
+              "rightValue": "={{ $('Scan Settings').first().json.recipientTag }}",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "5cc4fbcf-58c1-4a60-a004-11a68c1c4560",
+      "name": "Download Email As EML",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://graph.microsoft.com/v1.0/me/messages/{{ encodeURIComponent($json.id) }}/$value",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOutlookOAuth2Api",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 10,
+              "batchInterval": 500
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "EolDENntQmcAHoSi",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "id": "c957d3d1-efe4-4284-80ba-a3f96ce343a2",
+      "name": "Name Files And Bundle",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const meta = $('Keep MyImage Scan Emails').all();\nconst items = $input.all();\nconst binary = {};\nconst keys = [];\nconst used = {};\nconst rows = [['path', 'type', 'language', 'account', 'received_utc', 'from', 'to', 'subject']];\n\nfunction emailType(m) {\n  const from = ((m.from && m.from.emailAddress && m.from.emailAddress.address) || '').toLowerCase();\n  const html = (m.body && m.body.content) || '';\n  if (from.startsWith('orders@')) return '05_edited-image-reminders';\n  if (html.includes('credentials-table')) return '01_welcome';\n  if (html.includes('billing-section')) return '02_payment-confirmation';\n  if (html.includes('details-table')) return '06_credits-purchase';\n  if (html.includes('password-display')) return '03_password-reset';\n  return '04_subscription-cancelled';\n}\n\nfor (let i = 0; i < items.length; i++) {\n  const m = meta[i].json;\n  const to = (m.toRecipients || []).map(r => r.emailAddress.address).join(';');\n  const mt = to.match(/\\+myimage-([a-z0-9]+)@/i);\n  const account = mt ? mt[1].toLowerCase() : 'unknown';\n  const lang = account.replace(/[0-9]+$/, '');\n  const time = (m.receivedDateTime || '').slice(11, 19).replace(/:/g, '');\n  const fromAddr = (m.from && m.from.emailAddress && m.from.emailAddress.address) || '';\n  const type = emailType(m);\n  const base = type + '/' + lang + '_' + time + '_' + account;\n  let name = base + '.eml';\n  let n = 2;\n  while (used[name]) { name = base + '_' + n + '.eml'; n += 1; }\n  used[name] = true;\n  const b = items[i].binary.data;\n  b.fileName = name;\n  b.mimeType = 'message/rfc822';\n  b.fileExtension = 'eml';\n  const key = 'email_' + i;\n  binary[key] = b;\n  keys.push(key);\n  rows.push([name, type, lang, account, m.receivedDateTime, fromAddr, to, m.subject]);\n}\nrows.sort((a, b) => a === rows[0] ? -1 : b === rows[0] ? 1 : a[0].localeCompare(b[0]));\nconst csv = rows.map(r => r.map(v => '\"' + String(v === undefined || v === null ? '' : v).replace(/\"/g, '\"\"') + '\"').join(',')).join('\\r\\n');\nbinary.manifest = await this.helpers.prepareBinaryData(Buffer.from('\\ufeff' + csv, 'utf8'), 'manifest.csv', 'text/csv');\nkeys.push('manifest');\nreturn [{ json: { emailCount: items.length, binaryKeys: keys.join(',') }, binary }];"
+      }
+    },
+    {
+      "id": "fffdf61e-4a4b-4002-95f0-f4696982dd2d",
+      "name": "Zip Emails",
+      "type": "n8n-nodes-base.compression",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        300
+      ],
+      "parameters": {
+        "operation": "compress",
+        "binaryPropertyName": "={{ $json.binaryKeys }}",
+        "outputFormat": "zip",
+        "fileName": "={{ $('Scan Settings').first().json.zipName }}",
+        "binaryPropertyOutput": "data"
+      }
+    },
+    {
+      "id": "7577923a-e319-4452-a443-9faa4e83c914",
+      "name": "Upload Zip To OneDrive",
+      "type": "n8n-nodes-base.microsoftOneDrive",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        300
+      ],
+      "parameters": {
+        "resource": "file",
+        "operation": "upload",
+        "fileName": "={{ $('Scan Settings').first().json.zipName }}",
+        "parentId": "root",
+        "binaryData": true,
+        "binaryPropertyName": "data"
+      },
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "QCA5rX8Iyd1rbChu",
+          "name": "Microsoft Drive - Maria Sica account"
+        }
+      }
+    },
+    {
+      "id": "4e1bcc56-25c0-4168-9cd3-dfe8d41185e2",
+      "name": "Create Org View Link",
+      "type": "n8n-nodes-base.microsoftOneDrive",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        300
+      ],
+      "parameters": {
+        "resource": "file",
+        "operation": "share",
+        "fileId": "={{ $json.id }}",
+        "type": "view",
+        "scope": "organization"
+      },
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "QCA5rX8Iyd1rbChu",
+          "name": "Microsoft Drive - Maria Sica account"
+        }
+      }
+    },
+    {
+      "id": "ec05476d-dab3-4479-aace-48679d2f0797",
+      "name": "Sticky Note 8d9480f1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        192,
+        208
+      ],
+      "parameters": {
+        "content": "## MyImage scan emails → .eml zip\nEdit **Scan Settings** (UTC day, sender domain, recipient tag, zip name) and run. Pulls every email from @myimage.io to a maria+myimage-<locale> test account on that day, saves each as .eml named <locale>_<HHMMSS>_<sender>.eml plus manifest.csv, zips them and uploads to OneDrive root with an org view link.",
+        "color": 4,
+        "width": 160,
+        "height": 224
+      }
+    }
+  ],
+  "connections": {
+    "Run Export": {
+      "main": [
+        [
+          {
+            "node": "Scan Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scan Settings": {
+      "main": [
+        [
+          {
+            "node": "List Emails Of The Day",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Emails Of The Day": {
+      "main": [
+        [
+          {
+            "node": "One Item Per Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One Item Per Email": {
+      "main": [
+        [
+          {
+            "node": "Keep MyImage Scan Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keep MyImage Scan Emails": {
+      "main": [
+        [
+          {
+            "node": "Download Email As EML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Email As EML": {
+      "main": [
+        [
+          {
+            "node": "Name Files And Bundle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Name Files And Bundle": {
+      "main": [
+        [
+          {
+            "node": "Zip Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zip Emails": {
+      "main": [
+        [
+          {
+            "node": "Upload Zip To OneDrive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Zip To OneDrive": {
+      "main": [
+        [
+          {
+            "node": "Create Org View Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [
+    {
+      "id": "02769e93-e59c-4792-bf6c-5f4e4e2536cf",
+      "name": "Find scan emails",
+      "nodeIds": [
+        "59baa033-dd85-4c51-b3bd-90f7587816fc",
+        "1397081d-77b6-46ce-a182-5e03d44f7360",
+        "f2b5dd4a-a044-4894-bfd5-98d7ce1cfa11",
+        "59ea80e5-e5a7-4333-8e7d-6fde1f226c3d"
+      ],
+      "description": "Lists the day’s mailbox messages and keeps those from @myimage.io to maria+myimage-<locale> accounts"
+    },
+    {
+      "id": "850d8b15-d80e-4443-a9d6-d9d924b2053b",
+      "name": "Package and deliver",
+      "nodeIds": [
+        "5cc4fbcf-58c1-4a60-a004-11a68c1c4560",
+        "c957d3d1-efe4-4284-80ba-a3f96ce343a2",
+        "fffdf61e-4a4b-4002-95f0-f4696982dd2d",
+        "7577923a-e319-4452-a443-9faa4e83c914",
+        "4e1bcc56-25c0-4168-9cd3-dfe8d41185e2"
+      ],
+      "description": "Downloads each email as .eml, sorts into folders by email type, names <lang>_<HHMMSS>_<account>.eml, adds manifest.csv, zips, uploads, shares"
+    }
+  ],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "YH6cVg0KZSmbbqbv",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-15T12:31:08.167Z",
+      "updatedAt": "2026-11-15T12:31:08.167Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
