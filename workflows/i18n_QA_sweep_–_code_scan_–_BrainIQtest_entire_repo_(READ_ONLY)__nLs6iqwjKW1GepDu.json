@@ -1,0 +1,328 @@
+{
+  "id": "nLs6iqwjKW1GepDu",
+  "name": "i18n QA sweep – code scan – BrainIQtest entire repo (READ ONLY)",
+  "description": "Read-only: fetches every source file of QR-CODE-App/iqtest-monorepo (main) via GitHub GET requests and returns them for the i18n-readiness code scan. No writes anywhere.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-15T12:19:24.644Z",
+  "updatedAt": "2026-11-15T14:53:09.171Z",
+  "isArchived": false,
+  "versionId": "da350084-bc9f-4cb2-a40c-77ed3f7a3d0b",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "4c657a2b-e26c-4435-90da-a9de02563216",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "cf05b8d5-59fa-4509-85fd-56f24855fcf9",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        192
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\"repo\": \"iqtest-monorepo\", \"subdir\": \"apps/frontend/messages/\", \"offset\": 0, \"maxSize\": 8000000, \"dnt\": [\"BrainIQ\"]}"
+      }
+    },
+    {
+      "id": "517db9e0-1368-4bd4-ad21-f923037c3b0a",
+      "name": "Get Repo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/QR-CODE-App/{{ $json.repo }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi"
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "61a27d26-c489-43b3-bab9-6e2e9cc38c18",
+      "name": "Get Tree",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/QR-CODE-App/{{ $('Config').item.json.repo }}/git/trees/{{ $json.default_branch }}?recursive=1",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi"
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "46b66636-470b-43af-a881-342c1d140a79",
+      "name": "Filter Tree",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const cfg = $('Config').first().json;\nconst repo = cfg.repo;\nconst branch = $('Get Repo').first().json.default_branch;\nconst treeRes = $('Get Tree').first().json;\nconst tree = treeRes.tree || [];\nconst MAX = cfg.maxSize || 600000;\nconst EXT = /\\.(js|jsx|ts|tsx|vue|svelte|html|hbs|mjml|njk|ejs|json|svg|css|scss|sass|less|mdx)$/i;\nconst SKIP = /(^|\\/)(node_modules|dist|build|\\.next|coverage|__tests__|__mocks__|mocks?|fixtures|storybook|\\.storybook|e2e|cypress|playwright)(\\/|$)|\\.(test|spec|stories)\\.[jt]sx?$|\\.d\\.ts$|(package-lock|yarn\\.lock|pnpm-lock)|(^|\\/)package\\.json$|(^|\\/)tsconfig[^/]*$/i;\nconst isEn = p => /(^|\\/)(en|en-US|en_US)(\\.json|\\/[^/]+\\.json)$/.test(p);\nconst all_paths = tree.filter(t => t.type === 'blob' && !/(^|\\/)node_modules\\//.test(t.path)).map(t => t.path);\nconst out = [];\nfor (const t of tree) {\n  if (t.type !== 'blob' || !EXT.test(t.path) || SKIP.test(t.path) || (t.size || 0) >= MAX) continue;\n  if (cfg.subdir && !t.path.startsWith(cfg.subdir)) continue;\n  if (/\\.json$/i.test(t.path) && !isEn(t.path) && !/(config|i18n|routing|messages)/i.test(t.path)) continue;\n  out.push({ json: { repo, branch, path: t.path } });\n}\nconst off = cfg.offset || 0;\nconst capped = out.length > off + 1500;\nconst res = out.slice(off, off + 1500);\nif (!res.length) return [{ json: { skip: true, meta: { files: 0, default_branch: branch } } }];\nres[0].json.meta = { files: out.length, offset: off, capped, default_branch: branch, tree_truncated: !!treeRes.truncated, all_paths: [] };\nreturn res;"
+      }
+    },
+    {
+      "id": "3354f0f3-556d-4920-848a-c09990c24201",
+      "name": "Collect Files",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all().map(i => i.json).filter(j => j && j.path && typeof j.content === 'string');\nconst meta = $('Filter Tree').first().json.meta || {};\nreturn [{ json: { meta, files: items.map(f => ({ path: f.path, content: f.content })) } }];"
+      }
+    },
+    {
+      "id": "f106ba73-e17b-403f-bbb8-fe125095818b",
+      "name": "Get File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/QR-CODE-App/{{ $json.repo }}/contents/{{ encodeURI($json.path) }}?ref={{ $json.branch }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.raw"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "data"
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 10,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubApi": {
+          "id": "mUh6urSdgDMQojf1",
+          "name": "GitHub account 2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "3d4fca47-64d6-40f4-ad9b-af6a8a5ee615",
+      "name": "Emit File",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        272
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const src = $('Loop Files').itemMatching($itemIndex).json;\nconst c = $json.data;\nif (src.skip) return { json: { skip: true } };\nreturn { json: { repo: src.repo, path: src.path, content: typeof c === 'string' ? c : (c == null ? null : JSON.stringify(c)), dnt: $('Config').first().json.dnt } };"
+      }
+    },
+    {
+      "id": "36fd501b-3392-49c0-8d4a-c08f1899824f",
+      "name": "Loop Files",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1120,
+        192
+      ],
+      "parameters": {
+        "batchSize": 10
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Get Repo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Repo": {
+      "main": [
+        [
+          {
+            "node": "Get Tree",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Tree": {
+      "main": [
+        [
+          {
+            "node": "Filter Tree",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Tree": {
+      "main": [
+        [
+          {
+            "node": "Loop Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get File": {
+      "main": [
+        [
+          {
+            "node": "Emit File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emit File": {
+      "main": [
+        [
+          {
+            "node": "Loop Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Files": {
+      "main": [
+        [
+          {
+            "node": "Collect Files",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "nLs6iqwjKW1GepDu",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-15T12:19:24.647Z",
+      "updatedAt": "2026-11-15T12:19:24.647Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
