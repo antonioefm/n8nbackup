@@ -1,0 +1,591 @@
+{
+  "id": "jKDjMYUmIPBaArEn",
+  "name": "i18n readiness - MCP tool: shared learnings (READ + APPEND-ONLY)",
+  "description": "READ + APPEND-ONLY access to the shared i18n readiness learnings table (AI AUDITS/i18n readiness learnings.xlsx). Called only by the i18n pre-check MCP server.",
+  "active": true,
+  "activeVersionId": "0c35b305-5d72-402b-b8c9-07ffb7ecab3a",
+  "createdAt": "2026-11-16T08:41:54.403Z",
+  "updatedAt": "2026-11-16T08:42:40.378Z",
+  "isArchived": false,
+  "versionId": "0c35b305-5d72-402b-b8c9-07ffb7ecab3a",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "094a8e01-8fb5-4421-acc5-6d30e3f87762",
+      "name": "Receive request",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        96
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "mode",
+              "type": "string"
+            },
+            {
+              "name": "product",
+              "type": "string"
+            },
+            {
+              "name": "rows",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "7caf88e3-ec4c-45f9-8314-0500b5731cf7",
+      "name": "Read or append",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputKey": "read",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.mode }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "read"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "append",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.mode }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "append"
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b078ac4c-888c-4d3a-bc8d-6e9ad054f40c",
+      "name": "Read table (read-only)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/drive/items/01O3V7XRR2CCDQ75BZXZHZ6ORHP5OOMSFI/workbook/tables/Learnings/range?$select=values",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+        "options": {}
+      },
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "QCA5rX8Iyd1rbChu",
+          "name": "Microsoft Drive - Maria Sica account"
+        }
+      }
+    },
+    {
+      "id": "bc87f87b-fe1e-4610-a62b-b923d1f95611",
+      "name": "Active learnings for product",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const vals = $input.first().json.values || [];\nconst head = (vals[0] || []).map(h => String(h).trim());\nconst want = String($('Receive request').first().json.product || '').trim().toLowerCase();\nconst toDate = v => (typeof v === 'number' || /^\\d{5}$/.test(String(v))) ? new Date(Date.UTC(1899, 11, 30) + Number(v) * 86400000).toISOString().slice(0, 10) : String(v);\nconst out = [];\nfor (let i = 1; i < vals.length; i++) {\n  const r = {}; head.forEach((h, j) => r[h] = vals[i][j] === null || vals[i][j] === undefined ? '' : String(vals[i][j]).trim());\n  if (!r['Finding pattern'] && !r['Reason']) continue;\n  if ((r['Status'] || 'Active').toLowerCase() === 'retired') continue;\n  const scope = (r['Scope'] || 'Product').toLowerCase();\n  if (want && scope !== 'global' && (r['Product'] || '').toLowerCase() !== want) continue;\n  out.push({ row: i + 1, date: r['Date'] ? toDate(r['Date']) : '', product: r['Product'], check: r['Check'], finding_pattern: r['Finding pattern'], decision: r['Decision'], reason: r['Reason'], scope: r['Scope'] || 'Product', decided_by: r['Decided by'], source_workbook: r['Source workbook'] });\n}\nreturn [{ json: { count: out.length, product: want || 'all', learnings: out, note: 'Shared learnings from every i18n-readiness run (SHARED COMPANY FOLDER I18N/AI AUDITS/i18n readiness learnings.xlsx). Apply them before reporting: skip findings matching a Rejected learning, keep Rules.' } }];"
+      }
+    },
+    {
+      "id": "82d69b4b-5b18-48ea-984e-509c79ffcba9",
+      "name": "Validate and clean rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        192
+      ],
+      "parameters": {
+        "jsCode": "let rows;\ntry { rows = JSON.parse($input.first().json.rows || '[]'); } catch (e) { throw new Error('rows must be a JSON array string'); }\nif (!Array.isArray(rows) || rows.length === 0) throw new Error('rows must be a non-empty JSON array');\nif (rows.length > 50) throw new Error('max 50 rows per call');\nconst clean = (v, max) => { let s = String(v === undefined || v === null ? '' : v).replace(/[\\r\\n\\t]+/g, ' ').trim().slice(0, max); if (/^[=+\\-@]/.test(s)) s = \"'\" + s; return s; };\nconst today = new Date().toISOString().slice(0, 10);\nconst values = rows.map((r, i) => {\n  const d = clean(r.decision, 20);\n  if (!['Rejected', 'Approved'].includes(d)) throw new Error('row ' + (i + 1) + ': decision must be Rejected or Approved');\n  for (const k of ['product', 'check', 'finding_pattern', 'reason']) if (!clean(r[k], 10)) throw new Error('row ' + (i + 1) + ': ' + k + ' is required');\n  return [today, clean(r.product, 60), clean(r.check, 80), clean(r.finding_pattern, 500), d, clean(r.reason, 500), 'Product', clean(r.decided_by, 80), clean(r.source_workbook, 400), 'Active'];\n});\nreturn [{ json: { values } }];"
+      }
+    },
+    {
+      "id": "e28e12c2-6e5f-4023-aa3a-56ec0e799eda",
+      "name": "Append rows (append-only)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/drive/items/01O3V7XRR2CCDQ75BZXZHZ6ORHP5OOMSFI/workbook/tables/Learnings/rows/add",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ values: $json.values }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "QCA5rX8Iyd1rbChu",
+          "name": "Microsoft Drive - Maria Sica account"
+        }
+      }
+    },
+    {
+      "id": "f35cd7df-9366-4545-b818-a428b9e5e960",
+      "name": "Confirm append",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        896,
+        192
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a",
+              "name": "added",
+              "value": "={{ $('Validate and clean rows').first().json.values.length }}",
+              "type": "number"
+            },
+            {
+              "id": "b",
+              "name": "stored_in",
+              "value": "SHARED COMPANY FOLDER I18N/AI AUDITS/i18n readiness learnings.xlsx",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Receive request": {
+      "main": [
+        [
+          {
+            "node": "Read or append",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read or append": {
+      "main": [
+        [
+          {
+            "node": "Read table (read-only)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validate and clean rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read table (read-only)": {
+      "main": [
+        [
+          {
+            "node": "Active learnings for product",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate and clean rows": {
+      "main": [
+        [
+          {
+            "node": "Append rows (append-only)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append rows (append-only)": {
+      "main": [
+        [
+          {
+            "node": "Confirm append",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "jKDjMYUmIPBaArEn",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-16T08:41:54.406Z",
+      "updatedAt": "2026-11-16T08:41:54.406Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "0c35b305-5d72-402b-b8c9-07ffb7ecab3a",
+    "workflowId": "jKDjMYUmIPBaArEn",
+    "nodes": [
+      {
+        "id": "094a8e01-8fb5-4421-acc5-6d30e3f87762",
+        "name": "Receive request",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          0,
+          96
+        ],
+        "parameters": {
+          "inputSource": "workflowInputs",
+          "workflowInputs": {
+            "values": [
+              {
+                "name": "mode",
+                "type": "string"
+              },
+              {
+                "name": "product",
+                "type": "string"
+              },
+              {
+                "name": "rows",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "7caf88e3-ec4c-45f9-8314-0500b5731cf7",
+        "name": "Read or append",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.2,
+        "position": [
+          224,
+          96
+        ],
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "outputKey": "read",
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "loose"
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.mode }}",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      },
+                      "rightValue": "read"
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              },
+              {
+                "outputKey": "append",
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "loose"
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.mode }}",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      },
+                      "rightValue": "append"
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              }
+            ]
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "b078ac4c-888c-4d3a-bc8d-6e9ad054f40c",
+        "name": "Read table (read-only)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          448,
+          0
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://graph.microsoft.com/v1.0/me/drive/items/01O3V7XRR2CCDQ75BZXZHZ6ORHP5OOMSFI/workbook/tables/Learnings/range?$select=values",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+          "options": {}
+        },
+        "credentials": {
+          "microsoftOneDriveOAuth2Api": {
+            "id": "QCA5rX8Iyd1rbChu",
+            "name": "Microsoft Drive - Maria Sica account"
+          }
+        }
+      },
+      {
+        "id": "bc87f87b-fe1e-4610-a62b-b923d1f95611",
+        "name": "Active learnings for product",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          672,
+          0
+        ],
+        "parameters": {
+          "jsCode": "const vals = $input.first().json.values || [];\nconst head = (vals[0] || []).map(h => String(h).trim());\nconst want = String($('Receive request').first().json.product || '').trim().toLowerCase();\nconst toDate = v => (typeof v === 'number' || /^\\d{5}$/.test(String(v))) ? new Date(Date.UTC(1899, 11, 30) + Number(v) * 86400000).toISOString().slice(0, 10) : String(v);\nconst out = [];\nfor (let i = 1; i < vals.length; i++) {\n  const r = {}; head.forEach((h, j) => r[h] = vals[i][j] === null || vals[i][j] === undefined ? '' : String(vals[i][j]).trim());\n  if (!r['Finding pattern'] && !r['Reason']) continue;\n  if ((r['Status'] || 'Active').toLowerCase() === 'retired') continue;\n  const scope = (r['Scope'] || 'Product').toLowerCase();\n  if (want && scope !== 'global' && (r['Product'] || '').toLowerCase() !== want) continue;\n  out.push({ row: i + 1, date: r['Date'] ? toDate(r['Date']) : '', product: r['Product'], check: r['Check'], finding_pattern: r['Finding pattern'], decision: r['Decision'], reason: r['Reason'], scope: r['Scope'] || 'Product', decided_by: r['Decided by'], source_workbook: r['Source workbook'] });\n}\nreturn [{ json: { count: out.length, product: want || 'all', learnings: out, note: 'Shared learnings from every i18n-readiness run (SHARED COMPANY FOLDER I18N/AI AUDITS/i18n readiness learnings.xlsx). Apply them before reporting: skip findings matching a Rejected learning, keep Rules.' } }];"
+        }
+      },
+      {
+        "id": "82d69b4b-5b18-48ea-984e-509c79ffcba9",
+        "name": "Validate and clean rows",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          448,
+          192
+        ],
+        "parameters": {
+          "jsCode": "let rows;\ntry { rows = JSON.parse($input.first().json.rows || '[]'); } catch (e) { throw new Error('rows must be a JSON array string'); }\nif (!Array.isArray(rows) || rows.length === 0) throw new Error('rows must be a non-empty JSON array');\nif (rows.length > 50) throw new Error('max 50 rows per call');\nconst clean = (v, max) => { let s = String(v === undefined || v === null ? '' : v).replace(/[\\r\\n\\t]+/g, ' ').trim().slice(0, max); if (/^[=+\\-@]/.test(s)) s = \"'\" + s; return s; };\nconst today = new Date().toISOString().slice(0, 10);\nconst values = rows.map((r, i) => {\n  const d = clean(r.decision, 20);\n  if (!['Rejected', 'Approved'].includes(d)) throw new Error('row ' + (i + 1) + ': decision must be Rejected or Approved');\n  for (const k of ['product', 'check', 'finding_pattern', 'reason']) if (!clean(r[k], 10)) throw new Error('row ' + (i + 1) + ': ' + k + ' is required');\n  return [today, clean(r.product, 60), clean(r.check, 80), clean(r.finding_pattern, 500), d, clean(r.reason, 500), 'Product', clean(r.decided_by, 80), clean(r.source_workbook, 400), 'Active'];\n});\nreturn [{ json: { values } }];"
+        }
+      },
+      {
+        "id": "e28e12c2-6e5f-4023-aa3a-56ec0e799eda",
+        "name": "Append rows (append-only)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          672,
+          192
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://graph.microsoft.com/v1.0/me/drive/items/01O3V7XRR2CCDQ75BZXZHZ6ORHP5OOMSFI/workbook/tables/Learnings/rows/add",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ values: $json.values }) }}",
+          "options": {}
+        },
+        "credentials": {
+          "microsoftOneDriveOAuth2Api": {
+            "id": "QCA5rX8Iyd1rbChu",
+            "name": "Microsoft Drive - Maria Sica account"
+          }
+        }
+      },
+      {
+        "id": "f35cd7df-9366-4545-b818-a428b9e5e960",
+        "name": "Confirm append",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          896,
+          192
+        ],
+        "parameters": {
+          "mode": "manual",
+          "includeOtherFields": false,
+          "assignments": {
+            "assignments": [
+              {
+                "id": "a",
+                "name": "added",
+                "value": "={{ $('Validate and clean rows').first().json.values.length }}",
+                "type": "number"
+              },
+              {
+                "id": "b",
+                "name": "stored_in",
+                "value": "SHARED COMPANY FOLDER I18N/AI AUDITS/i18n readiness learnings.xlsx",
+                "type": "string"
+              }
+            ]
+          },
+          "options": {}
+        }
+      }
+    ],
+    "connections": {
+      "Receive request": {
+        "main": [
+          [
+            {
+              "node": "Read or append",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read or append": {
+        "main": [
+          [
+            {
+              "node": "Read table (read-only)",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Validate and clean rows",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read table (read-only)": {
+        "main": [
+          [
+            {
+              "node": "Active learnings for product",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate and clean rows": {
+        "main": [
+          [
+            {
+              "node": "Append rows (append-only)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Append rows (append-only)": {
+        "main": [
+          [
+            {
+              "node": "Confirm append",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Maria Sica (via MCP)",
+    "name": "Return dates as YYYY-MM-DD",
+    "description": "Updated nodes: Active learnings for product",
+    "autosaved": false,
+    "createdAt": "2026-11-16T08:42:40.379Z",
+    "updatedAt": "2026-11-16T08:42:40.379Z",
+    "workflowPublishHistory": [
+      {
+        "id": 3272,
+        "workflowId": "jKDjMYUmIPBaArEn",
+        "versionId": "0c35b305-5d72-402b-b8c9-07ffb7ecab3a",
+        "event": "activated",
+        "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
+        "createdAt": "2026-11-16T08:42:41.788Z"
+      }
+    ]
+  },
+  "parentFolder": null
+}
