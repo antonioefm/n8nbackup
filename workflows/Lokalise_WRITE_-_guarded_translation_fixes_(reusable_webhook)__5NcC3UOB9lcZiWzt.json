@@ -1,14 +1,14 @@
 {
   "id": "5NcC3UOB9lcZiWzt",
   "name": "Lokalise WRITE - guarded translation fixes (reusable webhook)",
-  "description": "DONE 10.11.26: My Image id sentence-case sweep 88/88 (exec 991776, 991777) + fr/de/ro (991743). Params throws.",
+  "description": "DONE 16.11.26: PDFhelp 4790737 caps fixes, round 1 15 strings (exec 1027850/1027854) + round 2 24 strings (exec 1027880/1027881), all read back. Params throws.",
   "active": false,
   "activeVersionId": null,
   "createdAt": "2026-10-28T10:28:11.349Z",
-  "updatedAt": "2026-11-10T14:54:55.287Z",
+  "updatedAt": "2026-11-16T14:08:15.794Z",
   "isArchived": false,
-  "versionId": "0031f44c-7954-4bbe-b978-5c593e2c2f9d",
-  "versionCounter": 35,
+  "versionId": "69911a69-24c9-4bce-9e20-daab2f1391e0",
+  "versionCounter": 43,
   "sourceWorkflowId": null,
   "triggerCount": 1,
   "nodes": [
@@ -41,7 +41,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "throw new Error('locked: last run 10.11.26 My Image Indonesian sentence-case sweep, 88 strings (FE 72 exec 991775+991776, BE 16 exec 991777), read back 88/88. Set CFG before reuse. CFG supports F (translations), descs, archive (key ids).');"
+        "jsCode": "throw new Error('locked: last run 16.11.26 PDFhelp project 479073796a6095e8c10e35.09051894 caps fixes round 2, 24 strings marked reviewed by the 10.08.26 import (reviewed_by = 0, no person) on 22 keys (VI 17, PT 3, SV 2, IT 1, MS 1; test exec 1027880 = 1, full exec 1027881 = 23), read back 24/24, marked unverified. Round 1: exec 1027850 + 1027854, 15 strings. Get Contributors node added for the reviewer guard. Set CFG before reuse.');"
       }
     },
     {
@@ -55,7 +55,7 @@
       ],
       "parameters": {
         "method": "GET",
-        "url": "=https://api.lokalise.com/api2/projects/{{ $json.pid }}/keys?include_translations=1&limit=500&filter_archived=include&filter_key_ids={{ $json.ids }}",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $('Params').first().json.pid }}/keys?include_translations=1&limit=500&filter_archived=include&filter_key_ids={{ $('Params').first().json.ids }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {
@@ -80,7 +80,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const cfg = $('Params').first().json;\nconst same = (a, b) => { if (a == null) a = ''; if (b == null) b = ''; if (a === b) return true; try { return JSON.stringify(typeof a === 'string' ? JSON.parse(a) : a) === JSON.stringify(typeof b === 'string' ? JSON.parse(b) : b); } catch (e) { return false; } };\nconst live = {}; const ldesc = {}; const larch = {}; for (const k of ($('Get Current').first().json.keys || [])) { larch[k.key_id] = !!k.is_archived; if (k.is_archived) continue; ldesc[k.key_id] = String(k.description || ''); for (const t of (k.translations||[])) live[k.key_id + '|' + t.language_iso] = t.translation; }\nconst per = {}; const held = [];\nfor (const [id, iso, oldT, newT] of (cfg.F || [])) { const l = live[id + '|' + iso]; if (!same(l, oldT)) { held.push([id, iso, 'changed since read']); continue; } const tr = { language_iso: iso, translation: newT, is_unverified: true }; if (cfg.status) tr.custom_translation_status_ids = [cfg.status]; (per[id] = per[id] || []).push(tr); }\nconst descOut = {}; for (const id in (cfg.descs || {})) { if (ldesc[id] === undefined) { held.push([id, 'desc', 'key missing/archived']); continue; } if (ldesc[id].trim()) { held.push([id, 'desc', 'description exists']); continue; } descOut[id] = cfg.descs[id]; }\nconst arch = {}; for (const id of (cfg.archive || [])) { if (larch[id] === undefined) { held.push([id, 'archive', 'key missing']); continue; } if (larch[id]) { held.push([id, 'archive', 'already archived']); continue; } arch[id] = true; }\nconst allIds = Array.from(new Set(Object.keys(per).concat(Object.keys(descOut)).concat(Object.keys(arch))));\nlet keys = allIds.map(id => { const k = { key_id: Number(id) }; if (per[id]) k.translations = per[id]; if (descOut[id] !== undefined) k.description = descOut[id]; if (arch[id]) k.is_archived = true; return k; });\nif (cfg.mode === 'one') keys = keys.slice(0, 1);\nconst out = []; for (let i = 0; i < keys.length; i += 40) out.push({ json: { body: { keys: keys.slice(i, i + 40) }, n: keys.slice(i, i + 40).reduce((a, k) => a + (k.translations || []).length, 0), descs: keys.slice(i, i + 40).filter(k => k.description !== undefined).length, archived: keys.slice(i, i + 40).filter(k => k.is_archived).length, held } });\nif (!out.length) throw new Error('nothing to write: ' + JSON.stringify(held.slice(0, 20)));\nreturn out;"
+        "jsCode": "const cfg = $('Params').first().json;\nconst LING = new Set(cfg.LING);\nconst who = {};\nfor (const c of ($('Get Contributors').first().json.contributors || [])) who[String(c.user_id)] = c.email || '';\nconst live = {};\nfor (const k of ($('Get Current').first().json.keys || [])) for (const t of (k.translations || [])) live[k.key_id + '|' + t.language_iso] = { k, t };\nconst F = []; const held = []; const plan = [];\nfor (const [id, iso, oldT, newT] of cfg.J) {\n  const x = live[id + '|' + iso];\n  if (!x) { held.push([id, iso, 'not found']); continue; }\n  const rb = x.t.reviewed_by != null ? String(x.t.reviewed_by) : '';\n  const reviewer = rb ? (who[rb] || ('user ' + rb)) : '';\n  const row = { id, iso, reviewed: !!x.t.is_reviewed, reviewer, editor: x.t.modified_by_email || '' };\n  plan.push(row);\n  if (x.k.is_archived) { held.push([id, iso, 'archived']); continue; }\n  if (x.t.translation === newT) { held.push([id, iso, 'already fixed']); continue; }\n  if (x.t.translation !== oldT) { held.push([id, iso, 'changed since audit']); continue; }\n  if (LING.has(row.editor)) { held.push([id, iso, 'linguist edit']); continue; }\n  if (x.t.is_reviewed && rb && rb !== '0' && !who[rb]) { held.push([id, iso, 'reviewer unknown: ' + rb]); continue; }\n  if (x.t.is_reviewed && LING.has(who[rb])) { held.push([id, iso, 'reviewed by linguist']); continue; }\n  F.push([id, iso, oldT, newT]);\n}\nif (cfg.mode === 'dry') throw new Error('DRY ' + JSON.stringify({ writable: F.map(f => f[0] + '|' + f[1]), held, plan, contributors: Object.keys(who).length, sample_keys: Object.keys(($('Get Current').first().json.keys || [{}])[0].translations?.[0] || {}) }));\nlet sendF = cfg.mode === 'one' ? F.slice(0, 1) : F;\nconst per = {}; const order = [];\nfor (const [id, iso, o, n] of sendF) { if (!per[id]) { per[id] = []; order.push(id); } per[id].push({ language_iso: iso, translation: n, is_unverified: true }); }\nconst keys = order.map(id => ({ key_id: Number(id), translations: per[id] }));\nif (!keys.length) throw new Error('nothing to write; held ' + JSON.stringify(held));\nconst out = [];\nfor (let i = 0; i < keys.length; i += 40) out.push({ json: { body: { keys: keys.slice(i, i + 40) }, n: keys.slice(i, i + 40).reduce((a, k) => a + k.translations.length, 0), held, keys_seen: Object.keys(live).length, planned_total: F.length, F: i === 0 ? sendF : [] } });\nreturn out;"
       }
     },
     {
@@ -154,7 +154,32 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const cfg = $('Params').first().json;\nconst same = (a, b) => { if (a === b) return true; try { return JSON.stringify(typeof a === 'string' ? JSON.parse(a) : a) === JSON.stringify(typeof b === 'string' ? JSON.parse(b) : b); } catch (e) { return false; } };\nconst live = {}; const ldesc = {}; const larch = {}; for (const k of ($('Read Back').first().json.keys || [])) { larch[k.key_id] = !!k.is_archived; ldesc[k.key_id] = String(k.description || ''); for (const t of (k.translations||[])) live[k.key_id + '|' + t.language_iso] = t; }\nlet fixed = 0, unver = 0, status = 0; const notFixed = [];\nfor (const [id, iso, oldT, newT] of (cfg.F || [])) { const t = live[id + '|' + iso] || {}; if (same(t.translation, newT)) { fixed++; if (t.is_unverified) unver++; if ((t.custom_translation_statuses || []).some(s => s.status_id === cfg.status)) status++; } else notFixed.push([id, iso, t.translation]); }\nlet descOk = 0; const descBad = []; for (const id in (cfg.descs || {})) { if (ldesc[id] === cfg.descs[id]) descOk++; else descBad.push([id, ldesc[id].slice(0, 80)]); }\nlet archivedOk = 0; const notArchived = []; for (const id of (cfg.archive || [])) { if (larch[id]) archivedOk++; else notArchived.push(id); }\nconst b = $('Build').all();\nreturn [{ json: { sent: b.reduce((a, i) => a + i.json.n, 0), descsSent: b.reduce((a, i) => a + (i.json.descs || 0), 0), archiveSent: b.reduce((a, i) => a + (i.json.archived || 0), 0), held: b[0].json.held, fixedNow: fixed, unverified: unver, withStatus: status, notFixed, descOk, descBad, archivedOk, notArchived } }];"
+        "jsCode": "const b = $('Build').all();\nconst F = b[0].json.F;\nconst live = {}; for (const k of ($('Read Back').first().json.keys || [])) for (const t of (k.translations||[])) live[k.key_id + '|' + t.language_iso] = t;\nlet fixed = 0, unver = 0; const notFixed = [];\nfor (const [id, iso, oldT, newT] of F) { const t = live[id + '|' + iso] || {}; if (t.translation === newT) { fixed++; if (t.is_unverified) unver++; } else notFixed.push([id, iso, String(t.translation).slice(0, 80)]); }\nreturn [{ json: { sent: b.reduce((a, i) => a + i.json.n, 0), planned_total: b[0].json.planned_total, keys_seen: b[0].json.keys_seen, held: b[0].json.held, fixedNow: fixed, unverified: unver, notFixed: notFixed.slice(0, 50), notFixedCount: notFixed.length } }];"
+      }
+    },
+    {
+      "id": "fa0e7bf2-dfe2-4864-ae63-11ce02019c08",
+      "name": "Get Contributors",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        336,
+        200
+      ],
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "GET",
+        "options": {
+          "timeout": 120000
+        },
+        "url": "=https://api.lokalise.com/api2/projects/{{ $('Params').first().json.pid }}/contributors?limit=500"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
       }
     }
   ],
@@ -164,17 +189,6 @@
         [
           {
             "node": "Params",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Params": {
-      "main": [
-        [
-          {
-            "node": "Get Current",
             "type": "main",
             "index": 0
           }
@@ -219,6 +233,28 @@
         [
           {
             "node": "Compare",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Params": {
+      "main": [
+        [
+          {
+            "node": "Get Contributors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Contributors": {
+      "main": [
+        [
+          {
+            "node": "Get Current",
             "type": "main",
             "index": 0
           }
