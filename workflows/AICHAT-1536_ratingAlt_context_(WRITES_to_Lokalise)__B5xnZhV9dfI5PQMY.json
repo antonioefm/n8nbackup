@@ -1,0 +1,350 @@
+{
+  "id": "B5xnZhV9dfI5PQMY",
+  "name": "AICHAT-1536 ratingAlt context (WRITES to Lokalise)",
+  "description": null,
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-16T10:30:41.568Z",
+  "updatedAt": "2026-11-16T10:31:50.769Z",
+  "isArchived": false,
+  "versionId": "83e8ccff-cf4e-4597-8729-02a5159529e7",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "b717045b-d8f1-47b2-b088-c70df9b85e07",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a1f15877-7e85-4309-971f-f20558ff577b",
+      "name": "Params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Payload for AICHAT-1536 ratingAlt writes. only_key_ids: [] = all keys.\nreturn [{ json: {\"project_id\": \"691331356a3b9a68428ab3.43540470\", \"only_key_ids\": [], \"screenshot_id\": 7191844, \"screenshot_add_key_ids\": [912094440, 966223268, 966223347, 966223447], \"keys\": [{\"key_id\": 912094440, \"description\": \"Alt text for an image (read by screen readers, not visible on the page): the star-rating image next to the social-proof line in the hero of the Background Remover landing page. A noun phrase, not a sentence. \\\"4.9\\\" is the product's average user rating out of 5: keep the number 4.9 and write it with your language's decimal separator (e.g. 4,9). It must match the rating on the Log in or sign up page (auth::ratingScore). Rating changed from 4.8 to 4.9 in AICHAT-1536.\", \"tags\": [\"AICHAT-1536\", \"AICHAT-1702\"]}, {\"key_id\": 926173291, \"description\": \"Alt text for an image (read by screen readers, not visible on the page): the star-rating image next to the social-proof line in the hero of the Image Enhancer landing page. A noun phrase, not a sentence. \\\"4.9\\\" is the product's average user rating out of 5: keep the number 4.9 and write it with your language's decimal separator (e.g. 4,9). It must match the rating on the Log in or sign up page (auth::ratingScore). Rating changed from 4.8 to 4.9 in AICHAT-1536.\", \"tags\": [\"AICHAT-1536\", \"AICHAT-1702\"]}, {\"key_id\": 966223268, \"description\": \"\", \"tags\": [\"AICHAT-1536\", \"AICHAT-1702\"]}, {\"key_id\": 966223347, \"description\": \"\", \"tags\": [\"AICHAT-1536\", \"AICHAT-1702\"]}, {\"key_id\": 966223447, \"description\": \"\", \"tags\": [\"AICHAT-1536\", \"AICHAT-1702\"]}, {\"key_id\": 967550145, \"description\": \"\", \"tags\": [\"AICHAT-1536\", \"AICHAT-1702\"]}]} }];"
+      }
+    },
+    {
+      "id": "906e9da7-9a4a-4b69-80ad-219edf0cebdb",
+      "name": "Get Current",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?include_screenshots=1&limit=500&filter_key_ids={{ $json.keys.map(k => k.key_id).join(\",\") }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "a2eb8614-866e-4fc3-8ae4-c7c420b036bf",
+      "name": "Build",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst p = $('Params').first().json;\nconst cur = ($input.first().json.body && $input.first().json.body.keys) || [];\nconst byId = {}; for (const k of cur) { byId[k.key_id] = k; }\nconst out = []; const skipped = [];\nfor (const want of p.keys) {\n  if (p.only_key_ids.length && p.only_key_ids.indexOf(want.key_id) === -1) { continue; }\n  const k = byId[want.key_id];\n  if (!k || k.is_archived) { skipped.push({ key_id: want.key_id, why: 'missing or archived' }); continue; }\n  const have = k.tags || [];\n  const add = want.tags.filter(t => have.indexOf(t) === -1);\n  const row = { key_id: want.key_id };\n  if (add.length) { row.tags = add; row.merge_tags = true; }\n  if (want.description && !(k.description || '').trim()) { row.description = want.description; }\n  else if (want.description) { skipped.push({ key_id: want.key_id, why: 'description not empty, kept' }); }\n  if (row.tags || row.description) { out.push(row); }\n}\nif (!out.length) { return []; }\nreturn [{ json: { body: { keys: out }, skipped: skipped, before: cur.map(k => ({ key_id: k.key_id, tags: k.tags, description: k.description })) } }];\n"
+      }
+    },
+    {
+      "id": "dc4e266c-9e3b-46cd-9ea2-ec601f79bb39",
+      "name": "PUT Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $(\"Params\").first().json.project_id }}/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "id": "77c389d0-3461-4666-9003-eaa644d80878",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst sent = $('Build').first().json.body.keys;\nconst before = $('Build').first().json.before;\nconst res = ($input.first().json.body && $input.first().json.body.keys) || [];\nconst errors = ($input.first().json.body && $input.first().json.body.errors) || [];\nconst rep = [];\nfor (const s of sent) {\n  const r = res.find(x => x.key_id === s.key_id) || {};\n  const b = before.find(x => x.key_id === s.key_id) || { tags: [] };\n  const tags = r.tags || [];\n  rep.push({ key_id: s.key_id, name: r.key_name && r.key_name.web,\n    new_tags_ok: (s.tags || []).every(t => tags.indexOf(t) !== -1),\n    old_tags_kept: (b.tags || []).every(t => tags.indexOf(t) !== -1),\n    description_ok: s.description ? r.description === s.description : null, tags: tags });\n}\nreturn [{ json: { summary_marker: 1, status: $input.first().json.statusCode, errors: errors, report: rep, skipped: $('Build').first().json.skipped } }];\n"
+      }
+    },
+    {
+      "id": "3fc84403-e108-4b49-a11a-552326451976",
+      "name": "Get Screenshot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        400,
+        200
+      ],
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "GET",
+        "options": {},
+        "url": "={{ 'https://api.lokalise.com/api2/projects/' + $json.project_id + '/screenshots/' + $json.screenshot_id }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "d125b6e2-cc11-4476-8480-ca042c892bb3",
+      "name": "Build Shot",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const p = $('Params').first().json;\nconst s = $input.first().json.screenshot;\nconst have = s.key_ids || [];\nconst add = p.screenshot_add_key_ids.filter(id => have.indexOf(id) === -1);\nif (!add.length) { return []; }\nreturn [{ json: { before: have, add: add, body: { key_ids: have.concat(add) } } }];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "1db217be-8a35-412f-8efc-ad622e0f1e29",
+      "name": "PUT Screenshot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        800,
+        200
+      ],
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "contentType": "json",
+        "genericAuthType": "httpHeaderAuth",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "method": "PUT",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "={{ 'https://api.lokalise.com/api2/projects/' + $('Params').first().json.project_id + '/screenshots/' + $('Params').first().json.screenshot_id }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "id": "a7381352-0211-463b-97c0-96f57163c01c",
+      "name": "Shot Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const b = $('Build Shot').first().json;\nconst s = ($input.first().json.screenshot) || {};\nconst after = s.key_ids || [];\nreturn [{ json: { shot_marker: 1, added_ok: b.add.every(id => after.indexOf(id) !== -1), old_kept: b.before.every(id => after.indexOf(id) !== -1), before_count: b.before.length, after_count: after.length, title: s.title, raw_error: $input.first().json.error || null } }];",
+        "mode": "runOnceForAllItems"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Params": {
+      "main": [
+        [
+          {
+            "node": "Get Current",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Screenshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Current": {
+      "main": [
+        [
+          {
+            "node": "Build",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build": {
+      "main": [
+        [
+          {
+            "node": "PUT Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PUT Keys": {
+      "main": [
+        [
+          {
+            "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Screenshot": {
+      "main": [
+        [
+          {
+            "node": "Build Shot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Shot": {
+      "main": [
+        [
+          {
+            "node": "PUT Screenshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PUT Screenshot": {
+      "main": [
+        [
+          {
+            "node": "Shot Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "B5xnZhV9dfI5PQMY",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-16T10:30:41.571Z",
+      "updatedAt": "2026-11-16T10:30:41.571Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
