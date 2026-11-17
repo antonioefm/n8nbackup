@@ -1,14 +1,14 @@
 {
   "id": "D1qAft7zKUv4d6W6",
   "name": "i18n pre-check - MCP server",
-  "description": "Shared read-only MCP server for the i18n skills: Lokalise (projects, EN source, translations, glossary) and GitHub (tree, files, PR diff). Jira, Confluence, OneDrive and Figma go through each user's own connectors. Bearer auth.",
+  "description": "Shared read-only MCP server for the i18n skills: Lokalise, GitHub, shared learnings (read + append-only), report upload (create-only). Jira, Confluence, Figma via each user's own connectors. Bearer auth.",
   "active": true,
-  "activeVersionId": "8c3ae19f-35d2-4a46-81fe-b603937e5ab7",
+  "activeVersionId": "94a17de3-1c21-498e-b42a-f1f1b7019662",
   "createdAt": "2026-11-05T08:56:01.143Z",
-  "updatedAt": "2026-11-13T12:43:20.950Z",
+  "updatedAt": "2026-11-16T08:43:05.023Z",
   "isArchived": false,
-  "versionId": "108b80c4-29c7-4f93-996b-d53e4a75db74",
-  "versionCounter": 8,
+  "versionId": "94a17de3-1c21-498e-b42a-f1f1b7019662",
+  "versionCounter": 9,
   "sourceWorkflowId": null,
   "triggerCount": 1,
   "nodes": [
@@ -16,7 +16,7 @@
       "parameters": {
         "authentication": "bearerAuth",
         "path": "i18n-precheck",
-        "instructions": "Shared data layer for the team's i18n skills. Reads only Lokalise (projects, English source, translations, shared glossary) and GitHub (repo tree, files, PR diff) with read-only credentials, and never writes to them. The one write is create_workbook_upload_link: a create-only upload of a new report into SHARED COMPANY FOLDER I18N/AI AUDITS (rename on conflict, never overwrites). Everything else personal goes through the user's own connectors: Confluence product pages and Jira bugs/Tasks through their Atlassian connector, earlier workbooks through their Microsoft 365 access, Figma through their Figma connector. Typical run: get_repo_tree / get_pr_diff -> get_repo_files (batches of 150) -> list_lokalise_projects + get_en_source (compare keys_seen with keys_total) -> get_shared_glossary -> get_translation_lengths -> workbook -> create_workbook_upload_link -> PUT the file."
+        "instructions": "Shared data layer for the team's i18n skills. Reads only Lokalise (projects, English source, translations, shared glossary) and GitHub (repo tree, files, PR diff) with read-only credentials, and never writes to them. Two writes, both create/append-only: create_workbook_upload_link (a new report in SHARED COMPANY FOLDER I18N/AI AUDITS, rename on conflict, never overwrites) and add_shared_learnings (appends reviewed decisions to the shared learnings table; cannot edit or delete). Everything else personal goes through the user's own connectors: Confluence product pages and Jira bugs/Tasks through their Atlassian connector, Figma through their Figma connector. Typical run: get_shared_learnings -> get_repo_tree / get_pr_diff -> get_repo_files (batches of 150) -> list_lokalise_projects + get_en_source (compare keys_seen with keys_total) -> get_shared_glossary -> get_translation_lengths -> workbook -> create_workbook_upload_link -> PUT the file. After the person reviews the workbook: add_shared_learnings."
       },
       "id": "a6778c01-b325-40db-84be-3c03a49456ee",
       "name": "i18n pre-check MCP server",
@@ -780,6 +780,118 @@
         1024,
         336
       ]
+    },
+    {
+      "id": "3ee991d9-5642-4ce8-9cb6-ce979584b650",
+      "name": "get_shared_learnings",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1312,
+        336
+      ],
+      "parameters": {
+        "description": "Read the SHARED learnings of every i18n-readiness run, by anyone (read-only): reviewed decisions with reasons, kept in SHARED COMPANY FOLDER I18N/AI AUDITS/i18n readiness learnings.xlsx. Call it at the start of every run, before building findings. Pass the product name (e.g. 'Chat AI', 'VinReady'); returns that product's Active learnings plus every Global one (empty product = all). Skip or downgrade findings that match a Rejected learning and say so in the report; follow any Rule.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "jKDjMYUmIPBaArEn"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [],
+          "schema": [
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "mode",
+              "id": "mode",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "product",
+              "id": "product",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "rows",
+              "id": "rows",
+              "required": false,
+              "type": "string"
+            }
+          ],
+          "value": {
+            "mode": "read",
+            "product": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('product', 'Product name, e.g. Chat AI. Empty string for all products') }}",
+            "rows": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "6e0deaa9-e5bb-41ee-bea8-168884ed8e3d",
+      "name": "add_shared_learnings",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1440,
+        336
+      ],
+      "parameters": {
+        "description": "APPEND-ONLY: add reviewed decisions to the shared learnings table so every future run, by anyone, learns from them. Call it when the person comes back after reviewing a workbook ('read the sheet'): one row per Rejected row that has a reason, and per Approved row whose pattern is worth remembering. rows = JSON array string, max 50, each {product, check, finding_pattern, decision: 'Rejected'|'Approved', reason, decided_by, source_workbook}. finding_pattern describes the kind of finding in general words (not a one-off cell), so it can match future findings. Rows are always stored as Scope=Product, Status=Active; only Maria promotes to Global or retires. Cannot edit or delete anything.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "jKDjMYUmIPBaArEn"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [],
+          "schema": [
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "mode",
+              "id": "mode",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "product",
+              "id": "product",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "rows",
+              "id": "rows",
+              "required": false,
+              "type": "string"
+            }
+          ],
+          "value": {
+            "mode": "append",
+            "product": "",
+            "rows": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('rows', 'JSON array string of learnings: [{product, check, finding_pattern, decision (Rejected or Approved), reason, decided_by, source_workbook}], max 50') }}"
+          }
+        }
+      }
     }
   ],
   "connections": {
@@ -870,6 +982,28 @@
           }
         ]
       ]
+    },
+    "get_shared_learnings": {
+      "ai_tool": [
+        [
+          {
+            "node": "i18n pre-check MCP server",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "add_shared_learnings": {
+      "ai_tool": [
+        [
+          {
+            "node": "i18n pre-check MCP server",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "nodeGroups": [],
@@ -910,14 +1044,14 @@
     }
   ],
   "activeVersion": {
-    "versionId": "8c3ae19f-35d2-4a46-81fe-b603937e5ab7",
+    "versionId": "94a17de3-1c21-498e-b42a-f1f1b7019662",
     "workflowId": "D1qAft7zKUv4d6W6",
     "nodes": [
       {
         "parameters": {
           "authentication": "bearerAuth",
           "path": "i18n-precheck",
-          "instructions": "Shared data layer for the team's i18n skills. Reads only Lokalise (projects, English source, translations, shared glossary) and GitHub (repo tree, files, PR diff) with read-only credentials, and never writes to them. The one write is create_workbook_upload_link: a create-only upload of a new report into SHARED COMPANY FOLDER I18N/AI AUDITS (rename on conflict, never overwrites). Everything else personal goes through the user's own connectors: Confluence product pages and Jira bugs/Tasks through their Atlassian connector, earlier workbooks through their Microsoft 365 access, Figma through their Figma connector. Typical run: get_repo_tree / get_pr_diff -> get_repo_files (batches of 150) -> list_lokalise_projects + get_en_source (compare keys_seen with keys_total) -> get_shared_glossary -> get_translation_lengths -> workbook -> create_workbook_upload_link -> PUT the file."
+          "instructions": "Shared data layer for the team's i18n skills. Reads only Lokalise (projects, English source, translations, shared glossary) and GitHub (repo tree, files, PR diff) with read-only credentials, and never writes to them. Two writes, both create/append-only: create_workbook_upload_link (a new report in SHARED COMPANY FOLDER I18N/AI AUDITS, rename on conflict, never overwrites) and add_shared_learnings (appends reviewed decisions to the shared learnings table; cannot edit or delete). Everything else personal goes through the user's own connectors: Confluence product pages and Jira bugs/Tasks through their Atlassian connector, Figma through their Figma connector. Typical run: get_shared_learnings -> get_repo_tree / get_pr_diff -> get_repo_files (batches of 150) -> list_lokalise_projects + get_en_source (compare keys_seen with keys_total) -> get_shared_glossary -> get_translation_lengths -> workbook -> create_workbook_upload_link -> PUT the file. After the person reviews the workbook: add_shared_learnings."
         },
         "id": "a6778c01-b325-40db-84be-3c03a49456ee",
         "name": "i18n pre-check MCP server",
@@ -1576,19 +1710,11 @@
         "type": "n8n-nodes-base.stickyNote",
         "typeVersion": 1,
         "position": [
-          416,
-          16
+          448,
+          -160
         ]
       },
       {
-        "id": "d272fb2e-97dd-481d-aaff-6e0e860fb8ad",
-        "name": "get_shared_glossary",
-        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
-        "typeVersion": 2.2,
-        "position": [
-          1180,
-          336
-        ],
         "parameters": {
           "description": "Read the shared Lokalise glossary live (read-only): product and brand names, forbidden and non-translatable terms, with their descriptions and translations. Fetch it on every run, never from a cache.",
           "workflowId": {
@@ -1634,17 +1760,17 @@
               "project_id": ""
             }
           }
-        }
-      },
-      {
-        "id": "ce3c2b38-4bf5-4ea4-87b5-99d908a7e43e",
-        "name": "create_workbook_upload_link",
+        },
+        "id": "d272fb2e-97dd-481d-aaff-6e0e860fb8ad",
+        "name": "get_shared_glossary",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          1024,
+          1184,
           336
-        ],
+        ]
+      },
+      {
         "parameters": {
           "description": "Get a short-lived, pre-authenticated OneDrive upload URL for a NEW report file in SHARED COMPANY FOLDER I18N/AI AUDITS/<product>. Pass product as the exact product folder name (BrainIQtest, Chat AI, LoveStyle, Mindspree, Mobitrace, My Image, My QR Code, MyWapp, PDFhelp, Personality, QRcreate, RealChecker, ResumeWise, UniCopy, VinReady); anything else goes to AI AUDITS itself. Create-only: on a name clash the new file is renamed; nothing is ever overwritten, moved or deleted. Then PUT the bytes to upload_url (Content-Length and Content-Range: bytes 0-<size-1>/<size>, no Authorization header); the PUT response has the final name and webUrl.",
           "workflowId": {
@@ -1678,6 +1804,126 @@
             "value": {
               "file_name": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('file_name', 'Workbook file name, \"dd.mm.yy <Product> readiness.xlsx\"') }}",
               "product": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('product', 'Product folder, exactly one of: BrainIQtest, Chat AI, LoveStyle, Mindspree, Mobitrace, My Image, My QR Code, MyWapp, PDFhelp, Personality, QRcreate, RealChecker, ResumeWise, UniCopy, VinReady. Empty string if none fits (file goes to AI AUDITS)') }}"
+            }
+          }
+        },
+        "id": "ce3c2b38-4bf5-4ea4-87b5-99d908a7e43e",
+        "name": "create_workbook_upload_link",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1024,
+          336
+        ]
+      },
+      {
+        "id": "3ee991d9-5642-4ce8-9cb6-ce979584b650",
+        "name": "get_shared_learnings",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1312,
+          336
+        ],
+        "parameters": {
+          "description": "Read the SHARED learnings of every i18n-readiness run, by anyone (read-only): reviewed decisions with reasons, kept in SHARED COMPANY FOLDER I18N/AI AUDITS/i18n readiness learnings.xlsx. Call it at the start of every run, before building findings. Pass the product name (e.g. 'Chat AI', 'VinReady'); returns that product's Active learnings plus every Global one (empty product = all). Skip or downgrade findings that match a Rejected learning and say so in the report; follow any Rule.",
+          "workflowId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "jKDjMYUmIPBaArEn"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "matchingColumns": [],
+            "schema": [
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "mode",
+                "id": "mode",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "product",
+                "id": "product",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "rows",
+                "id": "rows",
+                "required": false,
+                "type": "string"
+              }
+            ],
+            "value": {
+              "mode": "read",
+              "product": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('product', 'Product name, e.g. Chat AI. Empty string for all products') }}",
+              "rows": ""
+            }
+          }
+        }
+      },
+      {
+        "id": "6e0deaa9-e5bb-41ee-bea8-168884ed8e3d",
+        "name": "add_shared_learnings",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1440,
+          336
+        ],
+        "parameters": {
+          "description": "APPEND-ONLY: add reviewed decisions to the shared learnings table so every future run, by anyone, learns from them. Call it when the person comes back after reviewing a workbook ('read the sheet'): one row per Rejected row that has a reason, and per Approved row whose pattern is worth remembering. rows = JSON array string, max 50, each {product, check, finding_pattern, decision: 'Rejected'|'Approved', reason, decided_by, source_workbook}. finding_pattern describes the kind of finding in general words (not a one-off cell), so it can match future findings. Rows are always stored as Scope=Product, Status=Active; only Maria promotes to Global or retires. Cannot edit or delete anything.",
+          "workflowId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "jKDjMYUmIPBaArEn"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "matchingColumns": [],
+            "schema": [
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "mode",
+                "id": "mode",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "product",
+                "id": "product",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "canBeUsedToMatch": true,
+                "defaultMatch": false,
+                "display": true,
+                "displayName": "rows",
+                "id": "rows",
+                "required": false,
+                "type": "string"
+              }
+            ],
+            "value": {
+              "mode": "append",
+              "product": "",
+              "rows": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('rows', 'JSON array string of learnings: [{product, check, finding_pattern, decision (Rejected or Approved), reason, decided_by, source_workbook}], max 50') }}"
             }
           }
         }
@@ -1771,23 +2017,45 @@
             }
           ]
         ]
+      },
+      "get_shared_learnings": {
+        "ai_tool": [
+          [
+            {
+              "node": "i18n pre-check MCP server",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "add_shared_learnings": {
+        "ai_tool": [
+          [
+            {
+              "node": "i18n pre-check MCP server",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
       }
     },
     "nodeGroups": [],
     "authors": "Maria Sica (via MCP)",
-    "name": "Upload tool takes the product folder",
-    "description": "Updated nodes: create_workbook_upload_link",
+    "name": "Add shared learnings tools (read + append-only)",
+    "description": "Added nodes: get_shared_learnings, add_shared_learnings\nUpdated nodes: i18n pre-check MCP server\nConnections: 2 added, 0 removed",
     "autosaved": false,
-    "createdAt": "2026-11-13T07:28:53.883Z",
-    "updatedAt": "2026-11-13T07:28:53.883Z",
+    "createdAt": "2026-11-16T08:43:05.024Z",
+    "updatedAt": "2026-11-16T08:43:05.024Z",
     "workflowPublishHistory": [
       {
-        "id": 3255,
+        "id": 3274,
         "workflowId": "D1qAft7zKUv4d6W6",
-        "versionId": "8c3ae19f-35d2-4a46-81fe-b603937e5ab7",
+        "versionId": "94a17de3-1c21-498e-b42a-f1f1b7019662",
         "event": "activated",
         "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
-        "createdAt": "2026-11-13T07:28:57.146Z"
+        "createdAt": "2026-11-16T08:43:06.644Z"
       }
     ]
   },
