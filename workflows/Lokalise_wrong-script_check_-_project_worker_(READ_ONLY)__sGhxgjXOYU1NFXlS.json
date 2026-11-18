@@ -1,0 +1,252 @@
+{
+  "id": "sGhxgjXOYU1NFXlS",
+  "name": "Lokalise wrong-script check - project worker (READ ONLY)",
+  "description": "READ ONLY sub-workflow: one Lokalise project + language chunk per call. Flags target translations with characters from a script the language doesn't use (e.g. 谋 in Turkish) or encoding garbage (Ã©, â€™). Returns hits only.",
+  "active": true,
+  "activeVersionId": "228c6620-f197-4d9c-861e-0de5db1d5351",
+  "createdAt": "2026-11-17T09:25:32.518Z",
+  "updatedAt": "2026-11-17T09:32:03.725Z",
+  "isArchived": false,
+  "versionId": "228c6620-f197-4d9c-861e-0de5db1d5351",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "fcebfecc-ab10-4a78-bf16-ffb6f927dcee",
+      "name": "When called",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "44e2b334-1361-401c-82e1-133b4eafcf76",
+      "name": "Fetch keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.pid }}/keys?include_translations=1&disable_references=1&filter_archived=exclude&filter_translation_lang_ids={{ $json.lang_ids }}&limit=500&page={{ $json.page }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "81c063e4-6610-449e-9ed8-54e514f6a1ad",
+      "name": "Scan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Wrong-script / mojibake scan of one Lokalise project (+ language chunk). READ ONLY.\n// Flags TARGET translations that contain characters from a writing system the target\n// language does not use (e.g. Chinese 谋 inside Turkish \"haz谋r!\"), or classic encoding\n// garbage (Ã©, â€™, Ä±, U+FFFD). Latin is always allowed (brand names, formats).\nconst inp = $('When called').first().json;\nconst base = String(inp.base_iso || 'en').toLowerCase();\nconst pages = $input.all().map(function (i) { return i.json || {}; });\nlet keys = []; let err = null;\nfor (const p of pages) {\n  if (p.statusCode && p.statusCode !== 200) { err = 'HTTP ' + p.statusCode + ' ' + JSON.stringify(p.body || '').slice(0, 200); continue; }\n  const b = p.body || p;\n  if (Array.isArray(b.keys)) { keys = keys.concat(b.keys); }\n  else if (!err) { err = 'no keys array: ' + JSON.stringify(b).slice(0, 200); }\n}\nconst SCRIPTS = ['Han','Hiragana','Katakana','Hangul','Cyrillic','Greek','Arabic','Hebrew','Thai','Devanagari','Georgian','Armenian','Bengali','Tamil','Ethiopic','Khmer','Lao','Myanmar'];\nconst RX = {}; for (const s of SCRIPTS) { RX[s] = new RegExp('\\\\p{Script=' + s + '}', 'u'); }\nconst ALLOW = { el: ['Greek'], uk: ['Cyrillic'], ru: ['Cyrillic'], bg: ['Cyrillic'], sr: ['Cyrillic'], mk: ['Cyrillic'], kk: ['Cyrillic'], be: ['Cyrillic'], mn: ['Cyrillic'],\n  ja: ['Han','Hiragana','Katakana'], zh: ['Han'], ko: ['Hangul','Han'], th: ['Thai'], ar: ['Arabic'], fa: ['Arabic'], ur: ['Arabic'], he: ['Hebrew'], hi: ['Devanagari'], mr: ['Devanagari'], ne: ['Devanagari'],\n  ka: ['Georgian'], hy: ['Armenian'], bn: ['Bengali'], ta: ['Tamil'], am: ['Ethiopic'], km: ['Khmer'], lo: ['Lao'], my: ['Myanmar'] };\nconst MOJI = /[ÃÂÄÅÐÑ][\\u0080-\\u009F\\u00A1-\\u00BF]|â€|ï¿½|\\uFFFD/g;\nconst PSEUDO = /^(pst|ps|xx|zz|qps)$|pseudo|[_-]ps$/i;\nfunction lang(iso) { return String(iso || '').toLowerCase().split(/[-_]/)[0]; }\nfunction scriptOf(ch) { for (const s of SCRIPTS) { if (RX[s].test(ch)) { return s; } } return null; }\nfunction kn(k) { const n = k.key_name || {}; return typeof n === 'string' ? n : (n.web || n.other || n.ios || n.android || ''); }\nconst hits = [];\nfor (const k of keys) {\n  if (k.is_archived) { continue; }\n  const trs = (k.translations || []).filter(function (t) { return typeof t.translation === 'string' && t.translation.trim(); });\n  let src = '';\n  for (const t of trs) { if (String(t.language_iso).toLowerCase() === base) { src = t.translation; } }\n  // characters per locale, to spot intentional cross-locale text (e.g. native language names)\n  const charLocs = {};\n  for (const t of trs) { for (const ch of new Set(Array.from(t.translation))) { if (ch.charCodeAt(0) > 0x2FF) { charLocs[ch] = (charLocs[ch] || 0) + 1; } } }\n  for (const t of trs) {\n    const iso = String(t.language_iso || '').toLowerCase();\n    if (iso === base || PSEUDO.test(iso)) { continue; }\n    const allow = ALLOW[lang(iso)] || [];\n    const bad = {};\n    for (const ch of Array.from(t.translation)) {\n      if (ch.charCodeAt(0) < 0x370) { continue; }\n      const s = scriptOf(ch);\n      if (!s || allow.indexOf(s) !== -1) { continue; }\n      if (src.indexOf(ch) !== -1) { continue; }          // also in the source: intentional\n      if ((charLocs[ch] || 0) >= 4) { continue; }        // same char in 3+ other locales: intentional\n      (bad[s] = bad[s] || {})[ch] = 1;\n    }\n    const moji = (t.translation.match(MOJI) || []).filter(function (m) { return src.indexOf(m) === -1; });\n    const kinds = Object.keys(bad).map(function (s) { return 'script:' + s; });\n    if (moji.length) { kinds.push('mojibake'); }\n    if (!kinds.length) { continue; }\n    const chars = [];\n    for (const s in bad) { for (const c in bad[s]) { chars.push(c + ' U+' + c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')); } }\n    for (const m of new Set(moji)) { chars.push(m); }\n    hits.push({ pid: inp.pid, project: inp.name, key_id: k.key_id, key: kn(k), iso: iso, kinds: kinds.join(','), chars: chars.slice(0, 6).join(' | '),\n      text: t.translation.length > 220 ? t.translation.slice(0, 220) + '…' : t.translation, src: src.length > 160 ? src.slice(0, 160) + '…' : src,\n      modified_at: t.modified_at || '', modified_by: t.modified_by_email || '', translation_id: t.translation_id });\n  }\n}\nreturn [{ json: { pid: inp.pid, name: inp.name, langs: inp.langs, keys_scanned: keys.length, pages: pages.length, error: err, hits: hits } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "When called": {
+      "main": [
+        [
+          {
+            "node": "Fetch keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch keys": {
+      "main": [
+        [
+          {
+            "node": "Scan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Madrid",
+    "saveManualExecutions": false,
+    "saveDataSuccessExecution": "none",
+    "executionTimeout": 900,
+    "callerPolicy": "any"
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "sGhxgjXOYU1NFXlS",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-17T09:25:32.527Z",
+      "updatedAt": "2026-11-17T09:25:32.527Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "228c6620-f197-4d9c-861e-0de5db1d5351",
+    "workflowId": "sGhxgjXOYU1NFXlS",
+    "nodes": [
+      {
+        "id": "fcebfecc-ab10-4a78-bf16-ffb6f927dcee",
+        "name": "When called",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "44e2b334-1361-401c-82e1-133b4eafcf76",
+        "name": "Fetch keys",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          224,
+          0
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "=https://api.lokalise.com/api2/projects/{{ $json.pid }}/keys?include_translations=1&disable_references=1&filter_archived=exclude&filter_translation_lang_ids={{ $json.lang_ids }}&limit=500&page={{ $json.page }}",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true,
+                "neverError": true
+              }
+            },
+            "timeout": 120000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "VW7WtJP8PzJMR813",
+            "name": "Lokalise read-only"
+          }
+        },
+        "onError": "continueRegularOutput",
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 3000
+      },
+      {
+        "id": "81c063e4-6610-449e-9ed8-54e514f6a1ad",
+        "name": "Scan",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          448,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "// Wrong-script / mojibake scan of one Lokalise project (+ language chunk). READ ONLY.\n// Flags TARGET translations that contain characters from a writing system the target\n// language does not use (e.g. Chinese 谋 inside Turkish \"haz谋r!\"), or classic encoding\n// garbage (Ã©, â€™, Ä±, U+FFFD). Latin is always allowed (brand names, formats).\nconst inp = $('When called').first().json;\nconst base = String(inp.base_iso || 'en').toLowerCase();\nconst pages = $input.all().map(function (i) { return i.json || {}; });\nlet keys = []; let err = null;\nfor (const p of pages) {\n  if (p.statusCode && p.statusCode !== 200) { err = 'HTTP ' + p.statusCode + ' ' + JSON.stringify(p.body || '').slice(0, 200); continue; }\n  const b = p.body || p;\n  if (Array.isArray(b.keys)) { keys = keys.concat(b.keys); }\n  else if (!err) { err = 'no keys array: ' + JSON.stringify(b).slice(0, 200); }\n}\nconst SCRIPTS = ['Han','Hiragana','Katakana','Hangul','Cyrillic','Greek','Arabic','Hebrew','Thai','Devanagari','Georgian','Armenian','Bengali','Tamil','Ethiopic','Khmer','Lao','Myanmar'];\nconst RX = {}; for (const s of SCRIPTS) { RX[s] = new RegExp('\\\\p{Script=' + s + '}', 'u'); }\nconst ALLOW = { el: ['Greek'], uk: ['Cyrillic'], ru: ['Cyrillic'], bg: ['Cyrillic'], sr: ['Cyrillic'], mk: ['Cyrillic'], kk: ['Cyrillic'], be: ['Cyrillic'], mn: ['Cyrillic'],\n  ja: ['Han','Hiragana','Katakana'], zh: ['Han'], ko: ['Hangul','Han'], th: ['Thai'], ar: ['Arabic'], fa: ['Arabic'], ur: ['Arabic'], he: ['Hebrew'], hi: ['Devanagari'], mr: ['Devanagari'], ne: ['Devanagari'],\n  ka: ['Georgian'], hy: ['Armenian'], bn: ['Bengali'], ta: ['Tamil'], am: ['Ethiopic'], km: ['Khmer'], lo: ['Lao'], my: ['Myanmar'] };\nconst MOJI = /[ÃÂÄÅÐÑ][\\u0080-\\u009F\\u00A1-\\u00BF]|â€|ï¿½|\\uFFFD/g;\nconst PSEUDO = /^(pst|ps|xx|zz|qps)$|pseudo|[_-]ps$/i;\nfunction lang(iso) { return String(iso || '').toLowerCase().split(/[-_]/)[0]; }\nfunction scriptOf(ch) { for (const s of SCRIPTS) { if (RX[s].test(ch)) { return s; } } return null; }\nfunction kn(k) { const n = k.key_name || {}; return typeof n === 'string' ? n : (n.web || n.other || n.ios || n.android || ''); }\nconst hits = [];\nfor (const k of keys) {\n  if (k.is_archived) { continue; }\n  const trs = (k.translations || []).filter(function (t) { return typeof t.translation === 'string' && t.translation.trim(); });\n  let src = '';\n  for (const t of trs) { if (String(t.language_iso).toLowerCase() === base) { src = t.translation; } }\n  // characters per locale, to spot intentional cross-locale text (e.g. native language names)\n  const charLocs = {};\n  for (const t of trs) { for (const ch of new Set(Array.from(t.translation))) { if (ch.charCodeAt(0) > 0x2FF) { charLocs[ch] = (charLocs[ch] || 0) + 1; } } }\n  for (const t of trs) {\n    const iso = String(t.language_iso || '').toLowerCase();\n    if (iso === base || PSEUDO.test(iso)) { continue; }\n    const allow = ALLOW[lang(iso)] || [];\n    const bad = {};\n    for (const ch of Array.from(t.translation)) {\n      if (ch.charCodeAt(0) < 0x370) { continue; }\n      const s = scriptOf(ch);\n      if (!s || allow.indexOf(s) !== -1) { continue; }\n      if (src.indexOf(ch) !== -1) { continue; }          // also in the source: intentional\n      if ((charLocs[ch] || 0) >= 4) { continue; }        // same char in 3+ other locales: intentional\n      (bad[s] = bad[s] || {})[ch] = 1;\n    }\n    const moji = (t.translation.match(MOJI) || []).filter(function (m) { return src.indexOf(m) === -1; });\n    const kinds = Object.keys(bad).map(function (s) { return 'script:' + s; });\n    if (moji.length) { kinds.push('mojibake'); }\n    if (!kinds.length) { continue; }\n    const chars = [];\n    for (const s in bad) { for (const c in bad[s]) { chars.push(c + ' U+' + c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')); } }\n    for (const m of new Set(moji)) { chars.push(m); }\n    hits.push({ pid: inp.pid, project: inp.name, key_id: k.key_id, key: kn(k), iso: iso, kinds: kinds.join(','), chars: chars.slice(0, 6).join(' | '),\n      text: t.translation.length > 220 ? t.translation.slice(0, 220) + '…' : t.translation, src: src.length > 160 ? src.slice(0, 160) + '…' : src,\n      modified_at: t.modified_at || '', modified_by: t.modified_by_email || '', translation_id: t.translation_id });\n  }\n}\nreturn [{ json: { pid: inp.pid, name: inp.name, langs: inp.langs, keys_scanned: keys.length, pages: pages.length, error: err, hits: hits } }];\n"
+        }
+      }
+    ],
+    "connections": {
+      "When called": {
+        "main": [
+          [
+            {
+              "node": "Fetch keys",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch keys": {
+        "main": [
+          [
+            {
+              "node": "Scan",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Maria Sica (via MCP)",
+    "name": "One page per call (memory)",
+    "description": "The first full run crashed out of memory: a whole project's keys with translations in one sub-execution is too big. Each call now fetches one 500-key page for one language chunk.",
+    "autosaved": false,
+    "createdAt": "2026-11-17T09:32:03.732Z",
+    "updatedAt": "2026-11-17T09:32:03.732Z",
+    "workflowPublishHistory": [
+      {
+        "id": 3278,
+        "workflowId": "sGhxgjXOYU1NFXlS",
+        "versionId": "228c6620-f197-4d9c-861e-0de5db1d5351",
+        "event": "activated",
+        "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
+        "createdAt": "2026-11-17T09:32:07.400Z"
+      }
+    ]
+  },
+  "parentFolder": null
+}
