@@ -1,0 +1,209 @@
+{
+  "id": "tIPzlsKnZ4kEK8i6",
+  "name": "Lokalise corrupted characters scan - all projects (READ ONLY)",
+  "description": "Read-only: scans every Lokalise project's translations for CJK characters in non-CJK languages and mojibake. Config PIDS selects projects per run.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-17T09:28:42.822Z",
+  "updatedAt": "2026-11-17T09:43:16.535Z",
+  "isArchived": false,
+  "versionId": "2c559a65-9641-4e2f-8e66-267c78f0bf26",
+  "versionCounter": 5,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "60056920-54d9-4fbc-b36f-f8c0cc2ec1e1",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "f285ff7d-7929-4871-a19b-16adf1de2588",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Which projects to scan this run. ['ALL'] = every project; [] = list projects only (no scan).\nconst PIDS = ['ALL'];\nreturn [{ json: { pids: PIDS } }];"
+      }
+    },
+    {
+      "id": "fae63081-64b7-4048-a57e-00fa34779b0b",
+      "name": "Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=500&include_statistics=1&include_settings=0",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "af4309df-a368-486e-87d8-dec0b9859c09",
+      "name": "Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const cfg = $('Config').first().json;\nconst ps = ($input.first().json.projects || []);\nconst all = cfg.pids.indexOf('ALL') !== -1;\nconst out = [];\nfor (const p of ps) {\n  if (!all && cfg.pids.indexOf(p.project_id) === -1) { continue; }\n  for (const l of ((p.statistics || {}).languages || [])) { out.push({ json: { pid: p.project_id, name: p.name, lang_id: l.language_id, iso: l.language_iso } }); }\n}\nif (!out.length) { throw new Error('nothing planned'); }\nreturn out;"
+      }
+    },
+    {
+      "id": "ba9b0e46-fb16-4ca0-bc34-140f38cf8443",
+      "name": "Scan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const plan = $('Plan').all().map(function (i) { return i.json; });\nconst res = $input.all().map(function (i) { return i.json || {}; });\nconst hits = []; const failed = []; let checked = 0; const per = {};\nfor (let i = 0; i < plan.length; i++) {\n  const p = plan[i]; const r = res[i] || {};\n  if (!Array.isArray(r.hits)) { failed.push(p.name + ' / ' + p.iso + ': ' + JSON.stringify(r.error || r).slice(0, 150)); continue; }\n  checked += r.checked || 0;\n  per[p.name] = (per[p.name] || 0) + (r.checked || 0);\n  for (const h of r.hits) { hits.push(Object.assign({ project: p.name, pid: p.pid }, h)); }\n}\nreturn [{ json: { GLOBAL_SCAN: { units: plan.length, checked: checked, per_project: per, failed: failed, count: hits.length, hits: hits } } }];"
+      }
+    },
+    {
+      "id": "1c68da2f-8441-451b-ac4e-93ba85fab6ba",
+      "name": "Scan each",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        900,
+        0
+      ],
+      "parameters": {
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        },
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "hhc4ujLYoajTLD6G"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Projects": {
+      "main": [
+        [
+          {
+            "node": "Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan": {
+      "main": [
+        [
+          {
+            "node": "Scan each",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scan each": {
+      "main": [
+        [
+          {
+            "node": "Scan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "tIPzlsKnZ4kEK8i6",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-17T09:28:42.827Z",
+      "updatedAt": "2026-11-17T09:28:42.827Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
