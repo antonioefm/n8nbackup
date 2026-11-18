@@ -1,0 +1,404 @@
+{
+  "id": "RPOeu8bIuJ0nWTas",
+  "name": "Lokalise wrong-script check - nightly (READ ONLY, posts to #i18n-team)",
+  "description": "Nightly 02:30 Madrid: scans every target translation in every Lokalise project for characters from a script the language doesn't use (e.g. 谋 in Turkish) and encoding garbage. Posts to #i18n-team. Manual runs don't post.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-17T09:27:27.266Z",
+  "updatedAt": "2026-11-17T09:32:15.299Z",
+  "isArchived": false,
+  "versionId": "aad8fdcf-fa63-4d5f-a292-7520870ebdb2",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "f24b6589-b617-4445-9420-6eece6067342",
+      "name": "Nightly 02:30",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 2,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "892a5dde-424b-4bd5-bc3f-ad2ee99fc163",
+      "name": "Fetch projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects?limit=500&page=1&include_statistics=1&include_settings=0",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "08ed39db-cf9e-433f-b31e-307e9e19c13c",
+      "name": "Build jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// One job per project x language chunk x 500-key page. Small jobs keep each worker call well inside n8n's memory.\nconst b = $input.first().json || {};\nconst projects = b.projects || (b.body && b.body.projects) || [];\nif (!projects.length) { throw new Error('projects fetch failed: ' + JSON.stringify(b).slice(0, 300)); }\nconst CHUNK = 8;\nconst PAGE = 500;\nconst PSEUDO = /^(pst|ps|xx|zz|qps)$|pseudo|[_-]ps$/i;\nconst jobs = [];\nfor (const p of projects) {\n  const st = p.statistics || {};\n  const langs = st.languages || [];\n  const total = Number(st.keys_total || st.keys || 0);\n  const pages = Math.max(1, Math.ceil(total / PAGE));\n  const baseId = p.base_language_id;\n  const baseIso = p.base_language_iso || 'en';\n  const tg = langs.filter(function (l) { return l.language_id !== baseId && !PSEUDO.test(String(l.language_iso || '')); });\n  for (let i = 0; i < tg.length; i += CHUNK) {\n    const part = tg.slice(i, i + CHUNK);\n    for (let pg = 1; pg <= pages; pg++) {\n      jobs.push({ json: { pid: p.project_id, name: p.name, base_iso: baseIso, page: pg,\n        langs: part.map(function (l) { return l.language_iso; }).join(','),\n        lang_ids: [baseId].concat(part.map(function (l) { return l.language_id; })).join(',') } });\n    }\n  }\n}\nreturn jobs;\n"
+      }
+    },
+    {
+      "id": "a558b09b-f75b-412f-bc73-f2b0667f89d0",
+      "name": "Scan project batch",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        672,
+        96
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "sGhxgjXOYU1NFXlS",
+          "cachedResultName": "Lokalise wrong-script check - project worker (READ ONLY)"
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "680af2bf-0de2-4ea6-9d88-42115e12c645",
+      "name": "Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Aggregates worker results into a Slack summary + threaded detail. Read-only.\nconst res = $input.all().map(function (i) { return i.json || {}; });\nconst jobs = $('Build jobs').all().map(function (i) { return i.json; });\nlet hits = []; const errors = []; let scanned = 0;\nres.forEach(function (r, i) {\n  const j = jobs[i] || {};\n  if (r.error || !Array.isArray(r.hits)) { errors.push((r.name || j.name) + ' [' + (r.langs || j.langs) + ']: ' + String(r.error || 'worker failed').slice(0, 120)); }\n  hits = hits.concat(r.hits || []);\n  scanned += r.keys_scanned || 0;\n});\nconst seen = {};\nhits = hits.filter(function (h) { const k = String(h.translation_id || (h.pid + ':' + h.key_id + ':' + h.iso)); if (seen[k]) { return false; } seen[k] = 1; return true; });\n// \"new since the last scheduled run\" (static data is only saved by production runs)\nconst store = $getWorkflowStaticData('global');\nconst prev = store.ids || null; const now = {};\nfor (const h of hits) { const id = String(h.translation_id) + ':' + h.text; now[id] = 1; h.is_new = prev ? !prev[id] : null; }\nstore.ids = now; store.at = new Date().toISOString();\nconst projects = {}; const order = [];\nfor (const h of hits) { if (!projects[h.project]) { projects[h.project] = []; order.push(h.project); } projects[h.project].push(h); }\norder.sort();\nconst pidOf = {}; for (const h of hits) { pidOf[h.project] = h.pid; }\nconst newCount = hits.filter(function (h) { return h.is_new === true; }).length;\nlet summary = '*Wrong-script / garbled text check* — ' + jobs.length + ' project/language batches, ' + scanned + ' key rows scanned\\n';\nsummary += 'Flags translations with characters from a writing system the language does not use (e.g. Chinese 谋 inside Turkish \"haz谋r!\") or broken encoding (Ã©, â€™, �).\\n\\n';\nif (!hits.length && !errors.length) { summary += ':white_check_mark: No wrong-script characters or garbled encoding in any translation.'; }\nelse if (!hits.length) { summary += ':white_check_mark: Nothing flagged in the batches that could be read.'; }\nelse {\n  summary += ':rotating_light: *' + hits.length + ' translation' + (hits.length === 1 ? '' : 's') + ' flagged* in ' + order.length + ' project' + (order.length === 1 ? '' : 's') + ' — details in thread.';\n  if (prev) { summary += '\\n:new: ' + newCount + ' new since the last nightly run.'; }\n}\nif (errors.length) { summary += '\\n:warning: could not read ' + errors.length + ' batch(es): ' + errors.slice(0, 5).join('; ') + (errors.length > 5 ? ' …' : ''); }\nfunction esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }\nconst lines = [];\nfor (const p of order) {\n  let block = '<https://app.lokalise.com/project/' + pidOf[p] + '/|' + esc(p).replace(/\\|/g, ' ') + '> — ' + projects[p].length;\n  for (const h of projects[p].slice(0, 40)) {\n    block += '\\n    • ' + h.iso + ' `' + esc(h.key) + '` — ' + esc(h.chars) + ' — \"' + esc(h.text.slice(0, 120)) + '\"' +\n      (h.modified_by ? ' _(' + String(h.modified_at).slice(0, 10) + ', ' + esc(h.modified_by) + ')_' : '') + (h.is_new ? ' :new:' : '');\n  }\n  if (projects[p].length > 40) { block += '\\n    … +' + (projects[p].length - 40) + ' more'; }\n  lines.push(block);\n}\nconst chunks = []; let cur = '';\nfor (const l of lines) {\n  const piece = l.length > 3400 ? l.slice(0, 3390) + '…' : l;\n  if (cur && (cur.length + piece.length + 2) > 3400) { chunks.push(cur); cur = ''; }\n  cur += (cur ? '\\n\\n' : '') + piece;\n}\nif (cur) { chunks.push(cur); }\nreturn [{ json: { summary: summary, chunks: chunks, total: hits.length, new_count: newCount, errors: errors, batches: jobs.length, keys_scanned: scanned, hits: hits } }];\n"
+      }
+    },
+    {
+      "id": "c3d74b0d-0877-4c80-9332-064e6bcb94de",
+      "name": "Only scheduled runs post",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Manual runs (tests, ad hoc checks from Claude) never post to Slack; scheduled runs do.\nif ($execution.mode === 'manual') { return []; }\nreturn $input.all();\n"
+      }
+    },
+    {
+      "id": "023398f2-4ebd-4104-81d5-1b36fb4803ea",
+      "name": "Post summary",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1344,
+        96
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "authentication": "accessToken",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C094NS33FN0",
+          "cachedResultName": "i18n-team"
+        },
+        "text": "={{ $json.summary }}",
+        "otherOptions": {
+          "mrkdwn": true,
+          "includeLinkToWorkflow": false,
+          "unfurl_links": false,
+          "unfurl_media": false
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "webhookId": "fb284539-08f5-4a1c-929c-3587ea59874c"
+    },
+    {
+      "id": "80d8027c-ac76-46f2-92c1-2b01f44943be",
+      "name": "Split detail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const built = $('Report').first().json;\nconst posted = $input.first().json || {};\nconst ts = posted.ts || (posted.message && posted.message.ts) || null;\nreturn (built.chunks || []).map(function (c) { return { json: { text: c, thread_ts: ts } }; });\n"
+      }
+    },
+    {
+      "id": "1873733b-bac8-44c5-b942-14af95cb0953",
+      "name": "Post detail in thread",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1792,
+        96
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "authentication": "accessToken",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C094NS33FN0",
+          "cachedResultName": "i18n-team"
+        },
+        "text": "={{ $json.text }}",
+        "otherOptions": {
+          "mrkdwn": true,
+          "includeLinkToWorkflow": false,
+          "unfurl_links": false,
+          "unfurl_media": false,
+          "thread_ts": {
+            "replyValues": {
+              "thread_ts": "={{ $json.thread_ts }}",
+              "reply_broadcast": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "webhookId": "fc906f7d-a6e8-4805-a523-e32b42234133"
+    },
+    {
+      "id": "433f218d-68d0-4e89-a4c9-33efafa0fcb3",
+      "name": "Run now (no Slack post)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Nightly 02:30": {
+      "main": [
+        [
+          {
+            "node": "Fetch projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch projects": {
+      "main": [
+        [
+          {
+            "node": "Build jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build jobs": {
+      "main": [
+        [
+          {
+            "node": "Scan project batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scan project batch": {
+      "main": [
+        [
+          {
+            "node": "Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report": {
+      "main": [
+        [
+          {
+            "node": "Only scheduled runs post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Only scheduled runs post": {
+      "main": [
+        [
+          {
+            "node": "Post summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post summary": {
+      "main": [
+        [
+          {
+            "node": "Split detail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split detail": {
+      "main": [
+        [
+          {
+            "node": "Post detail in thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run now (no Slack post)": {
+      "main": [
+        [
+          {
+            "node": "Fetch projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [
+    {
+      "id": "9fef9967-6f99-4e54-9552-0b0bc22905bf",
+      "name": "Scan",
+      "nodeIds": [
+        "892a5dde-424b-4bd5-bc3f-ad2ee99fc163",
+        "08ed39db-cf9e-433f-b31e-307e9e19c13c",
+        "a558b09b-f75b-412f-bc73-f2b0667f89d0",
+        "680af2bf-0de2-4ea6-9d88-42115e12c645"
+      ]
+    },
+    {
+      "id": "ecf024c6-37b7-4f1d-8842-e1fd9f6f983f",
+      "name": "Post to #i18n-team",
+      "nodeIds": [
+        "c3d74b0d-0877-4c80-9332-064e6bcb94de",
+        "023398f2-4ebd-4104-81d5-1b36fb4803ea",
+        "80d8027c-ac76-46f2-92c1-2b01f44943be",
+        "1873733b-bac8-44c5-b942-14af95cb0953"
+      ]
+    }
+  ],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Madrid",
+    "saveManualExecutions": true,
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 2400
+  },
+  "staticData": {
+    "node:Nightly 02:30": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    }
+  },
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "RPOeu8bIuJ0nWTas",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-17T09:27:27.268Z",
+      "updatedAt": "2026-11-17T09:27:27.268Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
