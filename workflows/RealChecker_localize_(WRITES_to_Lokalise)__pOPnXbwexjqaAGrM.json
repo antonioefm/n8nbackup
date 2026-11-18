@@ -5,10 +5,10 @@
   "active": false,
   "activeVersionId": null,
   "createdAt": "2026-10-22T06:45:11.111Z",
-  "updatedAt": "2026-10-22T16:00:16.524Z",
+  "updatedAt": "2026-11-17T09:50:07.358Z",
   "isArchived": false,
-  "versionId": "f601f9c8-cb1c-4e85-be36-2553321f264a",
-  "versionCounter": 4,
+  "versionId": "a3bfe935-3517-4de7-a244-7ec2f47aad4d",
+  "versionCounter": 6,
   "sourceWorkflowId": null,
   "triggerCount": 1,
   "nodes": [
@@ -136,6 +136,20 @@
         "mode": "runOnceForAllItems",
         "jsCode": "const b = $('Build').first().json; const r = $input.first().json;\nif (b.dry_run) { return [{ json: { dry_run: true, would_write: b.count, skipped: b.skipped, keys: b.body.keys.length } }]; }\nconst sent = {}; for (const k of b.body.keys) { for (const t of k.translations) { sent[k.key_id + '|' + t.language_iso] = t.translation; } }\nlet ok = 0; const mismatch = [];\nfor (const k of ((r.body && r.body.keys) || [])) { for (const t of (k.translations || [])) { const key = k.key_id + '|' + t.language_iso; if (key in sent) { if (t.translation === sent[key]) { ok++; } else { mismatch.push({ key: key, sent: sent[key], got: t.translation }); } } } }\nreturn [{ json: { put_status: r.statusCode, sent: b.count, confirmed: ok, mismatch: mismatch.slice(0, 20), errors: (r.body && r.body.errors) || null, skipped: b.skipped } }];"
       }
+    },
+    {
+      "id": "9640a949-df46-47fc-9012-6963ccf45c80",
+      "name": "Script Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// SCRIPT CHECK v2 (17.11.26) - one shared rule for audits, the nightly QA report and every Lokalise write.\n// Flags a TARGET translation when it contains: (1) letters from a writing system the language does not use\n// (Chinese 谋 in Turkish, Cyrillic \"о\" in Spanish, Russian in Thai), (2) encoding garbage (Ã©, â€™, Ä±, �, NUL).\n// Latin is always allowed (brands, formats). Characters that also appear in the English source are ignored.\nfunction scriptCheck(iso, text, src) {\n  const SCRIPTS = ['Han','Hiragana','Katakana','Hangul','Cyrillic','Greek','Arabic','Hebrew','Thai','Devanagari','Georgian','Armenian','Bengali','Tamil','Ethiopic','Khmer','Lao','Myanmar'];\n  const ALLOW = { el: ['Greek'], uk: ['Cyrillic'], ru: ['Cyrillic'], bg: ['Cyrillic'], sr: ['Cyrillic'], mk: ['Cyrillic'], kk: ['Cyrillic'], be: ['Cyrillic'], mn: ['Cyrillic'], ja: ['Han','Hiragana','Katakana'], zh: ['Han'], ko: ['Hangul','Han'], th: ['Thai'], ar: ['Arabic'], fa: ['Arabic'], ur: ['Arabic'], he: ['Hebrew'], hi: ['Devanagari'], mr: ['Devanagari'], ne: ['Devanagari'], ka: ['Georgian'], hy: ['Armenian'], bn: ['Bengali'], ta: ['Tamil'], am: ['Ethiopic'], km: ['Khmer'], lo: ['Lao'], my: ['Myanmar'] };\n  const HOMO = { 'а':'a','е':'e','о':'o','р':'p','с':'c','у':'y','х':'x','і':'i','ј':'j','ѕ':'s','А':'A','В':'B','Е':'E','К':'K','М':'M','Н':'H','О':'O','Р':'P','С':'C','Т':'T','Х':'X','п':'p','ο':'o','α':'a','ε':'e','ι':'i','κ':'k','ν':'v','ρ':'p','τ':'t','υ':'u','Ο':'O','Α':'A','Ε':'E','Κ':'K','Μ':'M','Ν':'N','Ρ':'P','Τ':'T','Χ':'X' };\n  const MOJI = /[\\u00c3\\u00c2\\u00c4\\u00c5\\u00d0\\u00d1][\\u0080-\\u009f\\u00a1-\\u00bf]|\\u00e2\\u20ac|\\u00ef\\u00bf\\u00bd|\\ufffd|\\u0000/g;\n  const t = String(text || ''); const s = String(src || '');\n  const lang = String(iso || '').toLowerCase().split(/[-_]/)[0];\n  if (/^(pst|ps|xx|zz|qps)$/.test(lang) || !t) { return null; }\n  const allow = ALLOW[lang] || [];\n  const bad = {}; const latinLang = !allow.length;\n  for (const ch of Array.from(t)) {\n    if (ch.charCodeAt(0) < 0x370 || s.indexOf(ch) !== -1) { continue; }\n    let sc = null; for (const x of SCRIPTS) { if (new RegExp('\\\\p{Script=' + x + '}', 'u').test(ch)) { sc = x; break; } }\n    if (sc && allow.indexOf(sc) === -1) { (bad[sc] = bad[sc] || {})[ch] = 1; }\n  }\n  const moji = Array.from(new Set((t.match(MOJI) || []).filter(function (m) { return s.indexOf(m) === -1; })));\n  const kinds = Object.keys(bad);\n  if (!kinds.length && !moji.length) { return null; }\n  const chars = []; for (const k in bad) { for (const c in bad[k]) { chars.push(c + ' (U+' + c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0') + ', ' + k + ')'); } }\n  for (const m of moji) { chars.push(JSON.stringify(m)); }\n  // Suggested fix only when it is mechanical: look-alike Cyrillic/Greek letters inside a Latin-script word.\n  let fix = '';\n  if (latinLang && !moji.length && kinds.every(function (k) { return k === 'Cyrillic' || k === 'Greek'; })) {\n    const f = t.replace(/[\\p{Script=Cyrillic}\\p{Script=Greek}]/gu, function (c) { return HOMO[c] || c; });\n    if (!/[\\p{Script=Cyrillic}\\p{Script=Greek}]/u.test(f)) { fix = f; }\n  }\n  const what = kinds.length ? kinds.join('/') + ' characters in a ' + lang + ' translation' : 'garbled encoding';\n  return { rule: 'encoding: wrong script or garbled text', kinds: kinds.concat(moji.length ? ['mojibake'] : []), chars: chars.slice(0, 6).join(', '), issue: 'Corrupted characters: ' + what + (moji.length && kinds.length ? ' + garbled encoding' : '') + ' (' + chars.slice(0, 4).join(', ') + ').', fix: fix };\n}\n\n// SCRIPT GUARD v2 (17.11.26): runs before every Lokalise write. Blocks the whole write if any translation about to be\n// written has letters from the wrong writing system or garbled encoding. A character that the same key carries in\n// 3+ other languages (e.g. a native language name) is allowed.\nconst bad = []; const grouped = new WeakSet();\nfunction groupCheck(trs, path) {\n  const locs = {};\n  for (const x of trs) { for (const ch of new Set(Array.from(x.text))) { if (ch.charCodeAt(0) > 0x2ff) { locs[ch] = (locs[ch] || 0) + 1; } } }\n  for (const x of trs) {\n    const shared = Array.from(new Set(Array.from(x.text))).filter(function (ch) { return (locs[ch] || 0) >= 4; }).join('');\n    const r = scriptCheck(x.iso, x.text, (x.src || '') + shared);\n    if (r) { bad.push({ path: path, iso: x.iso, why: r.issue, text: x.text.slice(0, 80) }); }\n  }\n}\nfunction walk(o, path) {\n  if (Array.isArray(o)) {\n    const trs = o.filter(function (v) { return v && typeof v === 'object' && !Array.isArray(v) && (v.language_iso || v.lang_iso || v.iso || v.langIso) && (typeof v.translation === 'string' || typeof v.text === 'string'); })\n      .map(function (v) { return { iso: v.language_iso || v.lang_iso || v.iso || v.langIso, text: typeof v.translation === 'string' ? v.translation : v.text, src: v.source || v.en || '' }; });\n    if (trs.length) { groupCheck(trs, path); o.forEach(function (v) { if (v && typeof v === 'object') { grouped.add(v); } }); }\n    o.forEach(function (v, i) { if (v && typeof v === 'object') { walk(v, path + '[' + i + ']'); } else if (typeof v === 'string') { walk(v, path + '[' + i + ']'); } });\n    return;\n  }\n  if (typeof o === 'string') { const s = o.trim(); if ((s[0] === '{' || s[0] === '[') && s.indexOf('translation') !== -1) { try { walk(JSON.parse(s), path + '<json>'); } catch (e) { } } return; }\n  if (!o || typeof o !== 'object') { return; }\n  const iso = o.language_iso || o.lang_iso || o.iso || o.langIso || '';\n  const txt = typeof o.translation === 'string' ? o.translation : (typeof o.text === 'string' && iso ? o.text : null);\n  if (txt !== null && iso && !grouped.has(o)) { const r = scriptCheck(iso, txt, o.source || o.en || ''); if (r && !bad.some(function (b) { return b.text === txt.slice(0, 80) && b.iso === iso; })) { bad.push({ path: path, iso: iso, why: r.issue, text: txt.slice(0, 80) }); } }\n  for (const k of Object.keys(o)) { if (o[k] && typeof o[k] === 'object') { walk(o[k], path + '.' + k); } else if (typeof o[k] === 'string' && k !== 'translation' && k !== 'text') { walk(o[k], path + '.' + k); } }\n}\nconst items = $input.all();\nitems.forEach(function (it, i) { walk(it.json, 'item' + i); });\nconst seen = {}; const final = bad.filter(function (b) { const k = b.iso + '|' + b.text; if (seen[k]) { return false; } seen[k] = 1; return true; });\nif (final.length) { throw new Error('SCRIPT GUARD blocked the write: ' + final.length + ' corrupted translation(s): ' + JSON.stringify(final.slice(0, 20))); }\nreturn items;\n",
+        "mode": "runOnceForAllItems"
+      }
     }
   ],
   "connections": {
@@ -172,22 +186,33 @@
         ]
       ]
     },
-    "Build": {
+    "Write Translations": {
       "main": [
         [
           {
-            "node": "Write Translations",
+            "node": "Summary",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Write Translations": {
+    "Build": {
       "main": [
         [
           {
-            "node": "Summary",
+            "node": "Script Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Script Guard": {
+      "main": [
+        [
+          {
+            "node": "Write Translations",
             "type": "main",
             "index": 0
           }
