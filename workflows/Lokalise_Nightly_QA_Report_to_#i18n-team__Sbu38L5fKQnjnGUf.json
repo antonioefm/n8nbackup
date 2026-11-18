@@ -3,12 +3,12 @@
   "name": "Lokalise Nightly QA Report to #i18n-team",
   "description": "Every night at 02:00 (Europe/Madrid): counts Lokalise QA issues per project for inconsistent placeholders and inconsistent HTML, and posts a per-project count report to the private #i18n-team Slack channel.",
   "active": true,
-  "activeVersionId": "75fd56a6-c3da-46b8-9511-8d08b1adabe2",
+  "activeVersionId": "617ec7a0-a9a8-46af-b084-65e41f6d5ccc",
   "createdAt": "2026-08-19T11:52:14.313Z",
-  "updatedAt": "2026-09-01T11:31:36.630Z",
+  "updatedAt": "2026-11-17T09:46:22.683Z",
   "isArchived": false,
-  "versionId": "9ad95b5c-04c0-43fe-9688-082ecce851ec",
-  "versionCounter": 41,
+  "versionId": "617ec7a0-a9a8-46af-b084-65e41f6d5ccc",
+  "versionCounter": 42,
   "sourceWorkflowId": null,
   "triggerCount": 1,
   "nodes": [
@@ -113,7 +113,7 @@
     },
     {
       "id": "15a7ace0-a3f7-4457-91d8-9ca8258afa27",
-      "name": "Build Slack Report",
+      "name": "Build QA Report",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -355,10 +355,62 @@
         0
       ],
       "parameters": {
-        "jsCode": "// Appends a celebration GIF to the summary. Never blocks the report: if Giphy\n// is unreachable, rate-limited, or the credential is missing, the HTTP node\n// passes its input through instead and we post the summary unchanged.\nconst summary = $('Build Slack Report').first().json.summary;\n\nlet gifUrl = null;\nlet gifId = null;\nlet note = 'no gif';\n\ntry {\n  const r = $input.first().json || {};\n  const arr = Array.isArray(r.data) ? r.data : [];\n  const usable = [];\n  for (const g of arr) {\n    if (!g || !g.id) { continue; }\n    const img = g.images && g.images.original;\n    if (img && typeof img.url === 'string' && img.url.length > 0) {\n      usable.push({ id: g.id, url: img.url.split('?')[0] });\n    }\n  }\n\n  if (usable.length > 0) {\n    // Remember recent picks so the same GIF does not come back two nights\n    // running. Static data persists for scheduled runs; manual test runs may\n    // not save it, which is fine - worst case is an earlier repeat.\n    const sd = $getWorkflowStaticData('global');\n    if (!Array.isArray(sd.recentGifIds)) { sd.recentGifIds = []; }\n\n    let pool = [];\n    for (const g of usable) {\n      if (sd.recentGifIds.indexOf(g.id) === -1) { pool.push(g); }\n    }\n    if (pool.length === 0) { pool = usable; note = 'pool exhausted, allowing a repeat'; }\n    else { note = 'fresh pick from ' + pool.length + ' unseen'; }\n\n    const chosen = pool[Math.floor(Math.random() * pool.length)];\n    gifUrl = chosen.url;\n    gifId = chosen.id;\n\n    sd.recentGifIds.push(chosen.id);\n    while (sd.recentGifIds.length > 60) { sd.recentGifIds.shift(); }\n  } else if (r.meta && r.meta.status && r.meta.status !== 200) {\n    note = 'giphy returned status ' + r.meta.status;\n  }\n} catch (e) {\n  note = 'gif step failed: ' + String(e.message).slice(0, 120);\n}\n\nconst text = gifUrl ? (summary + '\\n' + gifUrl) : summary;\nreturn [{ json: { summary: text, gif_url: gifUrl, gif_id: gifId, gif_note: note } }];\n",
+        "jsCode": "// Appends a celebration GIF to the summary. Never blocks the report: if Giphy\n// is unreachable, rate-limited, or the credential is missing, the HTTP node\n// passes its input through instead and we post the summary unchanged.\n// 17.11.26: also passes summary_blocks through, which Post Summary needs.\nconst built = $('Build Slack Report').first().json;\nconst summary = built.summary;\n\nlet gifUrl = null;\nlet gifId = null;\nlet note = 'no gif';\n\ntry {\n  const r = $input.first().json || {};\n  const arr = Array.isArray(r.data) ? r.data : [];\n  const usable = [];\n  for (const g of arr) {\n    if (!g || !g.id) { continue; }\n    const img = g.images && g.images.original;\n    if (img && typeof img.url === 'string' && img.url.length > 0) {\n      usable.push({ id: g.id, url: img.url.split('?')[0] });\n    }\n  }\n\n  if (usable.length > 0 && built.celebrated) {\n    const sd = $getWorkflowStaticData('global');\n    if (!Array.isArray(sd.recentGifIds)) { sd.recentGifIds = []; }\n    let pool = [];\n    for (const g of usable) {\n      if (sd.recentGifIds.indexOf(g.id) === -1) { pool.push(g); }\n    }\n    if (pool.length === 0) { pool = usable; note = 'pool exhausted, allowing a repeat'; }\n    else { note = 'fresh pick from ' + pool.length + ' unseen'; }\n    const chosen = pool[Math.floor(Math.random() * pool.length)];\n    gifUrl = chosen.url;\n    gifId = chosen.id;\n    sd.recentGifIds.push(chosen.id);\n    while (sd.recentGifIds.length > 60) { sd.recentGifIds.shift(); }\n  } else if (r.meta && r.meta.status && r.meta.status !== 200) {\n    note = 'giphy returned status ' + r.meta.status;\n  }\n} catch (e) {\n  note = 'gif step failed: ' + String(e.message).slice(0, 120);\n}\n\nconst text = gifUrl ? (summary + '\\n' + gifUrl) : summary;\nreturn [{ json: { summary: text, summary_blocks: built.summary_blocks, gif_url: gifUrl, gif_id: gifId, gif_note: note } }];\n",
         "mode": "runOnceForAllItems"
       },
       "executeOnce": true
+    },
+    {
+      "id": "28e88d0c-6096-4bbb-ba83-2aae1d14f4f3",
+      "name": "Build script jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        240
+      ],
+      "parameters": {
+        "jsCode": "// Wrong-script / garbled-text check (17.11.26): one worker call per project x 8 languages x 500-key page.\n// Worker sGhxgjXOYU1NFXlS is read-only and returns only the affected translations (small jobs avoid out-of-memory).\nconst b = $('Fetch Lokalise Projects').first().json || {};\nconst projects = b.projects || [];\nconst CHUNK = 8, PAGE = 500;\nconst PSEUDO = /^(pst|ps|xx|zz|qps)$|pseudo|custom_|[_-]ps$/i;\nconst jobs = [];\nfor (const p of projects) {\n  const st = p.statistics || {};\n  const langs = (st.languages || []).filter(function (l) { return l.language_id !== p.base_language_id && !PSEUDO.test(String(l.language_iso || '')); });\n  const pages = Math.max(1, Math.ceil(Number(st.keys_total || 0) / PAGE));\n  for (let i = 0; i < langs.length; i += CHUNK) {\n    const part = langs.slice(i, i + CHUNK);\n    for (let pg = 1; pg <= pages; pg++) {\n      jobs.push({ json: { pid: p.project_id, name: p.name, base_iso: p.base_language_iso || 'en', page: pg,\n        langs: part.map(function (l) { return l.language_iso; }).join(','),\n        lang_ids: [p.base_language_id].concat(part.map(function (l) { return l.language_id; })).join(',') } });\n    }\n  }\n}\nif (!jobs.length) { throw new Error('wrong-script check: no jobs (projects fetch returned no statistics)'); }\nreturn jobs;\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "fa6de8ba-5fdf-4862-b3a0-fca8d28272ec",
+      "name": "Wrong-script check",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1000,
+        240
+      ],
+      "parameters": {
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        },
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "cachedResultName": "Lokalise wrong-script check - project worker (READ ONLY)",
+          "mode": "id",
+          "value": "sGhxgjXOYU1NFXlS"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "710282f8-4623-47ca-a5b8-f6ff3d1e6503",
+      "name": "Build Slack Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        240
+      ],
+      "parameters": {
+        "jsCode": "// Adds the wrong-script / garbled-text check (17.11.26) to the nightly report built by \"Build QA Report\".\n// Downstream nodes keep reading $('Build Slack Report'), so they get the merged report.\nconst q = $('Build QA Report').first().json;\nconst LABEL = 'Wrong script / garbled text';\nconst res = $input.all().map(function (i) { return i.json || {}; });\nconst jobs = $('Build script jobs').all().map(function (i) { return i.json; });\nconst by = {}; const order = []; const fails = []; const seen = {}; let scanned = 0;\nres.forEach(function (r, i) {\n  const j = jobs[i] || {};\n  if (r.error || !Array.isArray(r.hits)) { fails.push((r.name || j.name) + ' [' + (r.langs || j.langs) + '] p' + (j.page || '')); return; }\n  scanned += r.keys_scanned || 0;\n  for (const h of r.hits) {\n    const id = String(h.translation_id || (h.pid + ':' + h.key_id + ':' + h.iso));\n    if (seen[id]) { continue; } seen[id] = 1;\n    if (!by[h.project]) { by[h.project] = { pid: h.pid, n: 0, loc: {}, hits: [] }; order.push(h.project); }\n    const x = by[h.project]; x.n++; x.loc[h.iso] = (x.loc[h.iso] || 0) + 1; x.hits.push(Object.assign({ id: id + ':' + h.text }, h));\n  }\n});\norder.sort(function (a, b) { return a.replace(/^[^A-Za-z0-9]+/, '').toLowerCase().localeCompare(b.replace(/^[^A-Za-z0-9]+/, '').toLowerCase()); });\n// \"new\" = not in the last SCHEDULED run (static data is only saved by production runs, like the QA baseline).\nconst store = $getWorkflowStaticData('global');\nconst prev = store.scriptBaseline || null; const next = {}; let newTotal = 0;\nfor (const p of order) { let n = 0; for (const h of by[p].hits) { next[h.id] = 1; h.isNew = !!prev && !prev[h.id]; if (h.isNew) { n++; } } by[p].newCount = prev ? n : null; newTotal += n; }\nif (!fails.length) { store.scriptBaseline = next; store.scriptBaselineAt = new Date().toISOString(); }\nlet total = 0; for (const p of order) { total += by[p].n; }\nlet summary = String(q.summary);\nconst line = '• ' + LABEL + ': ' + total + '\\n';\nsummary = /• Double space \\(translations\\): \\d+\\n/.test(summary) ? summary.replace(/(• Double space \\(translations\\): \\d+\\n)/, '$1' + line) : summary.replace('*Totals*\\n', '*Totals*\\n' + line);\nlet celebrated = !!q.celebrated;\nif (total > 0) {\n  if (celebrated) { summary = summary.replace(/:tada:[\\s\\S]*?:clap:\\n/, '*' + order.length + ' project(s) have wrong-script or garbled translations* — details in thread.\\n'); celebrated = false; }\n  else if (/:white_check_mark: No issues found in any project/.test(summary)) { summary = summary.replace(/:white_check_mark: No issues found in any project[^\\n]*\\n/, '*' + order.length + ' project(s) have wrong-script or garbled translations* — details in thread.\\n'); }\n  if (prev) { summary += '\\n:new: ' + newTotal + ' new wrong-script/garbled translation' + (newTotal === 1 ? '' : 's') + ' since the last nightly report.'; }\n}\nif (fails.length) { summary += '\\n:warning: wrong-script check could not read ' + fails.length + ' batch(es): ' + fails.slice(0, 5).join('; ') + (fails.length > 5 ? ' …' : ''); celebrated = false; }\nconst blocks = [{ type: 'section', text: { type: 'mrkdwn', text: summary.length > 2900 ? summary.slice(0, 2897) + '...' : summary } }];\nif (celebrated) { blocks.push({ type: 'image', image_url: 'https://media.giphy.com/media/g9582DNuQppxC/giphy.gif', alt_text: 'Celebration - every QA check is clean' }); }\nfunction esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }\nconst lines = [];\nfor (const p of order) {\n  const x = by[p];\n  const locs = Object.keys(x.loc).sort(function (a, b) { return x.loc[b] - x.loc[a]; }).map(function (k) { return k + ' ' + x.loc[k]; }).join(', ');\n  let blk = '<https://app.lokalise.com/project/' + x.pid + '/|' + esc(p).replace(/\\|/g, ' ') + '>\\n    • ' + LABEL + ': ' + x.n + (x.n === 1 ? ' key' : ' keys') + '  —  ' + locs + (x.newCount ? '   :new: ' + x.newCount + ' new' : '');\n  for (const h of x.hits.slice(0, 15)) { blk += '\\n        ◦ ' + h.iso + ' `' + esc(h.key) + '` — ' + esc(h.chars) + ' — \"' + esc(String(h.text).slice(0, 100)) + '\"'; }\n  if (x.hits.length > 15) { blk += '\\n        ◦ … +' + (x.hits.length - 15) + ' more'; }\n  lines.push(blk);\n}\nconst chunks = (q.chunks || []).slice();\nlet cur = '';\nfor (const l of lines) {\n  const piece = l.length > 3300 ? l.slice(0, 3290) + '…' : l;\n  if (cur && cur.length + piece.length + 2 > 3300) { chunks.push(cur); cur = ''; }\n  cur += (cur ? '\\n\\n' : '*' + LABEL + '*\\n\\n') + piece;\n}\nif (cur) { chunks.push(cur); }\nconst totals = Object.assign({}, q.totals || {}); totals[LABEL] = total;\nreturn [{ json: Object.assign({}, q, { summary: summary, summary_blocks: JSON.stringify({ blocks: blocks }), celebrated: celebrated, chunks: chunks, chunk_count: chunks.length, totals: totals,\n  script_check: { total: total, projects: order.length, new: newTotal, batches: jobs.length, failed: fails.length, keys_scanned: scanned } }) }];\n",
+        "mode": "runOnceForAllItems"
+      }
     }
   ],
   "connections": {
@@ -399,7 +451,7 @@
       "main": [
         [
           {
-            "node": "Build Slack Report",
+            "node": "Build QA Report",
             "type": "main",
             "index": 0
           }
@@ -450,17 +502,6 @@
         ]
       ]
     },
-    "Build Slack Report": {
-      "main": [
-        [
-          {
-            "node": "Fetch Celebration GIF",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Fetch Celebration GIF": {
       "main": [
         [
@@ -482,6 +523,50 @@
           }
         ]
       ]
+    },
+    "Build QA Report": {
+      "main": [
+        [
+          {
+            "node": "Build script jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build script jobs": {
+      "main": [
+        [
+          {
+            "node": "Wrong-script check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wrong-script check": {
+      "main": [
+        [
+          {
+            "node": "Build Slack Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Slack Report": {
+      "main": [
+        [
+          {
+            "node": "Fetch Celebration GIF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "nodeGroups": [],
@@ -490,7 +575,7 @@
     "availableInMCP": true,
     "timezone": "Europe/Madrid",
     "saveDataErrorExecution": "all",
-    "executionTimeout": 900
+    "executionTimeout": 2400
   },
   "staticData": {
     "node:Nightly 02:00 Trigger": {
@@ -600,7 +685,9 @@
         "852017176a3ce11141ecd5.60405885::HTML": [],
         "852017176a3ce11141ecd5.60405885::Missing inline code": [],
         "852017176a3ce11141ecd5.60405885::Double space": [],
-        "964775386a3ce03ecca883.03770715::Placeholders": [],
+        "964775386a3ce03ecca883.03770715::Placeholders": [
+          938705240
+        ],
         "964775386a3ce03ecca883.03770715::HTML": [],
         "964775386a3ce03ecca883.03770715::Missing inline code": [],
         "964775386a3ce03ecca883.03770715::Double space": [],
@@ -648,7 +735,12 @@
         "1274536968b58980dc56a0.78363786::Missing inline code": [],
         "1274536968b58980dc56a0.78363786::Double space": []
       },
-      "qaBaselineAt": "2026-11-17T01:00:59.011Z"
+      "qaBaselineAt": "2026-11-18T01:01:01.374Z",
+      "scriptBaseline": {
+        "8540741197:NỀN TẢNG ĐƯỢC TRUY CẬP VÀ SỬ DỤNG TRÊN CƠ SỞ \"NGUYÊN TRẠNG\" VÀ \"SẴN CÓ\", KHÔNG CÓ BẤT KỲ BẢO ĐẢM NÀO, CHO DÙ LÀ RÕ RÀNG, THEO LUẬT ĐỊNH HAY NGẦM HIỂU. CÔNG TY TUYỆT ĐỐI TỪ CHỐI TẤT CẢ CÁC BẢO ĐẢM, BAO GỒM NHƯNG KHÔNG GIỚ…": 1,
+        "7822651825:PDFHelp โลโก้ PDFHelp เว็บไซต์และโดเมน <a href=\"https://pdfhelp.com\">pdfhelp.com</a> โดเมนเว็บไซต์อื่นๆ ที่บริษัทเป็นเจ้าของ และเนื้อหาและสื่ออื่นๆ ทั้งหมดที่มีให้บริการผ่านบริการ (เรียกรวมกันว่า \"<strong>ทรัพย์สินทางปัญ…": 1
+      },
+      "scriptBaselineAt": "2026-11-18T01:04:30.613Z"
     }
   },
   "pinData": null,
@@ -681,7 +773,7 @@
     }
   ],
   "activeVersion": {
-    "versionId": "75fd56a6-c3da-46b8-9511-8d08b1adabe2",
+    "versionId": "617ec7a0-a9a8-46af-b084-65e41f6d5ccc",
     "workflowId": "Sbu38L5fKQnjnGUf",
     "nodes": [
       {
@@ -785,7 +877,7 @@
       },
       {
         "id": "15a7ace0-a3f7-4457-91d8-9ca8258afa27",
-        "name": "Build Slack Report",
+        "name": "Build QA Report",
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
@@ -820,9 +912,9 @@
           "messageType": "block",
           "text": "={{ $json.summary }}",
           "otherOptions": {
-            "mrkdwn": true,
             "includeLinkToWorkflow": false,
-            "unfurl_links": false,
+            "mrkdwn": true,
+            "unfurl_links": true,
             "unfurl_media": true
           },
           "blocksUi": "={{ $json.summary_blocks }}"
@@ -990,6 +1082,99 @@
           "height": 460,
           "width": 620
         }
+      },
+      {
+        "id": "70cd23e6-bd62-4a23-9cdf-f076aaf1f82b",
+        "name": "Fetch Celebration GIF",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          1100,
+          0
+        ],
+        "parameters": {
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpQueryAuth",
+          "method": "GET",
+          "options": {
+            "response": {
+              "response": {
+                "neverError": true
+              }
+            },
+            "timeout": 15000
+          },
+          "url": "=https://api.giphy.com/v1/gifs/search?q=celebration&limit=50&rating=pg&lang=en&offset={{ Math.floor(Math.random() * 150) }}"
+        },
+        "onError": "continueRegularOutput",
+        "executeOnce": true
+      },
+      {
+        "id": "753b5b03-0da9-40cd-811b-9fd4723237c0",
+        "name": "Pick GIF",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1280,
+          0
+        ],
+        "parameters": {
+          "jsCode": "// Appends a celebration GIF to the summary. Never blocks the report: if Giphy\n// is unreachable, rate-limited, or the credential is missing, the HTTP node\n// passes its input through instead and we post the summary unchanged.\n// 17.11.26: also passes summary_blocks through, which Post Summary needs.\nconst built = $('Build Slack Report').first().json;\nconst summary = built.summary;\n\nlet gifUrl = null;\nlet gifId = null;\nlet note = 'no gif';\n\ntry {\n  const r = $input.first().json || {};\n  const arr = Array.isArray(r.data) ? r.data : [];\n  const usable = [];\n  for (const g of arr) {\n    if (!g || !g.id) { continue; }\n    const img = g.images && g.images.original;\n    if (img && typeof img.url === 'string' && img.url.length > 0) {\n      usable.push({ id: g.id, url: img.url.split('?')[0] });\n    }\n  }\n\n  if (usable.length > 0 && built.celebrated) {\n    const sd = $getWorkflowStaticData('global');\n    if (!Array.isArray(sd.recentGifIds)) { sd.recentGifIds = []; }\n    let pool = [];\n    for (const g of usable) {\n      if (sd.recentGifIds.indexOf(g.id) === -1) { pool.push(g); }\n    }\n    if (pool.length === 0) { pool = usable; note = 'pool exhausted, allowing a repeat'; }\n    else { note = 'fresh pick from ' + pool.length + ' unseen'; }\n    const chosen = pool[Math.floor(Math.random() * pool.length)];\n    gifUrl = chosen.url;\n    gifId = chosen.id;\n    sd.recentGifIds.push(chosen.id);\n    while (sd.recentGifIds.length > 60) { sd.recentGifIds.shift(); }\n  } else if (r.meta && r.meta.status && r.meta.status !== 200) {\n    note = 'giphy returned status ' + r.meta.status;\n  }\n} catch (e) {\n  note = 'gif step failed: ' + String(e.message).slice(0, 120);\n}\n\nconst text = gifUrl ? (summary + '\\n' + gifUrl) : summary;\nreturn [{ json: { summary: text, summary_blocks: built.summary_blocks, gif_url: gifUrl, gif_id: gifId, gif_note: note } }];\n",
+          "mode": "runOnceForAllItems"
+        },
+        "executeOnce": true
+      },
+      {
+        "id": "28e88d0c-6096-4bbb-ba83-2aae1d14f4f3",
+        "name": "Build script jobs",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          880,
+          240
+        ],
+        "parameters": {
+          "jsCode": "// Wrong-script / garbled-text check (17.11.26): one worker call per project x 8 languages x 500-key page.\n// Worker sGhxgjXOYU1NFXlS is read-only and returns only the affected translations (small jobs avoid out-of-memory).\nconst b = $('Fetch Lokalise Projects').first().json || {};\nconst projects = b.projects || [];\nconst CHUNK = 8, PAGE = 500;\nconst PSEUDO = /^(pst|ps|xx|zz|qps)$|pseudo|custom_|[_-]ps$/i;\nconst jobs = [];\nfor (const p of projects) {\n  const st = p.statistics || {};\n  const langs = (st.languages || []).filter(function (l) { return l.language_id !== p.base_language_id && !PSEUDO.test(String(l.language_iso || '')); });\n  const pages = Math.max(1, Math.ceil(Number(st.keys_total || 0) / PAGE));\n  for (let i = 0; i < langs.length; i += CHUNK) {\n    const part = langs.slice(i, i + CHUNK);\n    for (let pg = 1; pg <= pages; pg++) {\n      jobs.push({ json: { pid: p.project_id, name: p.name, base_iso: p.base_language_iso || 'en', page: pg,\n        langs: part.map(function (l) { return l.language_iso; }).join(','),\n        lang_ids: [p.base_language_id].concat(part.map(function (l) { return l.language_id; })).join(',') } });\n    }\n  }\n}\nif (!jobs.length) { throw new Error('wrong-script check: no jobs (projects fetch returned no statistics)'); }\nreturn jobs;\n",
+          "mode": "runOnceForAllItems"
+        }
+      },
+      {
+        "id": "fa6de8ba-5fdf-4862-b3a0-fca8d28272ec",
+        "name": "Wrong-script check",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.2,
+        "position": [
+          1000,
+          240
+        ],
+        "parameters": {
+          "mode": "each",
+          "options": {
+            "waitForSubWorkflow": true
+          },
+          "source": "database",
+          "workflowId": {
+            "__rl": true,
+            "cachedResultName": "Lokalise wrong-script check - project worker (READ ONLY)",
+            "mode": "id",
+            "value": "sGhxgjXOYU1NFXlS"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "710282f8-4623-47ca-a5b8-f6ff3d1e6503",
+        "name": "Build Slack Report",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1100,
+          240
+        ],
+        "parameters": {
+          "jsCode": "// Adds the wrong-script / garbled-text check (17.11.26) to the nightly report built by \"Build QA Report\".\n// Downstream nodes keep reading $('Build Slack Report'), so they get the merged report.\nconst q = $('Build QA Report').first().json;\nconst LABEL = 'Wrong script / garbled text';\nconst res = $input.all().map(function (i) { return i.json || {}; });\nconst jobs = $('Build script jobs').all().map(function (i) { return i.json; });\nconst by = {}; const order = []; const fails = []; const seen = {}; let scanned = 0;\nres.forEach(function (r, i) {\n  const j = jobs[i] || {};\n  if (r.error || !Array.isArray(r.hits)) { fails.push((r.name || j.name) + ' [' + (r.langs || j.langs) + '] p' + (j.page || '')); return; }\n  scanned += r.keys_scanned || 0;\n  for (const h of r.hits) {\n    const id = String(h.translation_id || (h.pid + ':' + h.key_id + ':' + h.iso));\n    if (seen[id]) { continue; } seen[id] = 1;\n    if (!by[h.project]) { by[h.project] = { pid: h.pid, n: 0, loc: {}, hits: [] }; order.push(h.project); }\n    const x = by[h.project]; x.n++; x.loc[h.iso] = (x.loc[h.iso] || 0) + 1; x.hits.push(Object.assign({ id: id + ':' + h.text }, h));\n  }\n});\norder.sort(function (a, b) { return a.replace(/^[^A-Za-z0-9]+/, '').toLowerCase().localeCompare(b.replace(/^[^A-Za-z0-9]+/, '').toLowerCase()); });\n// \"new\" = not in the last SCHEDULED run (static data is only saved by production runs, like the QA baseline).\nconst store = $getWorkflowStaticData('global');\nconst prev = store.scriptBaseline || null; const next = {}; let newTotal = 0;\nfor (const p of order) { let n = 0; for (const h of by[p].hits) { next[h.id] = 1; h.isNew = !!prev && !prev[h.id]; if (h.isNew) { n++; } } by[p].newCount = prev ? n : null; newTotal += n; }\nif (!fails.length) { store.scriptBaseline = next; store.scriptBaselineAt = new Date().toISOString(); }\nlet total = 0; for (const p of order) { total += by[p].n; }\nlet summary = String(q.summary);\nconst line = '• ' + LABEL + ': ' + total + '\\n';\nsummary = /• Double space \\(translations\\): \\d+\\n/.test(summary) ? summary.replace(/(• Double space \\(translations\\): \\d+\\n)/, '$1' + line) : summary.replace('*Totals*\\n', '*Totals*\\n' + line);\nlet celebrated = !!q.celebrated;\nif (total > 0) {\n  if (celebrated) { summary = summary.replace(/:tada:[\\s\\S]*?:clap:\\n/, '*' + order.length + ' project(s) have wrong-script or garbled translations* — details in thread.\\n'); celebrated = false; }\n  else if (/:white_check_mark: No issues found in any project/.test(summary)) { summary = summary.replace(/:white_check_mark: No issues found in any project[^\\n]*\\n/, '*' + order.length + ' project(s) have wrong-script or garbled translations* — details in thread.\\n'); }\n  if (prev) { summary += '\\n:new: ' + newTotal + ' new wrong-script/garbled translation' + (newTotal === 1 ? '' : 's') + ' since the last nightly report.'; }\n}\nif (fails.length) { summary += '\\n:warning: wrong-script check could not read ' + fails.length + ' batch(es): ' + fails.slice(0, 5).join('; ') + (fails.length > 5 ? ' …' : ''); celebrated = false; }\nconst blocks = [{ type: 'section', text: { type: 'mrkdwn', text: summary.length > 2900 ? summary.slice(0, 2897) + '...' : summary } }];\nif (celebrated) { blocks.push({ type: 'image', image_url: 'https://media.giphy.com/media/g9582DNuQppxC/giphy.gif', alt_text: 'Celebration - every QA check is clean' }); }\nfunction esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }\nconst lines = [];\nfor (const p of order) {\n  const x = by[p];\n  const locs = Object.keys(x.loc).sort(function (a, b) { return x.loc[b] - x.loc[a]; }).map(function (k) { return k + ' ' + x.loc[k]; }).join(', ');\n  let blk = '<https://app.lokalise.com/project/' + x.pid + '/|' + esc(p).replace(/\\|/g, ' ') + '>\\n    • ' + LABEL + ': ' + x.n + (x.n === 1 ? ' key' : ' keys') + '  —  ' + locs + (x.newCount ? '   :new: ' + x.newCount + ' new' : '');\n  for (const h of x.hits.slice(0, 15)) { blk += '\\n        ◦ ' + h.iso + ' `' + esc(h.key) + '` — ' + esc(h.chars) + ' — \"' + esc(String(h.text).slice(0, 100)) + '\"'; }\n  if (x.hits.length > 15) { blk += '\\n        ◦ … +' + (x.hits.length - 15) + ' more'; }\n  lines.push(blk);\n}\nconst chunks = (q.chunks || []).slice();\nlet cur = '';\nfor (const l of lines) {\n  const piece = l.length > 3300 ? l.slice(0, 3290) + '…' : l;\n  if (cur && cur.length + piece.length + 2 > 3300) { chunks.push(cur); cur = ''; }\n  cur += (cur ? '\\n\\n' : '*' + LABEL + '*\\n\\n') + piece;\n}\nif (cur) { chunks.push(cur); }\nconst totals = Object.assign({}, q.totals || {}); totals[LABEL] = total;\nreturn [{ json: Object.assign({}, q, { summary: summary, summary_blocks: JSON.stringify({ blocks: blocks }), celebrated: celebrated, chunks: chunks, chunk_count: chunks.length, totals: totals,\n  script_check: { total: total, projects: order.length, new: newTotal, batches: jobs.length, failed: fails.length, keys_scanned: scanned } }) }];\n",
+          "mode": "runOnceForAllItems"
+        }
       }
     ],
     "connections": {
@@ -1030,18 +1215,7 @@
         "main": [
           [
             {
-              "node": "Build Slack Report",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Build Slack Report": {
-        "main": [
-          [
-            {
-              "node": "Post Summary",
+              "node": "Build QA Report",
               "type": "main",
               "index": 0
             }
@@ -1091,23 +1265,89 @@
             }
           ]
         ]
+      },
+      "Fetch Celebration GIF": {
+        "main": [
+          [
+            {
+              "node": "Pick GIF",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Pick GIF": {
+        "main": [
+          [
+            {
+              "node": "Post Summary",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build QA Report": {
+        "main": [
+          [
+            {
+              "node": "Build script jobs",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build script jobs": {
+        "main": [
+          [
+            {
+              "node": "Wrong-script check",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Wrong-script check": {
+        "main": [
+          [
+            {
+              "node": "Build Slack Report",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Slack Report": {
+        "main": [
+          [
+            {
+              "node": "Fetch Celebration GIF",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     },
     "nodeGroups": [],
     "authors": "Maria Sica (via MCP)",
-    "name": "Build Block Kit payload with gif image block",
-    "description": "Updated nodes: Build Slack Report",
+    "name": "Add wrong-script / garbled text check",
+    "description": "Adds the wrong-script / garbled-text check (Chinese characters in Turkish, Cyrillic look-alikes in Spanish, mojibake) as one more line in the existing report and a thread section. Old 'Build Slack Report' renamed 'Build QA Report'; a new 'Build Slack Report' merges both, so downstream nodes are unchanged. Pick GIF now passes summary_blocks (Post Summary needs it).",
     "autosaved": false,
-    "createdAt": "2026-08-28T15:41:39.633Z",
-    "updatedAt": "2026-08-28T15:41:39.633Z",
+    "createdAt": "2026-11-17T09:46:22.687Z",
+    "updatedAt": "2026-11-17T09:46:22.687Z",
     "workflowPublishHistory": [
       {
-        "id": 1785,
+        "id": 3284,
         "workflowId": "Sbu38L5fKQnjnGUf",
-        "versionId": "75fd56a6-c3da-46b8-9511-8d08b1adabe2",
+        "versionId": "617ec7a0-a9a8-46af-b084-65e41f6d5ccc",
         "event": "activated",
         "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
-        "createdAt": "2026-08-28T15:41:44.593Z"
+        "createdAt": "2026-11-17T09:46:29.577Z"
       }
     ]
   },
