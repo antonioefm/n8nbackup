@@ -1,0 +1,185 @@
+{
+  "id": "FJkuXaWUh9cpUh5W",
+  "name": "Realchecker corrupted characters scan (READ ONLY)",
+  "description": "Read-only: fetches all Realchecker FE+BE translations and flags Han characters in non-CJK locales and Latin mojibake.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-17T09:16:15.442Z",
+  "updatedAt": "2026-11-17T09:16:15.442Z",
+  "isArchived": false,
+  "versionId": "4e5a12dc-cd2d-4d33-a7e7-f89b7624af73",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "e72a089c-7ca1-4ecf-83a1-a8d1a6cc5441",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "f5e6b4ad-42e8-472c-9125-93b90500524a",
+      "name": "Projects",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [\n {json:{pid:'964775386a3ce03ecca883.03770715', pname:'Realchecker (FE)'}},\n {json:{pid:'852017176a3ce11141ecd5.60405885', pname:'Realchecker (BE)'}}\n];"
+      }
+    },
+    {
+      "id": "470fc507-8826-4922-b3c5-b8484b65e74d",
+      "name": "Fetch Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.pid }}/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "include_translations",
+              "value": "1"
+            },
+            {
+              "name": "disable_references",
+              "value": "1"
+            },
+            {
+              "name": "limit",
+              "value": "500"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "page",
+                    "value": "={{ $pageCount + 1 }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ $response.body.keys.length < 500 }}",
+              "limitPagesFetched": true,
+              "maxRequests": 40,
+              "requestInterval": 250
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      }
+    },
+    {
+      "id": "22668180-894e-44f3-ab3c-12e38479c70a",
+      "name": "Scan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const NAMES={'964775386a3ce03ecca883.03770715':'Realchecker (FE)','852017176a3ce11141ecd5.60405885':'Realchecker (BE)'};\nconst CJK_OK=['zh','zh_CN','zh_TW','ja','ko'];\nconst han=/[\\u3400-\\u9FFF\\uF900-\\uFAFF]/;\nconst moji=/(脙[\\u0080-\\u00BF搂露录陇漏篓陋卤鲁潞]|脛[卤掳鸥啪\\u0080-\\u00BF]|脜[鸥啪\\u0080-\\u00BF]|\\uFFFD)/;\nconst hits=[]; const stats={};\nfor (const it of $input.all()) { const b=it.json; const p=NAMES[b.project_id]||b.project_id; stats[p]=stats[p]||{keys:0,trs:0};\n for (const k of (b.keys||[])) { stats[p].keys++; const kn=(k.key_name&&(k.key_name.web||k.key_name.other||k.key_name.ios))||'';\n  for (const t of (k.translations||[])) { stats[p].trs++; const v=t.translation||''; if(!v) continue;\n   const isHan = han.test(v) && !CJK_OK.includes(t.language_iso);\n   const isMoji = moji.test(v);\n   if (isHan||isMoji) hits.push({project:p,key_id:k.key_id,key:kn,lang:t.language_iso,type:isHan?'han':'latin-mojibake',text:v,by:t.modified_by_email,at:t.modified_at,reviewed:t.is_reviewed,unverified:t.is_unverified});\n  }}}\nreturn [{json:{CORRUPT_SCAN:{stats,count:hits.length,hits}}}];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Projects": {
+      "main": [
+        [
+          {
+            "node": "Fetch Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Keys": {
+      "main": [
+        [
+          {
+            "node": "Scan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "FJkuXaWUh9cpUh5W",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-17T09:16:15.454Z",
+      "updatedAt": "2026-11-17T09:16:15.454Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
