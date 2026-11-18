@@ -1,0 +1,295 @@
+{
+  "id": "hhc4ujLYoajTLD6G",
+  "name": "Lokalise corrupted characters scan - worker (READ ONLY)",
+  "description": "Read-only sub-workflow: scans one project + language's translations for corrupted characters, returns hits only.",
+  "active": true,
+  "activeVersionId": "e93d9857-8201-4b88-a954-710594e5af3b",
+  "createdAt": "2026-11-17T09:31:32.094Z",
+  "updatedAt": "2026-11-17T09:31:32.094Z",
+  "isArchived": false,
+  "versionId": "e93d9857-8201-4b88-a954-710594e5af3b",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "7202357d-68e6-4041-8f1f-322125b745cb",
+      "name": "When called by parent",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "da843175-b065-45a0-a6b8-2e1fb4aab789",
+      "name": "Fetch translations",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.pid }}/translations",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "5000"
+            },
+            {
+              "name": "filter_lang_id",
+              "value": "={{ $json.lang_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "page",
+                    "value": "={{ $pageCount + 1 }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body.translations || $response.body.translations.length < 5000 }}",
+              "limitPagesFetched": true,
+              "maxRequests": 40,
+              "requestInterval": 400
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "13dbfdf9-402f-45da-9d7c-87b95aef8cbb",
+      "name": "Scan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const job = $('When called by parent').first().json;\nconst CJK = /[\\u3040-\\u30FF\\u3400-\\u9FFF\\uAC00-\\uD7AF\\uF900-\\uFAFF]/;\nconst MOJI = /\\uFFFD|\\u00C3[\\u0080-\\u00BF]|\\u00C4[\\u0080-\\u00BF\\u00B0\\u00B1\\u0178\\u017E]|\\u00C5[\\u0080-\\u00BF\\u0178\\u017E]|\\u00E2\\u20AC/;\nconst CJKL = /^(zh|ja|ko)/i;\nconst hits = []; let n = 0;\nfor (const it of $input.all()) {\n  for (const t of ((it.json || {}).translations || [])) {\n    n++;\n    const v = typeof t.translation === 'string' ? t.translation : JSON.stringify(t.translation || '');\n    if (!v) { continue; }\n    let type = '';\n    if (!CJKL.test(t.language_iso) && CJK.test(v)) { type = 'cjk'; } else if (MOJI.test(v)) { type = 'mojibake'; }\n    if (type) { hits.push({ key_id: t.key_id, lang: t.language_iso, type: type, text: v, by: t.modified_by_email, at: t.modified_at, reviewed: t.is_reviewed }); }\n  }\n}\nreturn [{ json: { pid: job.pid, name: job.name, iso: job.iso, checked: n, hits: hits } }];"
+      }
+    }
+  ],
+  "connections": {
+    "When called by parent": {
+      "main": [
+        [
+          {
+            "node": "Fetch translations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch translations": {
+      "main": [
+        [
+          {
+            "node": "Scan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "hhc4ujLYoajTLD6G",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-17T09:31:32.109Z",
+      "updatedAt": "2026-11-17T09:31:32.109Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "e93d9857-8201-4b88-a954-710594e5af3b",
+    "workflowId": "hhc4ujLYoajTLD6G",
+    "nodes": [
+      {
+        "id": "7202357d-68e6-4041-8f1f-322125b745cb",
+        "name": "When called by parent",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "da843175-b065-45a0-a6b8-2e1fb4aab789",
+        "name": "Fetch translations",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          224,
+          0
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "=https://api.lokalise.com/api2/projects/{{ $json.pid }}/translations",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "limit",
+                "value": "5000"
+              },
+              {
+                "name": "filter_lang_id",
+                "value": "={{ $json.lang_id }}"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 120000,
+            "pagination": {
+              "pagination": {
+                "paginationMode": "updateAParameterInEachRequest",
+                "parameters": {
+                  "parameters": [
+                    {
+                      "type": "qs",
+                      "name": "page",
+                      "value": "={{ $pageCount + 1 }}"
+                    }
+                  ]
+                },
+                "paginationCompleteWhen": "other",
+                "completeExpression": "={{ !$response.body.translations || $response.body.translations.length < 5000 }}",
+                "limitPagesFetched": true,
+                "maxRequests": 40,
+                "requestInterval": 400
+              }
+            }
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "VW7WtJP8PzJMR813",
+            "name": "Lokalise read-only"
+          }
+        },
+        "retryOnFail": true,
+        "maxTries": 4,
+        "waitBetweenTries": 5000
+      },
+      {
+        "id": "13dbfdf9-402f-45da-9d7c-87b95aef8cbb",
+        "name": "Scan",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          448,
+          0
+        ],
+        "parameters": {
+          "jsCode": "const job = $('When called by parent').first().json;\nconst CJK = /[\\u3040-\\u30FF\\u3400-\\u9FFF\\uAC00-\\uD7AF\\uF900-\\uFAFF]/;\nconst MOJI = /\\uFFFD|\\u00C3[\\u0080-\\u00BF]|\\u00C4[\\u0080-\\u00BF\\u00B0\\u00B1\\u0178\\u017E]|\\u00C5[\\u0080-\\u00BF\\u0178\\u017E]|\\u00E2\\u20AC/;\nconst CJKL = /^(zh|ja|ko)/i;\nconst hits = []; let n = 0;\nfor (const it of $input.all()) {\n  for (const t of ((it.json || {}).translations || [])) {\n    n++;\n    const v = typeof t.translation === 'string' ? t.translation : JSON.stringify(t.translation || '');\n    if (!v) { continue; }\n    let type = '';\n    if (!CJKL.test(t.language_iso) && CJK.test(v)) { type = 'cjk'; } else if (MOJI.test(v)) { type = 'mojibake'; }\n    if (type) { hits.push({ key_id: t.key_id, lang: t.language_iso, type: type, text: v, by: t.modified_by_email, at: t.modified_at, reviewed: t.is_reviewed }); }\n  }\n}\nreturn [{ json: { pid: job.pid, name: job.name, iso: job.iso, checked: n, hits: hits } }];"
+        }
+      }
+    ],
+    "connections": {
+      "When called by parent": {
+        "main": [
+          [
+            {
+              "node": "Fetch translations",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch translations": {
+        "main": [
+          [
+            {
+              "node": "Scan",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Maria Sica (via MCP)",
+    "name": "Worker: one project + language",
+    "description": "Created with 3 nodes: When called by parent, Fetch translations, Scan",
+    "autosaved": false,
+    "createdAt": "2026-11-17T09:31:32.110Z",
+    "updatedAt": "2026-11-17T09:31:32.110Z",
+    "workflowPublishHistory": [
+      {
+        "id": 3276,
+        "workflowId": "hhc4ujLYoajTLD6G",
+        "versionId": "e93d9857-8201-4b88-a954-710594e5af3b",
+        "event": "activated",
+        "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
+        "createdAt": "2026-11-17T09:31:34.788Z"
+      }
+    ]
+  },
+  "parentFolder": null
+}
