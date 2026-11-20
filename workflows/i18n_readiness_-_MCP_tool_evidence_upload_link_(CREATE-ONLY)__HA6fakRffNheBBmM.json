@@ -1,0 +1,409 @@
+{
+  "id": "HA6fakRffNheBBmM",
+  "name": "i18n readiness - MCP tool: evidence upload link (CREATE-ONLY)",
+  "description": "CREATE-ONLY: OneDrive upload session for one NEW screenshot/evidence file under SHARED COMPANY FOLDER I18N/AI AUDITS/<product>/<run folder>/<subfolders>. Known products only, safe names, evidence file types. Rename on conflict, never overwrites.",
+  "active": true,
+  "activeVersionId": "1d85883c-aeed-48ae-8743-96eff30f7bb3",
+  "createdAt": "2026-11-19T06:26:09.943Z",
+  "updatedAt": "2026-11-19T06:26:13.129Z",
+  "isArchived": false,
+  "versionId": "1d85883c-aeed-48ae-8743-96eff30f7bb3",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "54ece3e0-bda0-4ff8-99c4-d1927679d66c",
+      "name": "Receive evidence file",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "product",
+              "type": "string"
+            },
+            {
+              "name": "run_folder",
+              "type": "string"
+            },
+            {
+              "name": "subfolder",
+              "type": "string"
+            },
+            {
+              "name": "file_name",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "beed92e9-2939-4fc5-93a5-a0bdb90b7e64",
+      "name": "Check path (known product, safe names)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const PRODUCTS = ['BrainIQtest','Chat AI','LoveStyle','Mindspree','Mobitrace','My Image','My QR Code','MyWapp','PDFhelp','Personality','QRcreate','RealChecker','ResumeWise','UniCopy','VinReady'];\nconst EXT = ['png','jpg','jpeg','webp','gif','mp4','webm','zip','html','htm','eml','pdf','txt','json','csv'];\nconst bad = /[\\\\/:*?\"<>|#%]/;\nfunction seg(v, label) {\n  const s = String(v || '').trim();\n  if (!s) throw new Error(label + ' is empty');\n  if (s === '.' || s === '..' || s.startsWith('.')) throw new Error(label + ' cannot start with a dot');\n  if (bad.test(s)) throw new Error(label + ' contains a character that is not allowed: \\\\ / : * ? \" < > | # %');\n  if (s.length > 120) throw new Error(label + ' is longer than 120 characters');\n  return s;\n}\nconst product = String($json.product || '').trim();\nif (!PRODUCTS.includes(product)) throw new Error('Unknown product \"' + product + '\". Use one of: ' + PRODUCTS.join(', '));\nconst run = seg($json.run_folder, 'run_folder');\nconst subRaw = String($json.subfolder || '').trim();\nconst subs = subRaw ? subRaw.split('/').map((p, i) => seg(p, 'subfolder part ' + (i + 1))) : [];\nif (subs.length > 3) throw new Error('subfolder can have at most 3 levels');\nconst file = seg($json.file_name, 'file_name');\nconst ext = (file.split('.').pop() || '').toLowerCase();\nif (!file.includes('.') || !EXT.includes(ext)) throw new Error('File type .' + ext + ' not allowed. Allowed: ' + EXT.join(', '));\nconst parts = ['SHARED COMPANY FOLDER I18N', 'AI AUDITS', product, run, ...subs, file];\nconst graphPath = parts.map(encodeURIComponent).join('/');\nreturn { json: { graph_url: 'https://graph.microsoft.com/v1.0/me/drive/root:/' + graphPath + ':/createUploadSession', folder: parts.slice(0, -1).join('/'), file_name: file } };"
+      }
+    },
+    {
+      "id": "55191fba-3c4a-4cfb-ad47-f075f08c58d5",
+      "name": "Create upload session (create-only)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.graph_url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"item\": {\"@microsoft.graph.conflictBehavior\": \"rename\"}}",
+        "options": {}
+      },
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "QCA5rX8Iyd1rbChu",
+          "name": "Microsoft Drive - Maria Sica account"
+        }
+      }
+    },
+    {
+      "id": "a8fcabb2-20c3-41f4-affd-e10905419fc8",
+      "name": "Return upload URL",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "u",
+              "name": "upload_url",
+              "value": "={{ $json.uploadUrl }}",
+              "type": "string"
+            },
+            {
+              "id": "x",
+              "name": "expires",
+              "value": "={{ $json.expirationDateTime }}",
+              "type": "string"
+            },
+            {
+              "id": "f",
+              "name": "folder",
+              "value": "={{ $('Check path (known product, safe names)').item.json.folder }}",
+              "type": "string"
+            },
+            {
+              "id": "h",
+              "name": "how_to_upload",
+              "value": "PUT the file bytes to upload_url with Content-Length and Content-Range: bytes 0-<size-1>/<size>. No Authorization header. Files over 60 MB: PUT in chunks (multiples of 320 KiB). On a name clash OneDrive renames the new file; the final name and webUrl are in the PUT response. Missing folders are created on the way.",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "1f1b13e3-3c0e-4976-a4ef-defb28dc8292",
+      "name": "Sticky Note 6f4ef825",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -32,
+        -96
+      ],
+      "parameters": {
+        "content": "## i18n readiness - MCP tool: evidence upload link (CREATE-ONLY)\n\nCalled only by the i18n readiness MCP server. Upload session for ONE new screenshot/evidence file under SHARED COMPANY FOLDER I18N/AI AUDITS/<known product>/<run folder>/<up to 3 subfolders>. Rejects unknown products, path tricks and non-evidence file types. conflictBehavior=rename: never overwrites, moves or deletes.",
+        "color": 3,
+        "width": 832,
+        "height": 224
+      }
+    }
+  ],
+  "connections": {
+    "Receive evidence file": {
+      "main": [
+        [
+          {
+            "node": "Check path (known product, safe names)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check path (known product, safe names)": {
+      "main": [
+        [
+          {
+            "node": "Create upload session (create-only)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create upload session (create-only)": {
+      "main": [
+        [
+          {
+            "node": "Return upload URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "callerPolicy": "workflowsFromAList",
+    "callerIds": "D1qAft7zKUv4d6W6"
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "HA6fakRffNheBBmM",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-19T06:26:09.946Z",
+      "updatedAt": "2026-11-19T06:26:09.946Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "1d85883c-aeed-48ae-8743-96eff30f7bb3",
+    "workflowId": "HA6fakRffNheBBmM",
+    "nodes": [
+      {
+        "id": "54ece3e0-bda0-4ff8-99c4-d1927679d66c",
+        "name": "Receive evidence file",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "inputSource": "workflowInputs",
+          "workflowInputs": {
+            "values": [
+              {
+                "name": "product",
+                "type": "string"
+              },
+              {
+                "name": "run_folder",
+                "type": "string"
+              },
+              {
+                "name": "subfolder",
+                "type": "string"
+              },
+              {
+                "name": "file_name",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "beed92e9-2939-4fc5-93a5-a0bdb90b7e64",
+        "name": "Check path (known product, safe names)",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          224,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const PRODUCTS = ['BrainIQtest','Chat AI','LoveStyle','Mindspree','Mobitrace','My Image','My QR Code','MyWapp','PDFhelp','Personality','QRcreate','RealChecker','ResumeWise','UniCopy','VinReady'];\nconst EXT = ['png','jpg','jpeg','webp','gif','mp4','webm','zip','html','htm','eml','pdf','txt','json','csv'];\nconst bad = /[\\\\/:*?\"<>|#%]/;\nfunction seg(v, label) {\n  const s = String(v || '').trim();\n  if (!s) throw new Error(label + ' is empty');\n  if (s === '.' || s === '..' || s.startsWith('.')) throw new Error(label + ' cannot start with a dot');\n  if (bad.test(s)) throw new Error(label + ' contains a character that is not allowed: \\\\ / : * ? \" < > | # %');\n  if (s.length > 120) throw new Error(label + ' is longer than 120 characters');\n  return s;\n}\nconst product = String($json.product || '').trim();\nif (!PRODUCTS.includes(product)) throw new Error('Unknown product \"' + product + '\". Use one of: ' + PRODUCTS.join(', '));\nconst run = seg($json.run_folder, 'run_folder');\nconst subRaw = String($json.subfolder || '').trim();\nconst subs = subRaw ? subRaw.split('/').map((p, i) => seg(p, 'subfolder part ' + (i + 1))) : [];\nif (subs.length > 3) throw new Error('subfolder can have at most 3 levels');\nconst file = seg($json.file_name, 'file_name');\nconst ext = (file.split('.').pop() || '').toLowerCase();\nif (!file.includes('.') || !EXT.includes(ext)) throw new Error('File type .' + ext + ' not allowed. Allowed: ' + EXT.join(', '));\nconst parts = ['SHARED COMPANY FOLDER I18N', 'AI AUDITS', product, run, ...subs, file];\nconst graphPath = parts.map(encodeURIComponent).join('/');\nreturn { json: { graph_url: 'https://graph.microsoft.com/v1.0/me/drive/root:/' + graphPath + ':/createUploadSession', folder: parts.slice(0, -1).join('/'), file_name: file } };"
+        }
+      },
+      {
+        "id": "55191fba-3c4a-4cfb-ad47-f075f08c58d5",
+        "name": "Create upload session (create-only)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          448,
+          0
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $json.graph_url }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "{\"item\": {\"@microsoft.graph.conflictBehavior\": \"rename\"}}",
+          "options": {}
+        },
+        "credentials": {
+          "microsoftOneDriveOAuth2Api": {
+            "id": "QCA5rX8Iyd1rbChu",
+            "name": "Microsoft Drive - Maria Sica account"
+          }
+        }
+      },
+      {
+        "id": "a8fcabb2-20c3-41f4-affd-e10905419fc8",
+        "name": "Return upload URL",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          672,
+          0
+        ],
+        "parameters": {
+          "mode": "manual",
+          "includeOtherFields": false,
+          "assignments": {
+            "assignments": [
+              {
+                "id": "u",
+                "name": "upload_url",
+                "value": "={{ $json.uploadUrl }}",
+                "type": "string"
+              },
+              {
+                "id": "x",
+                "name": "expires",
+                "value": "={{ $json.expirationDateTime }}",
+                "type": "string"
+              },
+              {
+                "id": "f",
+                "name": "folder",
+                "value": "={{ $('Check path (known product, safe names)').item.json.folder }}",
+                "type": "string"
+              },
+              {
+                "id": "h",
+                "name": "how_to_upload",
+                "value": "PUT the file bytes to upload_url with Content-Length and Content-Range: bytes 0-<size-1>/<size>. No Authorization header. Files over 60 MB: PUT in chunks (multiples of 320 KiB). On a name clash OneDrive renames the new file; the final name and webUrl are in the PUT response. Missing folders are created on the way.",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "1f1b13e3-3c0e-4976-a4ef-defb28dc8292",
+        "name": "Sticky Note 6f4ef825",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -32,
+          -96
+        ],
+        "parameters": {
+          "content": "## i18n readiness - MCP tool: evidence upload link (CREATE-ONLY)\n\nCalled only by the i18n readiness MCP server. Upload session for ONE new screenshot/evidence file under SHARED COMPANY FOLDER I18N/AI AUDITS/<known product>/<run folder>/<up to 3 subfolders>. Rejects unknown products, path tricks and non-evidence file types. conflictBehavior=rename: never overwrites, moves or deletes.",
+          "color": 3,
+          "width": 832,
+          "height": 224
+        }
+      }
+    ],
+    "connections": {
+      "Receive evidence file": {
+        "main": [
+          [
+            {
+              "node": "Check path (known product, safe names)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check path (known product, safe names)": {
+        "main": [
+          [
+            {
+              "node": "Create upload session (create-only)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create upload session (create-only)": {
+        "main": [
+          [
+            {
+              "node": "Return upload URL",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Maria Sica (via MCP)",
+    "name": "Initial create-only evidence upload tool",
+    "description": "Created with 5 nodes: Receive evidence file, Check path (known product, safe names), Create upload session (create-only), Return upload URL, Sticky Note 6f4ef825",
+    "autosaved": false,
+    "createdAt": "2026-11-19T06:26:09.947Z",
+    "updatedAt": "2026-11-19T06:26:09.947Z",
+    "workflowPublishHistory": [
+      {
+        "id": 3287,
+        "workflowId": "HA6fakRffNheBBmM",
+        "versionId": "1d85883c-aeed-48ae-8743-96eff30f7bb3",
+        "event": "activated",
+        "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
+        "createdAt": "2026-11-19T06:26:17.092Z"
+      }
+    ]
+  },
+  "parentFolder": null
+}
