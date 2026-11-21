@@ -5,12 +5,12 @@
   "active": false,
   "activeVersionId": null,
   "createdAt": "2026-10-07T14:41:59.248Z",
-  "updatedAt": "2026-10-29T09:06:50.863Z",
+  "updatedAt": "2026-11-20T16:43:01.903Z",
   "isArchived": false,
-  "versionId": "f8b54da4-0e32-4027-b59d-16e982ac1bb5",
-  "versionCounter": 100,
+  "versionId": "73a42f6a-5c39-4d01-be55-40a52a441101",
+  "versionCounter": 103,
   "sourceWorkflowId": null,
-  "triggerCount": 0,
+  "triggerCount": 1,
   "nodes": [
     {
       "id": "e4a826bd-2127-4f8c-8da3-37c1fe433dd6",
@@ -33,7 +33,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "// READ ONLY. 2026-10-29: Slovak (799) + EN (640) for strings mentioning location/locate/address.\nconst pids = ['3070657967b5854be32cb1.65162854','50011170688b3050b0a7f8.40995136','9274956467e3e224807498.79791832','491848986923fad6dc2f85.42477363','1286096867dbf31146afc5.54950617','6744586768821f2c3fe845.13636914','964775386a3ce03ecca883.03770715','852017176a3ce11141ecd5.60405885','146903556751632e0388b9.21648688','35679002689c4f3ba6dd50.31739712','1600517668d38be7f36ba4.51132642','2944050668d5010cbd95e8.36175908','4780438967fe077b4e6484.83742970','1274536968b58980dc56a0.78363786','691331356a3b9a68428ab3.43540470','225008626a33e62b328c63.04676982','8241074569a69e614ce094.27318095','14240418673f52ae29a007.74392007','60625870676151e1da46d0.81913446','31393214664f295f94dd86.76792605'];\nreturn pids.map(pid => ({ json: { pid, url: 'https://api.lokalise.com/api2/projects/' + pid + '/keys?include_translations=1&disable_references=1&filter_archived=exclude&filter_translation_lang_ids=640,799&limit=500&pagination=cursor' } }));\n",
+        "jsCode": "// READ ONLY. 2026-11-20: 'save' strings, one or more projects per call (?pids=a,b).\nconst q = (($('Webhook (temp)').first() || {}).json || {}).query || {};\nconst pids = String(q.pids || '').split(',').filter(Boolean);\nif (!pids.length) throw new Error('no pids');\nreturn pids.map(pid => ({ json: { pid, url: 'https://api.lokalise.com/api2/projects/' + pid + '/keys?include_translations=1&disable_references=1&filter_archived=exclude&limit=500&pagination=cursor' } }));\n",
         "mode": "runOnceForAllItems"
       }
     },
@@ -73,14 +73,14 @@
                   {
                     "type": "qs",
                     "name": "cursor",
-                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] }}"
+                    "value": "={{ $response.headers[\"x-pagination-next-cursor\"] || ((($response.body || {}).meta || {}).nextCursor) || '' }}"
                   }
                 ]
               },
               "paginationCompleteWhen": "other",
-              "completeExpression": "={{ !$response.headers[\"x-pagination-next-cursor\"] }}",
+              "completeExpression": "={{ !($response.headers[\"x-pagination-next-cursor\"] || ((($response.body || {}).meta || {}).nextCursor)) }}",
               "limitPagesFetched": true,
-              "maxRequests": 60,
+              "maxRequests": 100,
               "requestInterval": 700
             }
           }
@@ -106,8 +106,39 @@
         0
       ],
       "parameters": {
-        "jsCode": "const RE = /locat|address|\\bwhere\\b|position|gps|whereabouts/i;\nconst out = []; const errors = []; let keys = 0; const perProject = {}; const editors = {};\nfor (const it of $input.all()) { const j = it.json; if (j.statusCode && j.statusCode >= 400) { errors.push(j.statusCode + ' ' + JSON.stringify(j.body || '').slice(0, 200)); continue; }\n  const b = j.body || {}; const pid = b.project_id || '';\n  for (const k of (b.keys || [])) { keys++; perProject[pid] = (perProject[pid] || 0) + 1;\n    const tr = k.translations || []; const enT = (tr.find(t => t.language_iso === 'en') || {}).translation;\n    const sk = tr.find(t => t.language_iso === 'sk');\n    if (!sk || typeof sk.translation !== 'string' || !sk.translation) continue;\n    const by = sk.modified_by_email || ''; editors[by] = (editors[by] || 0) + 1;\n    if (typeof enT !== 'string' || !RE.test(enT) || enT.length > 400) continue;\n    const name = (k.key_name && (k.key_name.web || k.key_name.other)) || '';\n    out.push({ pid, key: name, en: enT, sk: sk.translation, by, rev: sk.is_reviewed ? 1 : 0 }); } }\nreturn [{ json: { keys_seen: keys, per_project: perProject, sk_editors: editors, errors, rows_kept: out.length, rows: out } }];\n",
+        "jsCode": "// READ ONLY. Keeps keys whose EN contains \"save\" (<=160 chars).\nconst out = []; const errors = []; const per = {};\nfor (const it of $input.all()) { const j = it.json; if (j.statusCode && j.statusCode >= 400) { errors.push(j.statusCode + ' ' + JSON.stringify(j.body || '').slice(0, 200)); continue; }\n  const b = j.body || {}; const pid = b.project_id || ''; per[pid] = (per[pid] || 0) + (b.keys || []).length;\n  for (const k of (b.keys || [])) { const tr = {}; let en = '';\n    for (const t of (k.translations || [])) { if (t.language_iso === 'en') en = t.translation; tr[t.language_iso] = [t.translation, t.modified_by_email || '']; }\n    if (typeof en !== 'string' || en.length > 160 || !/\\bsav(e|es|ed|ing)\\b/i.test(en)) continue;\n    out.push({ p: pid, k: (k.key_name && (k.key_name.web || k.key_name.other)) || '', d: (k.description || '').slice(0, 150), en, t: tr }); } }\nreturn [{ json: { per_project: per, errors, count: out.length, keys: out } }];\n",
         "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "2abe646f-c15a-4c21-afc9-dc950d7199d1",
+      "name": "Webhook (temp)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        -200
+      ],
+      "parameters": {
+        "httpMethod": "GET",
+        "options": {},
+        "path": "lqa-edits-read-8c41f07be2d94a6f",
+        "responseMode": "responseNode"
+      },
+      "webhookId": "91f2253c-a0a7-4a0b-8224-16f5ecb0532b"
+    },
+    {
+      "id": "6ab7f441-6e4a-4979-84e1-aa51b41b2ed8",
+      "name": "Respond (temp)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "options": {},
+        "respondWith": "firstIncomingItem"
       }
     }
   ],
@@ -139,6 +170,28 @@
         [
           {
             "node": "Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook (temp)": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape": {
+      "main": [
+        [
+          {
+            "node": "Respond (temp)",
             "type": "main",
             "index": 0
           }
