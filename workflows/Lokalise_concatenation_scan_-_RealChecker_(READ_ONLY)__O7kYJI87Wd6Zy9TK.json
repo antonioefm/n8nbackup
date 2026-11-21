@@ -1,0 +1,165 @@
+{
+  "id": "O7kYJI87Wd6Zy9TK",
+  "name": "Lokalise concatenation scan - RealChecker (READ ONLY)",
+  "description": "Read-only: fetches all keys of Lokalise project 964775386a3ce03ecca883.03770715 and flags likely concatenated keys not tagged concatenation.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-20T13:46:18.385Z",
+  "updatedAt": "2026-11-20T13:46:18.385Z",
+  "isArchived": false,
+  "versionId": "f5444ea6-8d49-40c2-9c48-af87f3b45896",
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "2bbf3530-b022-445a-908a-79e42081f289",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "aa2beaeb-7af6-456b-b3fc-fedbcdeb8bf5",
+      "name": "Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const P = '964775386a3ce03ecca883.03770715';\nconst out = [];\nfor (let p = 1; p <= 12; p++) { out.push({ json: { project_id: P, page: p } }); }\nreturn out;"
+      }
+    },
+    {
+      "id": "8ee69e00-dfa4-41e9-ba0a-324dbdc120ed",
+      "name": "Fetch Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?include_translations=1&filter_translation_lang_ids=640&limit=500&page={{ $json.page }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "b83342f3-fd6c-4793-9e37-bbd8445d43a1",
+      "name": "Detect Concatenation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const STOP_END = new Set(['and','or','but','of','to','for','with','by','from','the','a','an','your','our','my','their','this','that','is','are','as','if','into','than','per','via','about','at','on','in','be','will','can','has','have','was','were','its','his','her','until','before','after','when','while','between','under','over','without','within','using']);\nconst START_CONNECT = new Set(['and','or','but','of','to','for','with','by','from','than','then','so','because','which','who','that','on','in','at','is','are','as','if','when','while','until','via','per','into']);\nconst PHRASAL = new Set(['sign up','sign in','sign out','log in','log out','opt in','opt out','top up','set up','back up','check out','check in','try out','find out','learn more','read more','see more','show more','get started','go back','turn on','turn off','logged in','signed in','opt-in','log-in']);\nconst SPLIT_NAME = /(^|[.:_\\-])(prefix|suffix|part\\d*|before|after|start|end|first|second|middle|pre|post|lead|trail|begin|beginning|ending|text\\d|line\\d|sentence\\d|link_?text|linktext|and|or|of)([.:_\\-]|$)/i;\nconst OK_LOWER = /^(e\\.g\\.|i\\.e\\.|iOS|iPhone|iPad|eSIM|eBay|https?:|www\\.|[a-z0-9._%+-]+@|\\{|%|\\[|<|\\$|vs\\.?\\b|x\\d)/;\nlet total = null, scanned = 0, archived = 0, excludedTagged = 0, pagesRead = 0, failed = [];\nconst tagCounts = {};\nconst all = [];\nfor (const it of $input.all()) {\n  const r = it.json; const h = r.headers || {};\n  if (r.statusCode !== 200) { failed.push(r.statusCode); continue; }\n  if (h['x-pagination-total-count']) { total = parseInt(h['x-pagination-total-count'], 10); }\n  const keys = (r.body && r.body.keys) || [];\n  if (keys.length) pagesRead++;\n  for (const k of keys) {\n    if (k.is_archived) { archived++; continue; }\n    scanned++;\n    const tags = k.tags || [];\n    for (const t of tags) { tagCounts[t] = (tagCounts[t] || 0) + 1; }\n    const name = (k.key_name && (k.key_name.web || k.key_name.other || k.key_name.ios || k.key_name.android)) || String(k.key_name);\n    let src = null;\n    for (const tr of (k.translations || [])) { if (tr.language_id === 640 || String(tr.language_iso).toLowerCase() === 'en') { src = tr.translation; } }\n    if (k.is_plural && src && typeof src === 'string' && src.charAt(0) === '{') { try { const o = JSON.parse(src); src = o.other || o.one || Object.values(o)[0]; } catch (e) {} }\n    all.push({ id: k.key_id, name: name, src: (typeof src === 'string') ? src : '', tags: tags, conc: tags.some(function (t) { return /concat/i.test(t); }) });\n  }\n}\nconst byParent = {};\nfunction parent(n) { const s = String(n); const i = Math.max(s.lastIndexOf('::'), s.lastIndexOf('.')); return i > 0 ? s.slice(0, i) : ''; }\nfor (const k of all) { const p = parent(k.name); (byParent[p] = byParent[p] || []).push(k); }\nconst cands = [];\nfor (const k of all) {\n  if (k.conc) { excludedTagged++; continue; }\n  const src = k.src;\n  const plain = src.replace(/<[^<>]+>/g, '').replace(/\\{\\{[^}]*\\}\\}|\\{[^{}]*\\}|%\\d*\\$?[sd@]/g, 'X');\n  const t = plain.trim();\n  const words = t.toLowerCase().replace(/[^a-z0-9'\\- ]/g, ' ').split(/\\s+/).filter(Boolean);\n  const ev = [];\n  if (src && src.trim() && src !== src.replace(/^\\s+/, '')) ev.push('leading space');\n  if (src && src.trim() && src !== src.replace(/\\s+$/, '')) ev.push('trailing space');\n  if (t && /^[a-z]/.test(t) && !OK_LOWER.test(t) && words.length > 1) ev.push('starts lowercase');\n  if (words.length > 1 && START_CONNECT.has(words[0]) && /^[a-z]/.test(t)) ev.push('starts with connector \"' + words[0] + '\"');\n  if (/^[,.;:)\\-–—]/.test(t)) ev.push('starts with punctuation');\n  const last = words[words.length - 1];\n  if (words.length && STOP_END.has(last) && !PHRASAL.has(words.slice(-2).join(' ')) && !/[.!?:…]$/.test(t)) ev.push('ends on \"' + last + '\"');\n  if (/[,–—\\-]$/.test(t) && words.length > 1) ev.push('ends with comma/dash');\n  if (words.length === 1 && START_CONNECT.has(words[0]) && /^[a-z]/.test(t)) ev.push('connector word only');\n  if (SPLIT_NAME.test(k.name.replace(/::/g, '.'))) ev.push('key name looks like a fragment');\n  if (!ev.length) continue;\n  const sib = (byParent[parent(k.name)] || []).filter(function (s) { return s.id !== k.id; }).slice(0, 6).map(function (s) { return s.name + ' = ' + JSON.stringify(s.src.slice(0, 80)); });\n  cands.push({ id: k.id, key: k.name, src: src, tags: k.tags, evidence: ev, siblings: sib });\n}\nreturn [{ json: { total_header: total, pages_read: pagesRead, failed: failed, scanned_unarchived: scanned, archived_skipped: archived, excluded_concat_tagged: excludedTagged, tags_with_concat: Object.keys(tagCounts).filter(function (t) { return /concat/i.test(t); }).map(function (t) { return t + ' (' + tagCounts[t] + ')'; }), candidate_count: cands.length, candidates: cands } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pages": {
+      "main": [
+        [
+          {
+            "node": "Fetch Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Keys": {
+      "main": [
+        [
+          {
+            "node": "Detect Concatenation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "O7kYJI87Wd6Zy9TK",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-20T13:46:18.406Z",
+      "updatedAt": "2026-11-20T13:46:18.406Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
