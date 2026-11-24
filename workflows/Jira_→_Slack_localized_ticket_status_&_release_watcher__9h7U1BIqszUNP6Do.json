@@ -1,20 +1,20 @@
 {
   "id": "9h7U1BIqszUNP6Do",
   "name": "Jira → Slack: localized ticket status & release watcher",
-  "description": "Every 15 min: posts LQA, status and fix-version changes of localized tickets to #i18n-releases (version events grouped per version) and fills Original fix version/release date on LL tickets.",
+  "description": "Weekdays 9/12/15/18 (Madrid): posts status and fix-version changes of localized tickets to #i18n-releases; LQA updates only as thread replies; fills Original fix version/release date on LL tickets.",
   "active": true,
-  "activeVersionId": "7462132c-eb3d-45c6-81a9-c11e675224cf",
+  "activeVersionId": "fc550ec6-3207-40f7-b7e7-84224ab150c0",
   "createdAt": "2026-10-09T11:59:44.660Z",
-  "updatedAt": "2026-11-12T11:04:42.368Z",
+  "updatedAt": "2026-11-23T14:41:41.692Z",
   "isArchived": false,
-  "versionId": "7462132c-eb3d-45c6-81a9-c11e675224cf",
-  "versionCounter": 8,
+  "versionId": "fc550ec6-3207-40f7-b7e7-84224ab150c0",
+  "versionCounter": 18,
   "sourceWorkflowId": null,
   "triggerCount": 1,
   "nodes": [
     {
       "id": "f2413de9-5707-4a97-bf49-4f8375d72d75",
-      "name": "Every 15 minutes",
+      "name": "Weekdays 9-12-15-18",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.4,
       "position": [
@@ -25,8 +25,8 @@
         "rule": {
           "interval": [
             {
-              "field": "minutes",
-              "minutesInterval": 15
+              "expression": "0 9,12,15,18 * * 1-5",
+              "field": "cronExpression"
             }
           ]
         }
@@ -52,7 +52,7 @@
           "parameters": [
             {
               "name": "jql",
-              "value": "issueLinkType = \"Has localization ticket\" AND project != INTERNAT AND (updated >= -1d OR (fixVersion in releasedVersions() AND updated >= -14d)) ORDER BY updated DESC"
+              "value": "issueLinkType = \"Has localization ticket\" AND project != INTERNAT AND (updated >= -3d OR (fixVersion in releasedVersions() AND updated >= -14d)) ORDER BY updated DESC"
             },
             {
               "name": "fields",
@@ -85,7 +85,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const state = $getWorkflowStaticData('global');\nif (!state.issues) state.issues = {};\nif (!state.lqa) state.lqa = {};\nif (!state.versions) state.versions = {};\nconst firstRun = !state.seeded;\nconst lqaFirstRun = !state.lqaSeeded;\nconst now = Date.now();\nconst LINK_TYPE_ID = '10079'; // \"Has localization ticket\"\nconst esc = function (s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };\nconst base = 'https://futuremedia.atlassian.net/browse/';\nconst link = function (k) { return '<' + base + k + '|' + k + '>'; };\nconst sigOf = function (v) { return v.name + '|' + v.releaseDate + '|' + v.released; };\nconst parseSig = function (s) { const parts = s.split('|'); const released = parts.pop() === 'true'; const releaseDate = parts.pop() || ''; return { name: parts.join('|'), releaseDate: releaseDate, released: released }; };\nconst verLineOf = function (versions) { if (!versions) return 'unknown'; return versions.length ? versions.map(function (v) { return esc(v.name) + ' (' + (v.releaseDate || 'no date') + (v.released ? ', released' : ', not released') + ')'; }).join(', ') : 'none'; };\nconst buildText = function (key, summary, changes, verLine, llrLine) {\n  return ':bell: *' + link(key) + '* – ' + esc(summary) + '\\n' + changes.join('\\n') + '\\nFix version: ' + verLine + '\\nLocalization ticket: ' + llrLine;\n};\n\nconst productIssues = (($('Fetch localized product tickets').first().json || {}).issues) || [];\nlet llrIssues = [];\ntry { llrIssues = ($input.first().json.issues) || []; } catch (e) { llrIssues = []; }\nconst llrByKey = {};\nfor (const l of llrIssues) llrByKey[l.key] = l;\n\n// 1) LQA status changes on localization (INTERNAT) tickets\nconst lqaChanges = {}; // product key -> { lines, llrKeys, issue }\nfor (const l of llrIssues) {\n  const f = l.fields || {};\n  const val = f.customfield_11581 ? f.customfield_11581.value : '';\n  const prev = state.lqa[l.key];\n  state.lqa[l.key] = { value: val, seen: now };\n  if (lqaFirstRun) continue;\n  let changed = false;\n  let fromTxt = '';\n  // An LL ticket seen for the first time is only recorded, never reported\n  if (prev && prev.value !== val) { changed = true; fromTxt = prev.value || 'not set'; }\n  if (!changed) continue;\n  const products = (f.issuelinks || []).filter(function (x) { return x.type && x.type.id === LINK_TYPE_ID && x.inwardIssue; }).map(function (x) { return x.inwardIssue; });\n  for (const p of products) {\n    if (!lqaChanges[p.key]) lqaChanges[p.key] = { lines: [], llrKeys: [], issue: p };\n    lqaChanges[p.key].lines.push(':mag: LQA status (' + l.key + '): ' + esc(fromTxt) + ' → ' + '*' + esc(val || 'not set') + '*');\n    lqaChanges[p.key].llrKeys.push(l.key);\n  }\n}\n\nconst out = [];\nconst groups = {}; // version-level events, one message per version + event\nconst groupOrder = [];\n// 2) Product tickets: ticket-level changes go per ticket, version-level events are grouped per version\nfor (const it of productIssues) {\n  const f = it.fields || {};\n  const llrs = (f.issuelinks || []).filter(function (l) { return l.type && l.type.id === LINK_TYPE_ID && l.outwardIssue; }).map(function (l) { return l.outwardIssue; });\n  if (!llrs.length) continue;\n  const status = f.status ? f.status.name : '';\n  const versions = (f.fixVersions || []).map(function (v) { return { id: v.id, name: v.name, releaseDate: v.releaseDate || '', released: !!v.released }; });\n  const verSig = versions.map(sigOf).sort().join(';');\n  const prev = state.issues[it.key];\n  state.issues[it.key] = { status: status, verSig: verSig, seen: now, threadTs: prev && prev.threadTs ? prev.threadTs : '', summary: f.summary || '', llrKeys: llrs.map(function (l) { return l.key; }) };\n  const lqa = lqaChanges[it.key];\n  delete lqaChanges[it.key];\n  const llrLine = llrs.map(function (l) { const st = l.fields && l.fields.status ? l.fields.status.name : ''; return link(l.key) + (st ? ' (' + esc(st) + ')' : ''); }).join(', ');\n  const changes = [];\n  if (!firstRun && prev) {\n    if (prev.status !== null && prev.status !== undefined && prev.status !== status) {\n      const prodNote = status === 'QA PROD' ? ' :rocket: _deployed to prod_' : '';\n      changes.push('Status: ' + esc(prev.status) + ' → *' + esc(status) + '*' + prodNote);\n    }\n    if (prev.verSig !== null && prev.verSig !== undefined && prev.verSig !== verSig) {\n      const prevVers = prev.verSig ? prev.verSig.split(';').map(parseSig) : [];\n      for (const v of versions) {\n        const p = prevVers.find(function (x) { return x.name === v.name; });\n        let event = '';\n        if (!p) changes.push('Fix version added: *' + esc(v.name) + '*' + (v.releaseDate ? ' (planned release ' + v.releaseDate + ')' : ''));\n        else if (v.released && !p.released) event = ':rocket: *released*' + (v.releaseDate ? ' on *' + v.releaseDate + '*' : '');\n        else if (!v.released && p.released) event = ':warning: release *reverted* (marked as not released again)';\n        else if (p.releaseDate !== v.releaseDate) event = ':calendar: release date moved: ' + (p.releaseDate || 'not set') + ' → *' + (v.releaseDate || 'not set') + '*';\n        if (event) {\n          const gk = (v.id || v.name) + '#' + event;\n          if (!groups[gk]) { groups[gk] = { versionId: v.id || v.name, version: v, project: it.key.split('-')[0], event: event, tickets: [], llrKeys: [] }; groupOrder.push(gk); }\n          groups[gk].tickets.push('• ' + link(it.key) + ' – ' + esc(f.summary) + ' · ' + esc(status) + ' · LL: ' + llrLine);\n          for (const l of llrs) if (groups[gk].llrKeys.indexOf(l.key) < 0) groups[gk].llrKeys.push(l.key);\n        }\n      }\n      for (const p of prevVers) {\n        if (!versions.find(function (v) { return v.name === p.name; })) changes.push('Fix version removed: *' + esc(p.name) + '*');\n      }\n    }\n  }\n  if (lqa) for (const line of lqa.lines) changes.push(line);\n  if (!changes.length) continue;\n  out.push({ json: { kind: 'ticket', groupKey: '', key: it.key, status: status, llrKeys: llrs.map(function (l) { return l.key; }), threadTs: state.issues[it.key].threadTs, changesText: changes.join('\\n'), text: buildText(it.key, f.summary, changes, verLineOf(versions), llrLine) } });\n}\n\n// 3) One message per version event, listing every localized ticket in that version\nfor (const gk of groupOrder) {\n  const g = groups[gk];\n  const v = g.version;\n  const vs = state.versions[g.versionId] || { threadTs: '' };\n  vs.seen = now;\n  state.versions[g.versionId] = vs;\n  const header = ':package: *Version ' + esc(v.name) + '* (' + esc(g.project) + ') – ' + g.event;\n  const body = 'Release: ' + (v.releaseDate || 'no date') + (v.released ? ', released' : ', not released') + '\\nLocalized tickets (' + g.tickets.length + '):\\n' + g.tickets.join('\\n');\n  out.push({ json: { kind: 'version', groupKey: String(g.versionId), key: 'Version ' + v.name, status: '', llrKeys: g.llrKeys, threadTs: vs.threadTs || '', changesText: header + '\\n' + g.tickets.join('\\n'), text: header + '\\n' + body } });\n}\n\n// 4) LQA changes whose product ticket was not in this run's product fetch\nfor (const key of Object.keys(lqaChanges)) {\n  const c = lqaChanges[key];\n  const pf = c.issue.fields || {};\n  let st = state.issues[key];\n  if (!st) {\n    st = { status: null, verSig: null, seen: now, threadTs: '', summary: pf.summary || '', llrKeys: c.llrKeys };\n    state.issues[key] = st;\n  }\n  const llrKeys = st.llrKeys && st.llrKeys.length ? st.llrKeys : c.llrKeys;\n  const versions = st.verSig ? st.verSig.split(';').map(parseSig) : (st.verSig === '' ? [] : null);\n  const llrLine = llrKeys.map(function (k) { const li = llrByKey[k]; const s = li && li.fields && li.fields.status ? li.fields.status.name : ''; return link(k) + (s ? ' (' + esc(s) + ')' : ''); }).join(', ');\n  out.push({ json: { kind: 'ticket', groupKey: '', key: key, status: pf.status ? pf.status.name : (st.status || ''), llrKeys: llrKeys, threadTs: st.threadTs || '', changesText: c.lines.join('\\n'), text: buildText(key, pf.summary || st.summary, c.lines, verLineOf(versions), llrLine) } });\n}\n\nconst old = function (o) { return now - ((o && o.seen) || 0) > 90 * 86400000; };\nfor (const k of Object.keys(state.issues)) if (old(state.issues[k])) delete state.issues[k];\nfor (const k of Object.keys(state.lqa)) if (old(state.lqa[k])) delete state.lqa[k];\nfor (const k of Object.keys(state.versions)) if (old(state.versions[k])) delete state.versions[k];\nstate.seeded = true;\nstate.lqaSeeded = true;\nreturn out;\n"
+        "jsCode": "const state = $getWorkflowStaticData('global');\nif (!state.issues) state.issues = {};\nif (!state.lqa) state.lqa = {};\nif (!state.versions) state.versions = {};\nif (!state.naPinged) state.naPinged = {};\nconst firstRun = !state.seeded;\nconst lqaFirstRun = !state.lqaSeeded;\nconst naFirstRun = !state.naSeeded;\nconst now = Date.now();\nconst LINK_TYPE_ID = '10079'; // \"Has localization ticket\"\nconst LQA_LEAD = 'U09H1QEDX9C'; // Kseniya Krasovskaya, LQA lead pinged for LQA/LLR status problems\nconst SUB = '      ◦ '; // indented sub-bullet for version lists\nconst ARROW = ' → '; // used for every status, current or changed\nconst esc = function (s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };\nconst base = 'https://futuremedia.atlassian.net/browse/';\nconst link = function (k) { return '<' + base + k + '|' + k + '>'; };\nconst sigOf = function (v) { return v.name + '|' + v.releaseDate + '|' + v.released; };\nconst parseSig = function (s) { const parts = s.split('|'); const released = parts.pop() === 'true'; const releaseDate = parts.pop() || ''; return { name: parts.join('|'), releaseDate: releaseDate, released: released }; };\nconst verLineOf = function (versions) { if (!versions) return 'unknown'; return versions.length ? versions.map(function (v) { return esc(v.name) + ' (' + (v.releaseDate || 'no date') + (v.released ? ', released' : ', not released') + ')'; }).join(', ') : 'none'; };\n// Thread of the latest version message (#i18n-releases) for any of the ticket's fix versions\nconst versionThreadOf = function (ids) { let ts = ''; (ids || []).forEach(function (id) { const vs = state.versions[id]; if (vs && vs.threadTs) ts = vs.threadTs; }); return ts; };\n// Head of a ticket post: header, changes, then the LLR (linked localization request) status.\n// LQA lines (only when available) and the fix version are appended in \"Add LQA line\".\nconst buildText = function (key, summary, changes, llrText) {\n  return ':bell: *' + link(key) + '* – ' + esc(summary) + '\\n' + changes.join('\\n') + '\\n' + llrText;\n};\nconst llrStatusText = function (pairs) {\n  return pairs.map(function (p) { return 'LLR: ' + link(p.key) + ARROW + '*' + esc(p.status || 'unknown') + '*'; }).join('\\n');\n};\n\nconst productIssues = (($('Fetch localized product tickets').first().json || {}).issues) || [];\nlet llrIssues = [];\ntry { llrIssues = ($input.first().json.issues) || []; } catch (e) { llrIssues = []; }\nconst llrByKey = {};\nfor (const l of llrIssues) llrByKey[l.key] = l;\n\n// 1) LQA status changes on LLRs (INTERNAT), and LLRs Done without an LQA status\nconst lqaChanges = {}; // product key -> { lines, llrKeys, issue, hasNa }\nconst addLine = function (p, llKey, line, isNa) {\n  if (!lqaChanges[p.key]) lqaChanges[p.key] = { lines: [], llrKeys: [], issue: p, hasNa: false };\n  lqaChanges[p.key].lines.push(line);\n  if (isNa) lqaChanges[p.key].hasNa = true;\n  if (lqaChanges[p.key].llrKeys.indexOf(llKey) < 0) lqaChanges[p.key].llrKeys.push(llKey);\n};\nfor (const l of llrIssues) {\n  const f = l.fields || {};\n  const val = f.customfield_11581 ? f.customfield_11581.value : '';\n  const prev = state.lqa[l.key];\n  state.lqa[l.key] = { value: val, seen: now };\n  const products = (f.issuelinks || []).filter(function (x) { return x.type && x.type.id === LINK_TYPE_ID && x.inwardIssue; }).map(function (x) { return x.inwardIssue; });\n\n  // LLR is Done but LQA status is NA / not set -> ping the LQA lead once per LLR\n  const llStatus = f.status ? String(f.status.name || '') : '';\n  const lqaMissing = !val || /^n\\s*\\/?\\s*a$/i.test(String(val).trim());\n  if (/^done$/i.test(llStatus.trim()) && lqaMissing) {\n    if (!state.naPinged[l.key]) {\n      state.naPinged[l.key] = { seen: now };\n      // First run only records tickets that were already in this state\n      if (!naFirstRun) {\n        for (const p of products) addLine(p, l.key, ':rotating_light: <@' + LQA_LEAD + '> ' + link(l.key) + ' is *Done* but its LQA status is *' + esc(val || 'not set') + '*. All linked localization requests need a selected LQA status.', true);\n      }\n    } else {\n      state.naPinged[l.key].seen = now;\n    }\n  } else {\n    delete state.naPinged[l.key];\n  }\n\n  if (lqaFirstRun) continue;\n  // An LLR seen for the first time is only recorded, never reported\n  if (!(prev && prev.value !== val)) continue;\n  const fromTxt = prev.value || 'not set';\n  for (const p of products) addLine(p, l.key, ':mag: LQA status (' + link(l.key) + '): ' + esc(fromTxt) + ARROW + '*' + esc(val || 'not set') + '*', false);\n}\n\nconst out = [];\nconst groups = {}; // version-level events, one message per version + event\nconst groupOrder = [];\n// 2) Product tickets: ticket-level changes go per ticket, version-level events are grouped per version\nfor (const it of productIssues) {\n  const f = it.fields || {};\n  const llrs = (f.issuelinks || []).filter(function (l) { return l.type && l.type.id === LINK_TYPE_ID && l.outwardIssue; }).map(function (l) { return l.outwardIssue; });\n  if (!llrs.length) continue;\n  const status = f.status ? f.status.name : '';\n  const versions = (f.fixVersions || []).map(function (v) { return { id: v.id, name: v.name, releaseDate: v.releaseDate || '', released: !!v.released }; });\n  const verSig = versions.map(sigOf).sort().join(';');\n  const prev = state.issues[it.key];\n  state.issues[it.key] = { status: status, verSig: verSig, verIds: versions.map(function (v) { return String(v.id || v.name); }), seen: now, threadTs: prev && prev.threadTs ? prev.threadTs : '', summary: f.summary || '', llrKeys: llrs.map(function (l) { return l.key; }) };\n  const lqa = lqaChanges[it.key];\n  delete lqaChanges[it.key];\n  // Version list sub-bullets: one \"LLR\" line per LLR, then its LQA status when set\n  const llrBlock = llrs.map(function (l) {\n    const st = l.fields && l.fields.status ? l.fields.status.name : '';\n    const li = llrByKey[l.key];\n    const q = li && li.fields && li.fields.customfield_11581 ? li.fields.customfield_11581.value : '';\n    return SUB + 'LLR: ' + link(l.key) + (st ? ARROW + '*' + esc(st) + '*' : '') + (q ? '\\n' + SUB + 'LQA status' + ARROW + '*' + esc(q) + '*' : '');\n  }).join('\\n');\n  const llrText = llrStatusText(llrs.map(function (l) { return { key: l.key, status: l.fields && l.fields.status ? l.fields.status.name : '' }; }));\n  const changes = [];\n  if (!firstRun && prev) {\n    if (prev.status !== null && prev.status !== undefined && prev.status !== status) {\n      const prodNote = status === 'QA PROD' ? ' :rocket: _deployed to prod_' : '';\n      changes.push('Main ticket status: ' + esc(prev.status) + ARROW + '*' + esc(status) + '*' + prodNote);\n      // Main ticket just moved to Done while its LLR is still in DEV Verification -> ping the LQA lead\n      if (/^done$/i.test(status.trim())) {\n        const stuck = llrs.filter(function (l) { const s = l.fields && l.fields.status ? l.fields.status.name : ''; return /dev verification/i.test(s); });\n        if (stuck.length) changes.push(':rotating_light: <@' + LQA_LEAD + '> main ticket is *Done* but ' + stuck.map(function (l) { return link(l.key); }).join(', ') + (stuck.length > 1 ? ' are' : ' is') + ' still in *DEV Verification*');\n      }\n    }\n    if (prev.verSig !== null && prev.verSig !== undefined && prev.verSig !== verSig) {\n      const prevVers = prev.verSig ? prev.verSig.split(';').map(parseSig) : [];\n      for (const v of versions) {\n        const p = prevVers.find(function (x) { return x.name === v.name; });\n        let event = '';\n        if (!p) changes.push('Fix version added: *' + esc(v.name) + '*' + (v.releaseDate ? ' (planned release ' + v.releaseDate + ')' : ''));\n        else if (v.released && !p.released) event = ':rocket: *released*' + (v.releaseDate ? ' on *' + v.releaseDate + '*' : '');\n        else if (!v.released && p.released) event = ':warning: release *reverted* (marked as not released again)';\n        else if (p.releaseDate !== v.releaseDate) event = ':calendar: release date moved: ' + (p.releaseDate || 'not set') + ARROW + '*' + (v.releaseDate || 'not set') + '*';\n        if (event) {\n          const gk = (v.id || v.name) + '#' + event;\n          if (!groups[gk]) { groups[gk] = { versionId: v.id || v.name, version: v, project: it.key.split('-')[0], event: event, tickets: [], keys: [], llrKeys: [] }; groupOrder.push(gk); }\n          groups[gk].tickets.push('• ' + link(it.key) + ' – ' + esc(f.summary) + ARROW + '*' + esc(status) + '*\\n' + llrBlock);\n          if (groups[gk].keys.indexOf(it.key) < 0) groups[gk].keys.push(it.key);\n          for (const l of llrs) if (groups[gk].llrKeys.indexOf(l.key) < 0) groups[gk].llrKeys.push(l.key);\n        }\n      }\n      for (const p of prevVers) {\n        if (!versions.find(function (v) { return v.name === p.name; })) changes.push('Fix version removed: *' + esc(p.name) + '*');\n      }\n    }\n  }\n  if (lqa) for (const line of lqa.lines) changes.push(line);\n  if (!changes.length) continue;\n  // LQA-only updates: reply in the version thread if the ticket was listed in one, else the ticket's own thread.\n  // Plain LQA updates are never posted as a new message (Kseniya pings still are).\n  let threadTs = state.issues[it.key].threadTs;\n  let changesText = changes.join('\\n') + '\\n' + llrText;\n  if (lqa && changes.length === lqa.lines.length) {\n    const vt = versionThreadOf(state.issues[it.key].verIds);\n    if (vt) { threadTs = vt; changesText = '• ' + link(it.key) + ' – ' + esc(f.summary) + ARROW + '*' + esc(status) + '*\\n' + changesText; }\n    if (!threadTs && !lqa.hasNa) continue;\n  }\n  out.push({ json: { kind: 'ticket', groupKey: '', key: it.key, status: status, llrKeys: llrs.map(function (l) { return l.key; }), threadTs: threadTs, changesText: changesText, text: buildText(it.key, f.summary, changes, llrText), tail: 'Fix version: ' + verLineOf(versions) } });\n}\n\n// 3) One message per version event, listing every localized ticket in that version.\n// A version with a single localized ticket that already has its own thread is posted inside that thread instead,\n// and that thread becomes the version's thread for later events.\nfor (const gk of groupOrder) {\n  const g = groups[gk];\n  const v = g.version;\n  const vs = state.versions[g.versionId] || { threadTs: '' };\n  vs.seen = now;\n  if (!vs.threadTs && g.keys.length === 1) {\n    const ti = state.issues[g.keys[0]];\n    if (ti && ti.threadTs) vs.threadTs = ti.threadTs;\n  }\n  state.versions[g.versionId] = vs;\n  const header = ':package: *Version ' + esc(v.name) + '* (' + esc(g.project) + ') – ' + g.event;\n  const body = 'Release: ' + (v.releaseDate || 'no date') + (v.released ? ', released' : ', not released') + '\\n' + g.tickets.join('\\n');\n  out.push({ json: { kind: 'version', groupKey: String(g.versionId), key: 'Version ' + v.name, status: '', llrKeys: g.llrKeys, threadTs: vs.threadTs || '', changesText: header + '\\n' + body, text: header + '\\n' + body, tail: '' } });\n}\n\n// 4) LQA lines whose product ticket was not in this run's product fetch\nfor (const key of Object.keys(lqaChanges)) {\n  const c = lqaChanges[key];\n  const pf = c.issue.fields || {};\n  let st = state.issues[key];\n  if (!st) {\n    st = { status: null, verSig: null, verIds: [], seen: now, threadTs: '', summary: pf.summary || '', llrKeys: c.llrKeys };\n    state.issues[key] = st;\n  }\n  const llrKeys = st.llrKeys && st.llrKeys.length ? st.llrKeys : c.llrKeys;\n  const versions = st.verSig ? st.verSig.split(';').map(parseSig) : (st.verSig === '' ? [] : null);\n  const llrText = llrStatusText(llrKeys.map(function (k) { const li = llrByKey[k]; return { key: k, status: li && li.fields && li.fields.status ? li.fields.status.name : '' }; }));\n  const mainStatus = pf.status ? pf.status.name : (st.status || '');\n  let threadTs = st.threadTs || '';\n  let changesText = c.lines.join('\\n') + '\\n' + llrText;\n  const vt = versionThreadOf(st.verIds);\n  if (vt) { threadTs = vt; changesText = '• ' + link(key) + ' – ' + esc(pf.summary || st.summary) + (mainStatus ? ARROW + '*' + esc(mainStatus) + '*' : '') + '\\n' + changesText; }\n  if (!threadTs && !c.hasNa) continue; // plain LQA updates only go into an existing thread\n  out.push({ json: { kind: 'ticket', groupKey: '', key: key, status: mainStatus, llrKeys: llrKeys, threadTs: threadTs, changesText: changesText, text: buildText(key, pf.summary || st.summary, c.lines, llrText), tail: 'Fix version: ' + verLineOf(versions) } });\n}\n\nconst old = function (o) { return now - ((o && o.seen) || 0) > 90 * 86400000; };\nfor (const k of Object.keys(state.issues)) if (old(state.issues[k])) delete state.issues[k];\nfor (const k of Object.keys(state.lqa)) if (old(state.lqa[k])) delete state.lqa[k];\nfor (const k of Object.keys(state.versions)) if (old(state.versions[k])) delete state.versions[k];\nfor (const k of Object.keys(state.naPinged)) if (old(state.naPinged[k])) delete state.naPinged[k];\nstate.seeded = true;\nstate.lqaSeeded = true;\nstate.naSeeded = true;\nreturn out;\n"
       }
     },
     {
@@ -196,13 +196,13 @@
               "id": "lqa-text",
               "name": "text",
               "type": "string",
-              "value": "={{ $('Detect status and release changes').item.json.text + '\\nLQA status: ' + ((($json.issues || []).filter(i => $('Detect status and release changes').item.json.llrKeys.includes(i.key))).map(i => ($('Detect status and release changes').item.json.llrKeys.length > 1 ? i.key + ': ' : '') + '*' + (i.fields.customfield_11581 ? i.fields.customfield_11581.value : 'not set') + '*').join(', ') || 'unknown') + '\\nLQA ticket: ' + ((($json.issues || []).filter(i => i.fields && i.fields.issuetype && i.fields.issuetype.name === 'Test Plan')).length ? $json.issues.filter(i => i.fields.issuetype.name === 'Test Plan').map(i => '<https://futuremedia.atlassian.net/browse/' + i.key + '|' + i.key + '> (' + i.fields.status.name + (i.fields.duedate ? ', due ' + i.fields.duedate : '') + ')').join(', ') : 'none yet') }}"
+              "value": "={{ (() => { const d = $('Detect status and release changes').item.json; if (d.kind === 'version') return d.text; const iss = $json.issues || []; const multi = d.llrKeys.length > 1; const st = iss.filter(i => d.llrKeys.includes(i.key) && i.fields && i.fields.customfield_11581 && i.fields.customfield_11581.value).map(i => (multi ? i.key + ' ' : '') + '→ *' + i.fields.customfield_11581.value + '*'); const tp = iss.filter(i => i.fields && i.fields.issuetype && i.fields.issuetype.name === 'Test Plan').map(i => '<https://futuremedia.atlassian.net/browse/' + i.key + '|' + i.key + '> → *' + i.fields.status.name + '*' + (i.fields.duedate ? ' (due ' + i.fields.duedate + ')' : '')); let t = d.text; if (st.length) t += '\\nLQA status ' + st.join(', '); if (tp.length) t += '\\nLQA ticket: ' + tp.join(', '); if (d.tail) t += '\\n' + d.tail; return t; })() }}"
             },
             {
               "id": "reply-text",
               "name": "replyText",
               "type": "string",
-              "value": "={{ $('Detect status and release changes').item.json.changesText + '\\nLQA status: ' + ((($json.issues || []).filter(i => $('Detect status and release changes').item.json.llrKeys.includes(i.key))).map(i => '*' + (i.fields.customfield_11581 ? i.fields.customfield_11581.value : 'not set') + '*').join(', ') || 'unknown') + ' · LQA ticket: ' + ((($json.issues || []).filter(i => i.fields && i.fields.issuetype && i.fields.issuetype.name === 'Test Plan')).length ? $json.issues.filter(i => i.fields.issuetype.name === 'Test Plan').map(i => '<https://futuremedia.atlassian.net/browse/' + i.key + '|' + i.key + '> (' + i.fields.status.name + ')').join(', ') : 'none yet') }}"
+              "value": "={{ (() => { const d = $('Detect status and release changes').item.json; if (d.kind === 'version') return d.changesText; const iss = $json.issues || []; const multi = d.llrKeys.length > 1; const st = iss.filter(i => d.llrKeys.includes(i.key) && i.fields && i.fields.customfield_11581 && i.fields.customfield_11581.value).map(i => (multi ? i.key + ' ' : '') + '→ *' + i.fields.customfield_11581.value + '*'); const tp = iss.filter(i => i.fields && i.fields.issuetype && i.fields.issuetype.name === 'Test Plan').map(i => '<https://futuremedia.atlassian.net/browse/' + i.key + '|' + i.key + '> → *' + i.fields.status.name + '*'); let t = d.changesText; if (st.length) t += '\\nLQA status ' + st.join(', '); if (tp.length) t += '\\nLQA ticket: ' + tp.join(', '); return t; })() }}"
             },
             {
               "id": "key",
@@ -341,7 +341,7 @@
           "parameters": [
             {
               "name": "jql",
-              "value": "={{ (function (issues) { const ks = []; (issues || []).forEach(function (i) { ((i.fields || {}).issuelinks || []).forEach(function (l) { if (l.type && l.type.id === '10079' && l.outwardIssue && ks.indexOf(l.outwardIssue.key) < 0) ks.push(l.outwardIssue.key); }); }); return 'project = INTERNAT AND (updated >= -1d' + (ks.length ? ' OR key in (' + ks.join(',') + ')' : '') + ') ORDER BY updated DESC'; })($json.issues) }}"
+              "value": "={{ (function (issues) { const ks = []; (issues || []).forEach(function (i) { ((i.fields || {}).issuelinks || []).forEach(function (l) { if (l.type && l.type.id === '10079' && l.outwardIssue && ks.indexOf(l.outwardIssue.key) < 0) ks.push(l.outwardIssue.key); }); }); return 'project = INTERNAT AND (updated >= -3d' + (ks.length ? ' OR key in (' + ks.join(',') + ')' : '') + ') ORDER BY updated DESC'; })($json.issues) }}"
             },
             {
               "name": "fields",
@@ -409,17 +409,6 @@
     }
   ],
   "connections": {
-    "Every 15 minutes": {
-      "main": [
-        [
-          {
-            "node": "Fetch localized product tickets",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Detect status and release changes": {
       "main": [
         [
@@ -519,6 +508,17 @@
           }
         ]
       ]
+    },
+    "Weekdays 9-12-15-18": {
+      "main": [
+        [
+          {
+            "node": "Fetch localized product tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "nodeGroups": [
@@ -554,7 +554,8 @@
   ],
   "settings": {
     "executionOrder": "v1",
-    "availableInMCP": true
+    "availableInMCP": true,
+    "timezone": "Europe/Madrid"
   },
   "staticData": {
     "node:Every 15 minutes": {
@@ -795,7 +796,10 @@
         "RESUME-1920": {
           "status": "Done",
           "verSig": "1.15.0|2026-09-01|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "20846"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794306818.286849",
           "summary": "[FE] Cover Letters Builder - edit modals",
           "llrKeys": [
@@ -805,7 +809,10 @@
         "RESUME-1935": {
           "status": "Done",
           "verSig": "1.15.0|2026-09-01|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "20846"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794306818.437769",
           "summary": "[FE] Cover Letters - Dashboard - Edit content",
           "llrKeys": [
@@ -815,7 +822,10 @@
         "RESUME-1924": {
           "status": "Done",
           "verSig": "1.15.0|2026-09-01|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "20846"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794394119.580799",
           "summary": "[BE] Cover Letters Builder - email",
           "llrKeys": [
@@ -825,7 +835,10 @@
         "RESUME-2229": {
           "status": "Done",
           "verSig": "1.15.3|2026-09-29|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "24303"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794306818.130119",
           "summary": "Landing page improvements",
           "llrKeys": [
@@ -1073,7 +1086,8 @@
         "MYQRCODE-11048": {
           "status": "PENDING IMPLEMENTATION",
           "verSig": "",
-          "seen": 1795398519411,
+          "verIds": [],
+          "seen": 1795453202284,
           "threadTs": "",
           "summary": "Change \"Your liability\" to \"Our liability\" in DPA clause 7.3 of the Terms of Use",
           "llrKeys": [
@@ -1131,7 +1145,10 @@
         "PDFHELP-1952": {
           "status": "BLOCKED",
           "verSig": "MyPDF v1.0.0|2026-12-01|false",
-          "seen": 1795178920200,
+          "verIds": [
+            "25503"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794567818.914089",
           "summary": "MyPDF.com MVP launch (Clone)",
           "llrKeys": [
@@ -1355,7 +1372,10 @@
         "REALCHECK-589": {
           "status": "Done",
           "verSig": "FE 1.7.2|2026-10-27|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25360"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1792493104.272899",
           "summary": "Dev: [A/B] Add \"Phone owner won't be notified\" badge",
           "llrKeys": [
@@ -1489,7 +1509,7 @@
         "PDFHELP-2401": {
           "status": "Done",
           "verSig": "PDF Help v1.4.0|2026-11-06|true",
-          "seen": 1795398519411,
+          "seen": 1795444417873,
           "threadTs": "1793183405.779869",
           "summary": "[PDFHELP-016] Design Implementation: Cloud upload option",
           "llrKeys": [
@@ -1529,7 +1549,7 @@
         "PDFHELP-2579": {
           "status": "Done",
           "verSig": "PDF Help v1.4.0|2026-11-06|true",
-          "seen": 1795398519411,
+          "seen": 1795444417873,
           "threadTs": "1793104206.120909",
           "summary": "Canada Wave 1: TD1, T4, T2201 and IMM 5257 form funnels",
           "llrKeys": [
@@ -1619,7 +1639,10 @@
         "REALCHECK-678": {
           "status": "Done",
           "verSig": "FE 1.7.8|2026-11-10|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25384"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1793088006.523349",
           "summary": "Update copy Vin Number lookup",
           "llrKeys": [
@@ -1629,7 +1652,10 @@
         "VIN-346": {
           "status": "Done",
           "verSig": "1.0.2|2026-11-13|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25454"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1793116805.886009",
           "summary": "[VINReady] ES Implement localised hero mockup with one consistent vehicle",
           "llrKeys": [
@@ -1665,7 +1691,10 @@
         "PDFHELP-2607": {
           "status": "Done",
           "verSig": "PDF Help v1.3.0|2026-10-29|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25355"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1793178007.104189",
           "summary": "Paywall – align checkout UI with Figma design",
           "llrKeys": [
@@ -1797,7 +1826,10 @@
         "VIN-369": {
           "status": "Done",
           "verSig": "1.0.1|2026-11-06|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25424"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1793373520.713549",
           "summary": "[Member area] Subscription in \"Pending payment\" status: \"Cancel subscription\" button is missing, and \"Update payment details\" is shown instead of a pay button",
           "llrKeys": [
@@ -1807,7 +1839,10 @@
         "VIN-407": {
           "status": "Done",
           "verSig": "1.0.2|2026-11-13|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25454"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1793277219.493669",
           "summary": "[ES] Members area: downloaded report PDF entirely in English",
           "llrKeys": [
@@ -1879,7 +1914,10 @@
         "PDFHELP-2651": {
           "status": "Done",
           "verSig": "PDF Help v1.4.0|2026-11-06|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25392"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1793367219.039869",
           "summary": "[FE/BE] Enable da, no, fi, pl locales across PDF Help",
           "llrKeys": [
@@ -1919,9 +1957,12 @@
           "threadTs": "1793619218.045299"
         },
         "MYQRCODE-11170": {
-          "status": "QA",
-          "verSig": "2.4.8|2026-11-26|false",
-          "seen": 1795273419426,
+          "status": "Done",
+          "verSig": "2.4.8|2026-11-23|true",
+          "verIds": [
+            "25517"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1793824419.073419",
           "summary": "Move checkout onto the payments SDK with Stripe",
           "llrKeys": [
@@ -1959,7 +2000,10 @@
         "MYQRCODE-11225": {
           "status": "Done",
           "verSig": "2.4.6|2026-11-11|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25438"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1793973818.870759",
           "summary": "[Auth] Show the US sign-up disclaimer with blue, underlined legal links",
           "llrKeys": [
@@ -1969,7 +2013,10 @@
         "MYQRCODE-11226": {
           "status": "Done",
           "verSig": "2.4.6|2026-11-11|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25438"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1793787517.982129",
           "summary": "Show the US legal disclaimer on /checkout for the trial and the yearly plan",
           "llrKeys": [
@@ -1999,7 +2046,7 @@
         "PERSO-4363": {
           "status": "Done",
           "verSig": "1.101.0 - Compliance_Nov|2026-11-09|true",
-          "seen": 1795398519411,
+          "seen": 1795437219475,
           "threadTs": "1793778518.439339",
           "summary": "[BU Perso] Personality Compliance: 2 checkout checkboxes - US only",
           "llrKeys": [
@@ -2009,7 +2056,10 @@
         "PERSO-4362": {
           "status": "Done",
           "verSig": "1.101.0 - Compliance_Nov|2026-11-09|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25436"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1793778518.278449",
           "summary": "[BU Perso] Personality Compliance: checkout CTA - US only",
           "llrKeys": [
@@ -2019,7 +2069,10 @@
         "REALCHECK-722": {
           "status": "Done",
           "verSig": "FE 1.7.8|2026-11-10|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25384"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1793792019.262789",
           "summary": "[A/B] [DEV] Hero copy test: product category vs user outcome",
           "llrKeys": [
@@ -2035,7 +2088,7 @@
         "MYIMAGE-1224": {
           "status": "Done",
           "verSig": "1.0.62|2026-11-05|true",
-          "seen": 1795398519411,
+          "seen": 1795429119426,
           "threadTs": "1793873920.134079",
           "summary": "[BU Mobi] MyImage Compliance: legal links underline on sign-up - US only",
           "llrKeys": [
@@ -2045,7 +2098,10 @@
         "AICHAT-1619": {
           "status": "Done",
           "verSig": "10.11.2026|2026-11-10|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25375"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1793806418.197029",
           "summary": "[BE] AC-3 + AC-7: Per-IP rate limit on register and user lookup, stop returning the internal id",
           "llrKeys": [
@@ -2055,7 +2111,7 @@
         "PDFHELP-2730": {
           "status": "Done",
           "verSig": "PDF Help v1.4.0|2026-11-06|true",
-          "seen": 1795398519411,
+          "seen": 1795444417873,
           "threadTs": "1793873919.972279",
           "summary": "Invalid multiple uploading files bypass validation",
           "llrKeys": [
@@ -2065,7 +2121,10 @@
         "VIN-376": {
           "status": "Done",
           "verSig": "1.0.2|2026-11-13|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25454"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1793954018.870069",
           "summary": "[ES] Checkout: \"24-hour\" untranslated in trial terms, locked as a placeholder in Lokalise",
           "llrKeys": [
@@ -2075,7 +2134,10 @@
         "REALCHECK-747": {
           "status": "Done",
           "verSig": "FE 1.7.8|2026-11-10|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25384"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1793971119.996869",
           "summary": "Update Terms of Use and Privacy Policy pages to include new funnels",
           "llrKeys": [
@@ -2085,7 +2147,10 @@
         "PDFHELP-2536": {
           "status": "Done",
           "verSig": "PDF Help v1.5.0|2026-11-12|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25426"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1793888319.481249",
           "summary": "PDF25-Design Implementation Dashboard activation stepper",
           "llrKeys": [
@@ -2119,7 +2184,10 @@
         "AICHAT-1317": {
           "status": "Done",
           "verSig": "10.11.2026|2026-11-10|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25375"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1793957619.492489",
           "summary": "Image size / aspect ratio / models",
           "llrKeys": [
@@ -2129,7 +2197,10 @@
         "AICHAT-1319": {
           "status": "Done",
           "verSig": "10.11.2026|2026-11-10|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25375"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794218620.206089",
           "summary": "Image retry",
           "llrKeys": [
@@ -2139,7 +2210,8 @@
         "VIN-578": {
           "status": "Done",
           "verSig": "",
-          "seen": 1795091618067,
+          "verIds": [],
+          "seen": 1795453202284,
           "threadTs": "1793971119.839239",
           "summary": "Compliance: legal links underline on sign-up - US only",
           "llrKeys": [
@@ -2149,7 +2221,10 @@
         "PERSO-4545": {
           "status": "IN IMPLEMENTATION",
           "verSig": "1.104.0 - A/BTests_Checkout_Payment_Buttons_Remove_Name_Checkout|2026-11-13|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25447"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1793969318.250249",
           "summary": "[PERSO-019] Checkout: Remove the name field",
           "llrKeys": [
@@ -2159,7 +2234,10 @@
         "AICHAT-1636": {
           "status": "Done",
           "verSig": "10.11.2026|2026-11-10|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25375"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1793973819.030089",
           "summary": "[Dev] /images: rotating placeholder suggestions behind a 50/50 flag",
           "llrKeys": [
@@ -2177,9 +2255,12 @@
           ]
         },
         "AICHAT-1729": {
-          "status": "QA dev",
+          "status": "Ready for STG",
           "verSig": "23.11.2026|2026-11-23|false",
-          "seen": 1795293219371,
+          "verIds": [
+            "25519"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1793985517.955139",
           "summary": "[BE][FE] Images: Add Share flow for image && Redesign the share modal",
           "llrKeys": [
@@ -2209,7 +2290,10 @@
         "MYIMAGE-1236": {
           "status": "Done",
           "verSig": "1.0.65|2026-11-17|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25450"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794572322.129179",
           "summary": "[i18n] Resizer landing: EN source «Crop size» → «Output size»",
           "llrKeys": [
@@ -2219,7 +2303,10 @@
         "MYIMAGE-1241": {
           "status": "Waiting for fix on prod",
           "verSig": "1.0.65|2026-11-17|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25450"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794572321.353729",
           "summary": "[Login] Password reset still emails a plain-text password instead of a one-time reset link (prod)",
           "llrKeys": [
@@ -2229,7 +2316,10 @@
         "PDFHELP-2572": {
           "status": "Done",
           "verSig": "PDF Help v1.4.0|2026-11-06|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25392"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794481430.831399",
           "summary": "[BU PDF] PDFHelp Compliance: 1 checkout checkbox below buttons - US only (non-forms funnels)",
           "llrKeys": [
@@ -2239,7 +2329,10 @@
         "AICHAT-1694": {
           "status": "Done",
           "verSig": "10.11.2026|2026-11-10|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25375"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794249220.365189",
           "summary": "[A/B/C test] Create pricing campaigns for the A/B/C pricing test",
           "llrKeys": [
@@ -2275,7 +2368,10 @@
         "IQTST-966": {
           "status": "Done",
           "verSig": "1.16.0 - A/BTest_Celebrity_Picker_Payments0.12.0|2026-11-17|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25446"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794307718.320989",
           "summary": "[Build] [BRAINIQTEST-003] Post-quiz: Celebrity picker with picked person shown on the paywall hero",
           "llrKeys": [
@@ -2295,7 +2391,10 @@
         "PDFHELP-2708": {
           "status": "Done",
           "verSig": "PDF Help v1.5.0|2026-11-12|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25426"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794322120.274289",
           "summary": "[i18n] Subscription cancellation email: greeting shows English fallback name \"Customer\"",
           "llrKeys": [
@@ -2305,7 +2404,10 @@
         "AICHAT-1653": {
           "status": "Done",
           "verSig": "13.11.2026|2026-11-13|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25458"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794470620.566969",
           "summary": "[BU AIChat] ChatbotOnline Compliance: legal links underline on sign-up - ALL locations",
           "llrKeys": [
@@ -2315,7 +2417,10 @@
         "AICHAT-1678": {
           "status": "Done",
           "verSig": "13.11.2026|2026-11-13|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25458"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794322120.435359",
           "summary": "[BU AIChat] ChatbotOnline Compliance: checkout: legal text without checkboxes - US only",
           "llrKeys": [
@@ -2325,7 +2430,10 @@
         "AICHAT-1732": {
           "status": "Done",
           "verSig": "13.11.2026|2026-11-13|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25458"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794470620.721289",
           "summary": "[FE] Drag & drop for images on the Images page",
           "llrKeys": [
@@ -2335,7 +2443,10 @@
         "IQTST-1045": {
           "status": "Done",
           "verSig": "1.15.0 - Posthog_Alignment_Footer_Update|2026-11-12|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25453"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794402218.026919",
           "summary": "[BrainIQ] Footer: add legal entity and address (Google Ads consistency)",
           "llrKeys": [
@@ -2355,7 +2466,10 @@
         "AICHAT-1722": {
           "status": "Done",
           "verSig": "13.11.2026|2026-11-13|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25458"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794470620.404399",
           "summary": "[FE] Images: Zoom and pan in the open image view",
           "llrKeys": [
@@ -2365,7 +2479,10 @@
         "MYQRCODE-11267": {
           "status": "Done",
           "verSig": "2.4.7|2026-11-18|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25451"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794481430.657309",
           "summary": "Checkout - legal consent text wraps early leaving an empty gap on the right on MyQRCode",
           "llrKeys": [
@@ -2375,7 +2492,10 @@
         "MYIMAGE-1261": {
           "status": "Ready for STG",
           "verSig": "1.0.66|2026-11-24|false",
-          "seen": 1795279717716,
+          "verIds": [
+            "25541"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1795172620.007449",
           "summary": "[Billing] Localize the \"Reactivate subscription\" confirmation dialog (shown in English on non-EN locales)",
           "llrKeys": [
@@ -2385,7 +2505,10 @@
         "MYIMAGE-1251": {
           "status": "Done",
           "verSig": "1.0.64|2026-11-16|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25439"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794499418.628429",
           "summary": "Align PostHog events with the PostHog Event Standard (frontend + backend)",
           "llrKeys": [
@@ -2395,7 +2518,10 @@
         "MYIMAGE-1255": {
           "status": "Done",
           "verSig": "1.0.64|2026-11-16|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25439"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794480520.233129",
           "summary": "[FE] Checkout: legal text without checkboxes - US only",
           "llrKeys": [
@@ -2405,7 +2531,10 @@
         "MYIMAGE-1242": {
           "status": "Done",
           "verSig": "1.0.64|2026-11-16|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25439"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794574119.962569",
           "summary": "[Checkout] Legal note is missing the statement descriptor, support email and phone required by the Checkout page - NON US only",
           "llrKeys": [
@@ -2425,7 +2554,10 @@
         "PERSO-4510": {
           "status": "IN IMPLEMENTATION",
           "verSig": "1.104.0 - A/BTests_Checkout_Payment_Buttons_Remove_Name_Checkout|2026-11-13|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25447"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794568718.512499",
           "summary": "[PERSO-016] Checkout: Payment method buttons",
           "llrKeys": [
@@ -2465,7 +2597,10 @@
         "MYQRCODE-11269": {
           "status": "Done",
           "verSig": "2.4.7|2026-11-18|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25451"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794567819.069579",
           "summary": "[Auth] Stop Google, Apple and Facebook sign-in taps doing nothing or showing a false error",
           "llrKeys": [
@@ -2495,7 +2630,11 @@
         "REALCHECK-821": {
           "status": "Done",
           "verSig": "BE 1.5.9|2026-11-19|true;FE 1.8.2|2026-11-19|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25514",
+            "25515"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794580419.937979",
           "summary": "Deep Search – Email when the summary is ready",
           "llrKeys": [
@@ -2505,7 +2644,11 @@
         "REALCHECK-819": {
           "status": "Done",
           "verSig": "BE 1.5.9|2026-11-19|true;FE 1.8.2|2026-11-19|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25514",
+            "25515"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794606518.435689",
           "summary": "Deep Search – Flow A: pop-up after the report opens",
           "llrKeys": [
@@ -2545,7 +2688,10 @@
         "PERSO-4470": {
           "status": "Done",
           "verSig": "1.106.0 - Localization_Alignment|2026-11-18|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25523"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794833319.410529",
           "summary": "Order localization keys",
           "llrKeys": [
@@ -2794,9 +2940,10 @@
           ]
         },
         "VIN-654": {
-          "status": "PENDING IMPLEMENTATION",
+          "status": "IN IMPLEMENTATION",
           "verSig": "",
-          "seen": 1795005219435,
+          "verIds": [],
+          "seen": 1795453202284,
           "threadTs": "1794843220.335709",
           "summary": "[Offer] Promo banner hardcodes \"$1.45\" in the copy instead of the visitor's offer price and currency",
           "llrKeys": [
@@ -2806,7 +2953,10 @@
         "REALCHECK-822": {
           "status": "Done",
           "verSig": "FE 1.8.2|2026-11-19|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25515"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794818919.659569",
           "summary": "Deep Search – Predefined messages for every reason",
           "llrKeys": [
@@ -2836,7 +2986,10 @@
         "AICHAT-1536": {
           "status": "QA PROD",
           "verSig": "17.11.2026|2026-11-17|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25459"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794862120.080939",
           "summary": "Chats: UX polishing: Figma vs PROD consistency (mobile and desktop)",
           "llrKeys": [
@@ -2846,7 +2999,10 @@
         "MYIMAGE-1151": {
           "status": "Done",
           "verSig": "1.0.65|2026-11-17|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25450"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794904420.406299",
           "summary": "[i18n] Settings > General: raw English validation error \"Expected string, received null\" under empty name field",
           "llrKeys": [
@@ -2856,7 +3012,10 @@
         "MYIMAGE-1284": {
           "status": "Done",
           "verSig": "1.0.65|2026-11-17|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25450"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794904420.249599",
           "summary": "[Settings] Mobile Logout button submits the \"My account\" form",
           "llrKeys": [
@@ -2876,7 +3035,10 @@
         "MYIMAGE-1285": {
           "status": "Done",
           "verSig": "1.0.65|2026-11-17|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25450"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794904420.091189",
           "summary": "[Legal] Change the legal entity on the site from Omnixo Apps EOOD to Myimage, LLC (all pages, all languages)",
           "llrKeys": [
@@ -2884,9 +3046,12 @@
           ]
         },
         "AICHAT-1718": {
-          "status": "QA dev",
+          "status": "Ready for STG",
           "verSig": "23.11.2026|2026-11-23|false",
-          "seen": 1795363419386,
+          "verIds": [
+            "25519"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794929620.041429",
           "summary": "[BE][FE] Chats: Fix waiting-for-answer animation and reduce time to first token",
           "llrKeys": [
@@ -2896,7 +3061,10 @@
         "REALCHECK-820": {
           "status": "Done",
           "verSig": "FE 1.8.2|2026-11-19|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25515"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1794919720.406389",
           "summary": "Deep Search – Flow B: Deep search button in the report",
           "llrKeys": [
@@ -2926,7 +3094,10 @@
         "MYQRCODE-10831": {
           "status": "Done",
           "verSig": "2.2.11|2026-08-27|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "22995"
+          ],
+          "seen": 1795453202284,
           "threadTs": "",
           "summary": "MYQR1/QRCREATE1-Dev Gate the paywall pricing variant and track the chosen plan",
           "llrKeys": [
@@ -2935,8 +3106,11 @@
         },
         "REALCHECK-837": {
           "status": "PENDING QA",
-          "verSig": "FE 1.8.4|2026-11-24|false",
-          "seen": 1795272519459,
+          "verSig": "FE 1.8.5|2026-11-26|false",
+          "verIds": [
+            "25530"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1795097920.283459",
           "summary": "[Security] \"Forgot password\" replaces the account password immediately for any email, repeatable without limit",
           "llrKeys": [
@@ -2945,8 +3119,11 @@
         },
         "REALCHECK-836": {
           "status": "PENDING QA",
-          "verSig": "FE 1.8.4|2026-11-24|false",
-          "seen": 1795272519459,
+          "verSig": "FE 1.8.5|2026-11-26|false",
+          "verIds": [
+            "25530"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1795097920.441249",
           "summary": "[Security] Public cancellation page has none of the company-standard abuse protections (rate limit, invisible CAPTCHA, alert)",
           "llrKeys": [
@@ -3006,7 +3183,10 @@
         "PERSO-4023": {
           "status": "Done",
           "verSig": "1.109.0 - Trustpilot_Banner_Improvements_PERSO-4515_Winner_Jetstream_Geopricing|2026-11-20|true",
-          "seen": 1795398519411,
+          "verIds": [
+            "25534"
+          ],
+          "seen": 1795453202284,
           "threadTs": "1795178020.497249",
           "summary": "Security Improvements",
           "llrKeys": [
@@ -3072,25 +3252,38 @@
           "llrKeys": [
             "INTERNAT-2720"
           ]
+        },
+        "REALCHECK-908": {
+          "status": "Done",
+          "verSig": "FE 1.8.4|2026-11-23|true",
+          "verIds": [
+            "25540"
+          ],
+          "seen": 1795453202284,
+          "threadTs": "1795435419.970359",
+          "summary": "RealChecker Pricing: USD renewal $49.95, new upsell prices and upsell disclaimer",
+          "llrKeys": [
+            "INTERNAT-2722"
+          ]
         }
       },
       "seeded": true,
       "lqa": {
         "INTERNAT-2652": {
           "value": "Skipped",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2655": {
           "value": "Skipped",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2659": {
           "value": "Skipped",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2662": {
           "value": "To do",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2599": {
           "value": "Tested",
@@ -3098,31 +3291,31 @@
         },
         "INTERNAT-2626": {
           "value": "To do",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2480": {
           "value": "Added to test plan",
-          "seen": 1795276117742
+          "seen": 1795453202284
         },
         "INTERNAT-2661": {
-          "value": "N/A",
-          "seen": 1795280619239
+          "value": "Skipped",
+          "seen": 1795453202284
         },
         "INTERNAT-2660": {
           "value": "To do",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2658": {
           "value": "N/A",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2657": {
           "value": "To do",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2654": {
           "value": "To do",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2142": {
           "value": "N/A",
@@ -3130,11 +3323,11 @@
         },
         "INTERNAT-2622": {
           "value": "Skipped",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2632": {
           "value": "Skipped",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2656": {
           "value": "N/A",
@@ -3142,7 +3335,7 @@
         },
         "INTERNAT-2614": {
           "value": "Skipped",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2557": {
           "value": "Tested",
@@ -3150,47 +3343,47 @@
         },
         "INTERNAT-2651": {
           "value": "Skipped",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2628": {
           "value": "Skipped",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2636": {
           "value": "N/A",
-          "seen": 1795293219371
+          "seen": 1795453202284
         },
         "INTERNAT-2629": {
           "value": "Skipped",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2640": {
           "value": "Tested",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2619": {
           "value": "Added to test plan",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2613": {
           "value": "Skipped",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2617": {
           "value": "Skipped",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2618": {
           "value": "Skipped",
-          "seen": 1795398519411
+          "seen": 1795437219475
         },
         "INTERNAT-2644": {
           "value": "N/A",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2602": {
           "value": "Tested",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2543": {
           "value": "Skipped",
@@ -3198,7 +3391,7 @@
         },
         "INTERNAT-2624": {
           "value": "Skipped",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2556": {
           "value": "Skipped",
@@ -3206,11 +3399,11 @@
         },
         "INTERNAT-2639": {
           "value": "Skipped",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2230": {
           "value": "Skipped",
-          "seen": 1795398519411
+          "seen": 1795444417873
         },
         "INTERNAT-2608": {
           "value": "Skipped",
@@ -3238,7 +3431,7 @@
         },
         "INTERNAT-2631": {
           "value": "N/A",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2562": {
           "value": "N/A",
@@ -3254,7 +3447,7 @@
         },
         "INTERNAT-2588": {
           "value": "N/A",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2590": {
           "value": "N/A",
@@ -3270,7 +3463,7 @@
         },
         "INTERNAT-2623": {
           "value": "To do",
-          "seen": 1795398519411
+          "seen": 1795444417873
         },
         "INTERNAT-2616": {
           "value": "Skipped",
@@ -3282,7 +3475,7 @@
         },
         "INTERNAT-2621": {
           "value": "Skipped",
-          "seen": 1795398519411
+          "seen": 1795429119426
         },
         "INTERNAT-2424": {
           "value": "To do",
@@ -3298,7 +3491,7 @@
         },
         "INTERNAT-2573": {
           "value": "Tested",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2269": {
           "value": "Tested",
@@ -3310,7 +3503,7 @@
         },
         "INTERNAT-2550": {
           "value": "Tested",
-          "seen": 1795398519411
+          "seen": 1795444417873
         },
         "INTERNAT-2546": {
           "value": "Tested",
@@ -3370,7 +3563,7 @@
         },
         "INTERNAT-2527": {
           "value": "Skipped",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2560": {
           "value": "Skipped",
@@ -3390,7 +3583,7 @@
         },
         "INTERNAT-2554": {
           "value": "Skipped",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2228": {
           "value": "Skipped",
@@ -3410,19 +3603,19 @@
         },
         "INTERNAT-2031": {
           "value": "To do",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2021": {
           "value": "To do",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2064": {
           "value": "To do",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2371": {
           "value": "N/A",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2500": {
           "value": "Skipped",
@@ -3446,7 +3639,7 @@
         },
         "INTERNAT-2663": {
           "value": "N/A",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2581": {
           "value": "N/A",
@@ -3525,12 +3718,12 @@
           "seen": 1795259919423
         },
         "INTERNAT-2605": {
-          "value": "N/A",
-          "seen": 1795273419426
+          "value": "Skipped",
+          "seen": 1795453202284
         },
         "INTERNAT-2649": {
           "value": "N/A",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2667": {
           "value": "N/A",
@@ -3545,8 +3738,8 @@
           "seen": 1794574119491
         },
         "INTERNAT-2668": {
-          "value": "N/A",
-          "seen": 1795398519411
+          "value": "Skipped",
+          "seen": 1795453202284
         },
         "INTERNAT-2669": {
           "value": "N/A",
@@ -3554,11 +3747,11 @@
         },
         "INTERNAT-2524": {
           "value": "N/A",
-          "seen": 1795276117742
+          "seen": 1795453202284
         },
         "INTERNAT-2586": {
           "value": "To do",
-          "seen": 1795265319383
+          "seen": 1795453202284
         },
         "INTERNAT-2646": {
           "value": "To do",
@@ -3570,11 +3763,11 @@
         },
         "INTERNAT-2671": {
           "value": "Added to test plan",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2670": {
           "value": "Added to test plan",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2308": {
           "value": "N/A",
@@ -3586,31 +3779,31 @@
         },
         "INTERNAT-2673": {
           "value": "Skipped",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2600": {
           "value": "N/A",
-          "seen": 1795276117742
+          "seen": 1795453202284
         },
         "INTERNAT-2680": {
-          "value": "N/A",
-          "seen": 1795280619239
+          "value": "Skipped",
+          "seen": 1795453202284
         },
         "INTERNAT-2679": {
-          "value": "N/A",
-          "seen": 1795280619239
+          "value": "Skipped",
+          "seen": 1795453202284
         },
         "INTERNAT-2678": {
-          "value": "N/A",
-          "seen": 1795280619239
+          "value": "Skipped",
+          "seen": 1795453202284
         },
         "INTERNAT-2677": {
-          "value": "N/A",
-          "seen": 1795280619239
+          "value": "Skipped",
+          "seen": 1795453202284
         },
         "INTERNAT-2676": {
-          "value": "N/A",
-          "seen": 1795280619239
+          "value": "Skipped",
+          "seen": 1795453202284
         },
         "INTERNAT-2675": {
           "value": "N/A",
@@ -3622,11 +3815,11 @@
         },
         "INTERNAT-2638": {
           "value": "N/A",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2637": {
           "value": "To do",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2641": {
           "value": "N/A",
@@ -3638,11 +3831,11 @@
         },
         "INTERNAT-2561": {
           "value": "To do",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2625": {
           "value": "Skipped",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2611": {
           "value": "N/A",
@@ -3650,11 +3843,11 @@
         },
         "INTERNAT-2681": {
           "value": "N/A",
-          "seen": 1795276117742
+          "seen": 1795453202284
         },
         "INTERNAT-2682": {
           "value": "N/A",
-          "seen": 1794989019565
+          "seen": 1795453202284
         },
         "INTERNAT-2691": {
           "value": "N/A",
@@ -3722,15 +3915,15 @@
         },
         "INTERNAT-2699": {
           "value": "N/A",
-          "seen": 1795005219435
+          "seen": 1795453202284
         },
         "INTERNAT-2700": {
           "value": "Added to test plan",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2589": {
           "value": "N/A",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-1567": {
           "value": "N/A",
@@ -3746,7 +3939,7 @@
         },
         "INTERNAT-2237": {
           "value": "N/A",
-          "seen": 1795178920200
+          "seen": 1795453202284
         },
         "INTERNAT-2282": {
           "value": "N/A",
@@ -3930,19 +4123,19 @@
         },
         "INTERNAT-2701": {
           "value": "N/A",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2442": {
           "value": "To do",
-          "seen": 1794989019565
+          "seen": 1795453202284
         },
         "INTERNAT-2703": {
-          "value": "N/A",
-          "seen": 1795398519411
+          "value": "Skipped",
+          "seen": 1795453202284
         },
         "INTERNAT-2702": {
-          "value": "N/A",
-          "seen": 1795398519411
+          "value": "Skipped",
+          "seen": 1795453202284
         },
         "INTERNAT-2494": {
           "value": "N/A",
@@ -3958,35 +4151,35 @@
         },
         "INTERNAT-2704": {
           "value": "N/A",
-          "seen": 1794989019565
+          "seen": 1795453202284
         },
         "INTERNAT-2306": {
           "value": "N/A",
-          "seen": 1794988119382
+          "seen": 1795453202284
         },
         "INTERNAT-2705": {
           "value": "Skipped",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2326": {
           "value": "N/A",
-          "seen": 1794989019565
+          "seen": 1795453202284
         },
         "INTERNAT-2298": {
           "value": "N/A",
-          "seen": 1794989019565
+          "seen": 1795453202284
         },
         "INTERNAT-941": {
           "value": "N/A",
-          "seen": 1794989019565
+          "seen": 1795453202284
         },
         "INTERNAT-2482": {
           "value": "N/A",
-          "seen": 1794989019565
+          "seen": 1795453202284
         },
         "INTERNAT-2483": {
           "value": "To do",
-          "seen": 1794989019565
+          "seen": 1795453202284
         },
         "INTERNAT-2515": {
           "value": "N/A",
@@ -4006,7 +4199,7 @@
         },
         "INTERNAT-2551": {
           "value": "N/A",
-          "seen": 1795268919360
+          "seen": 1795453202284
         },
         "INTERNAT-2552": {
           "value": "N/A",
@@ -4018,11 +4211,11 @@
         },
         "INTERNAT-2706": {
           "value": "N/A",
-          "seen": 1795363419386
+          "seen": 1795453202284
         },
         "INTERNAT-2707": {
           "value": "Added to test plan",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2708": {
           "value": "N/A",
@@ -4042,7 +4235,7 @@
         },
         "INTERNAT-2630": {
           "value": "Skipped",
-          "seen": 1795091618067
+          "seen": 1795453202284
         },
         "INTERNAT-2473": {
           "value": "Skipped",
@@ -4054,15 +4247,15 @@
         },
         "INTERNAT-2206": {
           "value": "N/A",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2711": {
           "value": "N/A",
-          "seen": 1795276117742
+          "seen": 1795453202284
         },
         "INTERNAT-2710": {
           "value": "N/A",
-          "seen": 1795276117742
+          "seen": 1795453202284
         },
         "INTERNAT-2505": {
           "value": "N/A",
@@ -4074,11 +4267,11 @@
         },
         "INTERNAT-2713": {
           "value": "N/A",
-          "seen": 1795276117742
+          "seen": 1795453202284
         },
         "INTERNAT-2714": {
           "value": "N/A",
-          "seen": 1795276117742
+          "seen": 1795453202284
         },
         "INTERNAT-2109": {
           "value": "Tested",
@@ -4102,7 +4295,7 @@
         },
         "INTERNAT-2715": {
           "value": "N/A",
-          "seen": 1795398519411
+          "seen": 1795453202284
         },
         "INTERNAT-2178": {
           "value": "Added to test plan",
@@ -4206,7 +4399,19 @@
         },
         "INTERNAT-2427": {
           "value": "N/A",
-          "seen": 1795398519411
+          "seen": 1795453202284
+        },
+        "INTERNAT-2722": {
+          "value": "Added to test plan",
+          "seen": 1795453202284
+        },
+        "INTERNAT-2521": {
+          "value": "To do",
+          "seen": 1795453202284
+        },
+        "INTERNAT-2506": {
+          "value": "N/A",
+          "seen": 1795453202284
         }
       },
       "lqaSeeded": true,
@@ -4255,6 +4460,10 @@
           "threadTs": "1795097920.594209",
           "seen": 1795097920717
         },
+        "25517": {
+          "threadTs": "1795443520.443709",
+          "seen": 1795443520566
+        },
         "25523": {
           "threadTs": "1795007018.940399",
           "seen": 1795007019064
@@ -4262,8 +4471,61 @@
         "25534": {
           "threadTs": "1795178020.650309",
           "seen": 1795178020828
+        },
+        "25540": {
+          "threadTs": "1795441719.809509",
+          "seen": 1795441719920
         }
-      }
+      },
+      "naPinged": {
+        "INTERNAT-2644": {
+          "seen": 1795453202284
+        },
+        "INTERNAT-2206": {
+          "seen": 1795453202284
+        },
+        "INTERNAT-2658": {
+          "seen": 1795453202284
+        },
+        "INTERNAT-2631": {
+          "seen": 1795453202284
+        },
+        "INTERNAT-2589": {
+          "seen": 1795453202284
+        },
+        "INTERNAT-2371": {
+          "seen": 1795453202284
+        },
+        "INTERNAT-2588": {
+          "seen": 1795453202284
+        },
+        "INTERNAT-2649": {
+          "seen": 1795453202284
+        },
+        "INTERNAT-2306": {
+          "seen": 1795453202284
+        },
+        "INTERNAT-2699": {
+          "seen": 1795453202284
+        }
+      },
+      "naSeeded": true
+    },
+    "node:Every hour": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    },
+    "node:Weekdays 9-12-15-18": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
     }
   },
   "pinData": null,
@@ -4296,12 +4558,12 @@
     }
   ],
   "activeVersion": {
-    "versionId": "7462132c-eb3d-45c6-81a9-c11e675224cf",
+    "versionId": "fc550ec6-3207-40f7-b7e7-84224ab150c0",
     "workflowId": "9h7U1BIqszUNP6Do",
     "nodes": [
       {
         "id": "f2413de9-5707-4a97-bf49-4f8375d72d75",
-        "name": "Every 15 minutes",
+        "name": "Weekdays 9-12-15-18",
         "type": "n8n-nodes-base.scheduleTrigger",
         "typeVersion": 1.4,
         "position": [
@@ -4312,8 +4574,8 @@
           "rule": {
             "interval": [
               {
-                "field": "minutes",
-                "minutesInterval": 15
+                "expression": "0 9,12,15,18 * * 1-5",
+                "field": "cronExpression"
               }
             ]
           }
@@ -4339,7 +4601,7 @@
             "parameters": [
               {
                 "name": "jql",
-                "value": "issueLinkType = \"Has localization ticket\" AND project != INTERNAT AND (updated >= -1d OR (fixVersion in releasedVersions() AND updated >= -14d)) ORDER BY updated DESC"
+                "value": "issueLinkType = \"Has localization ticket\" AND project != INTERNAT AND (updated >= -3d OR (fixVersion in releasedVersions() AND updated >= -14d)) ORDER BY updated DESC"
               },
               {
                 "name": "fields",
@@ -4372,7 +4634,7 @@
         "parameters": {
           "mode": "runOnceForAllItems",
           "language": "javaScript",
-          "jsCode": "const state = $getWorkflowStaticData('global');\nif (!state.issues) state.issues = {};\nif (!state.lqa) state.lqa = {};\nif (!state.versions) state.versions = {};\nconst firstRun = !state.seeded;\nconst lqaFirstRun = !state.lqaSeeded;\nconst now = Date.now();\nconst LINK_TYPE_ID = '10079'; // \"Has localization ticket\"\nconst esc = function (s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };\nconst base = 'https://futuremedia.atlassian.net/browse/';\nconst link = function (k) { return '<' + base + k + '|' + k + '>'; };\nconst sigOf = function (v) { return v.name + '|' + v.releaseDate + '|' + v.released; };\nconst parseSig = function (s) { const parts = s.split('|'); const released = parts.pop() === 'true'; const releaseDate = parts.pop() || ''; return { name: parts.join('|'), releaseDate: releaseDate, released: released }; };\nconst verLineOf = function (versions) { if (!versions) return 'unknown'; return versions.length ? versions.map(function (v) { return esc(v.name) + ' (' + (v.releaseDate || 'no date') + (v.released ? ', released' : ', not released') + ')'; }).join(', ') : 'none'; };\nconst buildText = function (key, summary, changes, verLine, llrLine) {\n  return ':bell: *' + link(key) + '* – ' + esc(summary) + '\\n' + changes.join('\\n') + '\\nFix version: ' + verLine + '\\nLocalization ticket: ' + llrLine;\n};\n\nconst productIssues = (($('Fetch localized product tickets').first().json || {}).issues) || [];\nlet llrIssues = [];\ntry { llrIssues = ($input.first().json.issues) || []; } catch (e) { llrIssues = []; }\nconst llrByKey = {};\nfor (const l of llrIssues) llrByKey[l.key] = l;\n\n// 1) LQA status changes on localization (INTERNAT) tickets\nconst lqaChanges = {}; // product key -> { lines, llrKeys, issue }\nfor (const l of llrIssues) {\n  const f = l.fields || {};\n  const val = f.customfield_11581 ? f.customfield_11581.value : '';\n  const prev = state.lqa[l.key];\n  state.lqa[l.key] = { value: val, seen: now };\n  if (lqaFirstRun) continue;\n  let changed = false;\n  let fromTxt = '';\n  // An LL ticket seen for the first time is only recorded, never reported\n  if (prev && prev.value !== val) { changed = true; fromTxt = prev.value || 'not set'; }\n  if (!changed) continue;\n  const products = (f.issuelinks || []).filter(function (x) { return x.type && x.type.id === LINK_TYPE_ID && x.inwardIssue; }).map(function (x) { return x.inwardIssue; });\n  for (const p of products) {\n    if (!lqaChanges[p.key]) lqaChanges[p.key] = { lines: [], llrKeys: [], issue: p };\n    lqaChanges[p.key].lines.push(':mag: LQA status (' + l.key + '): ' + esc(fromTxt) + ' → ' + '*' + esc(val || 'not set') + '*');\n    lqaChanges[p.key].llrKeys.push(l.key);\n  }\n}\n\nconst out = [];\nconst groups = {}; // version-level events, one message per version + event\nconst groupOrder = [];\n// 2) Product tickets: ticket-level changes go per ticket, version-level events are grouped per version\nfor (const it of productIssues) {\n  const f = it.fields || {};\n  const llrs = (f.issuelinks || []).filter(function (l) { return l.type && l.type.id === LINK_TYPE_ID && l.outwardIssue; }).map(function (l) { return l.outwardIssue; });\n  if (!llrs.length) continue;\n  const status = f.status ? f.status.name : '';\n  const versions = (f.fixVersions || []).map(function (v) { return { id: v.id, name: v.name, releaseDate: v.releaseDate || '', released: !!v.released }; });\n  const verSig = versions.map(sigOf).sort().join(';');\n  const prev = state.issues[it.key];\n  state.issues[it.key] = { status: status, verSig: verSig, seen: now, threadTs: prev && prev.threadTs ? prev.threadTs : '', summary: f.summary || '', llrKeys: llrs.map(function (l) { return l.key; }) };\n  const lqa = lqaChanges[it.key];\n  delete lqaChanges[it.key];\n  const llrLine = llrs.map(function (l) { const st = l.fields && l.fields.status ? l.fields.status.name : ''; return link(l.key) + (st ? ' (' + esc(st) + ')' : ''); }).join(', ');\n  const changes = [];\n  if (!firstRun && prev) {\n    if (prev.status !== null && prev.status !== undefined && prev.status !== status) {\n      const prodNote = status === 'QA PROD' ? ' :rocket: _deployed to prod_' : '';\n      changes.push('Status: ' + esc(prev.status) + ' → *' + esc(status) + '*' + prodNote);\n    }\n    if (prev.verSig !== null && prev.verSig !== undefined && prev.verSig !== verSig) {\n      const prevVers = prev.verSig ? prev.verSig.split(';').map(parseSig) : [];\n      for (const v of versions) {\n        const p = prevVers.find(function (x) { return x.name === v.name; });\n        let event = '';\n        if (!p) changes.push('Fix version added: *' + esc(v.name) + '*' + (v.releaseDate ? ' (planned release ' + v.releaseDate + ')' : ''));\n        else if (v.released && !p.released) event = ':rocket: *released*' + (v.releaseDate ? ' on *' + v.releaseDate + '*' : '');\n        else if (!v.released && p.released) event = ':warning: release *reverted* (marked as not released again)';\n        else if (p.releaseDate !== v.releaseDate) event = ':calendar: release date moved: ' + (p.releaseDate || 'not set') + ' → *' + (v.releaseDate || 'not set') + '*';\n        if (event) {\n          const gk = (v.id || v.name) + '#' + event;\n          if (!groups[gk]) { groups[gk] = { versionId: v.id || v.name, version: v, project: it.key.split('-')[0], event: event, tickets: [], llrKeys: [] }; groupOrder.push(gk); }\n          groups[gk].tickets.push('• ' + link(it.key) + ' – ' + esc(f.summary) + ' · ' + esc(status) + ' · LL: ' + llrLine);\n          for (const l of llrs) if (groups[gk].llrKeys.indexOf(l.key) < 0) groups[gk].llrKeys.push(l.key);\n        }\n      }\n      for (const p of prevVers) {\n        if (!versions.find(function (v) { return v.name === p.name; })) changes.push('Fix version removed: *' + esc(p.name) + '*');\n      }\n    }\n  }\n  if (lqa) for (const line of lqa.lines) changes.push(line);\n  if (!changes.length) continue;\n  out.push({ json: { kind: 'ticket', groupKey: '', key: it.key, status: status, llrKeys: llrs.map(function (l) { return l.key; }), threadTs: state.issues[it.key].threadTs, changesText: changes.join('\\n'), text: buildText(it.key, f.summary, changes, verLineOf(versions), llrLine) } });\n}\n\n// 3) One message per version event, listing every localized ticket in that version\nfor (const gk of groupOrder) {\n  const g = groups[gk];\n  const v = g.version;\n  const vs = state.versions[g.versionId] || { threadTs: '' };\n  vs.seen = now;\n  state.versions[g.versionId] = vs;\n  const header = ':package: *Version ' + esc(v.name) + '* (' + esc(g.project) + ') – ' + g.event;\n  const body = 'Release: ' + (v.releaseDate || 'no date') + (v.released ? ', released' : ', not released') + '\\nLocalized tickets (' + g.tickets.length + '):\\n' + g.tickets.join('\\n');\n  out.push({ json: { kind: 'version', groupKey: String(g.versionId), key: 'Version ' + v.name, status: '', llrKeys: g.llrKeys, threadTs: vs.threadTs || '', changesText: header + '\\n' + g.tickets.join('\\n'), text: header + '\\n' + body } });\n}\n\n// 4) LQA changes whose product ticket was not in this run's product fetch\nfor (const key of Object.keys(lqaChanges)) {\n  const c = lqaChanges[key];\n  const pf = c.issue.fields || {};\n  let st = state.issues[key];\n  if (!st) {\n    st = { status: null, verSig: null, seen: now, threadTs: '', summary: pf.summary || '', llrKeys: c.llrKeys };\n    state.issues[key] = st;\n  }\n  const llrKeys = st.llrKeys && st.llrKeys.length ? st.llrKeys : c.llrKeys;\n  const versions = st.verSig ? st.verSig.split(';').map(parseSig) : (st.verSig === '' ? [] : null);\n  const llrLine = llrKeys.map(function (k) { const li = llrByKey[k]; const s = li && li.fields && li.fields.status ? li.fields.status.name : ''; return link(k) + (s ? ' (' + esc(s) + ')' : ''); }).join(', ');\n  out.push({ json: { kind: 'ticket', groupKey: '', key: key, status: pf.status ? pf.status.name : (st.status || ''), llrKeys: llrKeys, threadTs: st.threadTs || '', changesText: c.lines.join('\\n'), text: buildText(key, pf.summary || st.summary, c.lines, verLineOf(versions), llrLine) } });\n}\n\nconst old = function (o) { return now - ((o && o.seen) || 0) > 90 * 86400000; };\nfor (const k of Object.keys(state.issues)) if (old(state.issues[k])) delete state.issues[k];\nfor (const k of Object.keys(state.lqa)) if (old(state.lqa[k])) delete state.lqa[k];\nfor (const k of Object.keys(state.versions)) if (old(state.versions[k])) delete state.versions[k];\nstate.seeded = true;\nstate.lqaSeeded = true;\nreturn out;\n"
+          "jsCode": "const state = $getWorkflowStaticData('global');\nif (!state.issues) state.issues = {};\nif (!state.lqa) state.lqa = {};\nif (!state.versions) state.versions = {};\nif (!state.naPinged) state.naPinged = {};\nconst firstRun = !state.seeded;\nconst lqaFirstRun = !state.lqaSeeded;\nconst naFirstRun = !state.naSeeded;\nconst now = Date.now();\nconst LINK_TYPE_ID = '10079'; // \"Has localization ticket\"\nconst LQA_LEAD = 'U09H1QEDX9C'; // Kseniya Krasovskaya, LQA lead pinged for LQA/LLR status problems\nconst SUB = '      ◦ '; // indented sub-bullet for version lists\nconst ARROW = ' → '; // used for every status, current or changed\nconst esc = function (s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };\nconst base = 'https://futuremedia.atlassian.net/browse/';\nconst link = function (k) { return '<' + base + k + '|' + k + '>'; };\nconst sigOf = function (v) { return v.name + '|' + v.releaseDate + '|' + v.released; };\nconst parseSig = function (s) { const parts = s.split('|'); const released = parts.pop() === 'true'; const releaseDate = parts.pop() || ''; return { name: parts.join('|'), releaseDate: releaseDate, released: released }; };\nconst verLineOf = function (versions) { if (!versions) return 'unknown'; return versions.length ? versions.map(function (v) { return esc(v.name) + ' (' + (v.releaseDate || 'no date') + (v.released ? ', released' : ', not released') + ')'; }).join(', ') : 'none'; };\n// Thread of the latest version message (#i18n-releases) for any of the ticket's fix versions\nconst versionThreadOf = function (ids) { let ts = ''; (ids || []).forEach(function (id) { const vs = state.versions[id]; if (vs && vs.threadTs) ts = vs.threadTs; }); return ts; };\n// Head of a ticket post: header, changes, then the LLR (linked localization request) status.\n// LQA lines (only when available) and the fix version are appended in \"Add LQA line\".\nconst buildText = function (key, summary, changes, llrText) {\n  return ':bell: *' + link(key) + '* – ' + esc(summary) + '\\n' + changes.join('\\n') + '\\n' + llrText;\n};\nconst llrStatusText = function (pairs) {\n  return pairs.map(function (p) { return 'LLR: ' + link(p.key) + ARROW + '*' + esc(p.status || 'unknown') + '*'; }).join('\\n');\n};\n\nconst productIssues = (($('Fetch localized product tickets').first().json || {}).issues) || [];\nlet llrIssues = [];\ntry { llrIssues = ($input.first().json.issues) || []; } catch (e) { llrIssues = []; }\nconst llrByKey = {};\nfor (const l of llrIssues) llrByKey[l.key] = l;\n\n// 1) LQA status changes on LLRs (INTERNAT), and LLRs Done without an LQA status\nconst lqaChanges = {}; // product key -> { lines, llrKeys, issue, hasNa }\nconst addLine = function (p, llKey, line, isNa) {\n  if (!lqaChanges[p.key]) lqaChanges[p.key] = { lines: [], llrKeys: [], issue: p, hasNa: false };\n  lqaChanges[p.key].lines.push(line);\n  if (isNa) lqaChanges[p.key].hasNa = true;\n  if (lqaChanges[p.key].llrKeys.indexOf(llKey) < 0) lqaChanges[p.key].llrKeys.push(llKey);\n};\nfor (const l of llrIssues) {\n  const f = l.fields || {};\n  const val = f.customfield_11581 ? f.customfield_11581.value : '';\n  const prev = state.lqa[l.key];\n  state.lqa[l.key] = { value: val, seen: now };\n  const products = (f.issuelinks || []).filter(function (x) { return x.type && x.type.id === LINK_TYPE_ID && x.inwardIssue; }).map(function (x) { return x.inwardIssue; });\n\n  // LLR is Done but LQA status is NA / not set -> ping the LQA lead once per LLR\n  const llStatus = f.status ? String(f.status.name || '') : '';\n  const lqaMissing = !val || /^n\\s*\\/?\\s*a$/i.test(String(val).trim());\n  if (/^done$/i.test(llStatus.trim()) && lqaMissing) {\n    if (!state.naPinged[l.key]) {\n      state.naPinged[l.key] = { seen: now };\n      // First run only records tickets that were already in this state\n      if (!naFirstRun) {\n        for (const p of products) addLine(p, l.key, ':rotating_light: <@' + LQA_LEAD + '> ' + link(l.key) + ' is *Done* but its LQA status is *' + esc(val || 'not set') + '*. All linked localization requests need a selected LQA status.', true);\n      }\n    } else {\n      state.naPinged[l.key].seen = now;\n    }\n  } else {\n    delete state.naPinged[l.key];\n  }\n\n  if (lqaFirstRun) continue;\n  // An LLR seen for the first time is only recorded, never reported\n  if (!(prev && prev.value !== val)) continue;\n  const fromTxt = prev.value || 'not set';\n  for (const p of products) addLine(p, l.key, ':mag: LQA status (' + link(l.key) + '): ' + esc(fromTxt) + ARROW + '*' + esc(val || 'not set') + '*', false);\n}\n\nconst out = [];\nconst groups = {}; // version-level events, one message per version + event\nconst groupOrder = [];\n// 2) Product tickets: ticket-level changes go per ticket, version-level events are grouped per version\nfor (const it of productIssues) {\n  const f = it.fields || {};\n  const llrs = (f.issuelinks || []).filter(function (l) { return l.type && l.type.id === LINK_TYPE_ID && l.outwardIssue; }).map(function (l) { return l.outwardIssue; });\n  if (!llrs.length) continue;\n  const status = f.status ? f.status.name : '';\n  const versions = (f.fixVersions || []).map(function (v) { return { id: v.id, name: v.name, releaseDate: v.releaseDate || '', released: !!v.released }; });\n  const verSig = versions.map(sigOf).sort().join(';');\n  const prev = state.issues[it.key];\n  state.issues[it.key] = { status: status, verSig: verSig, verIds: versions.map(function (v) { return String(v.id || v.name); }), seen: now, threadTs: prev && prev.threadTs ? prev.threadTs : '', summary: f.summary || '', llrKeys: llrs.map(function (l) { return l.key; }) };\n  const lqa = lqaChanges[it.key];\n  delete lqaChanges[it.key];\n  // Version list sub-bullets: one \"LLR\" line per LLR, then its LQA status when set\n  const llrBlock = llrs.map(function (l) {\n    const st = l.fields && l.fields.status ? l.fields.status.name : '';\n    const li = llrByKey[l.key];\n    const q = li && li.fields && li.fields.customfield_11581 ? li.fields.customfield_11581.value : '';\n    return SUB + 'LLR: ' + link(l.key) + (st ? ARROW + '*' + esc(st) + '*' : '') + (q ? '\\n' + SUB + 'LQA status' + ARROW + '*' + esc(q) + '*' : '');\n  }).join('\\n');\n  const llrText = llrStatusText(llrs.map(function (l) { return { key: l.key, status: l.fields && l.fields.status ? l.fields.status.name : '' }; }));\n  const changes = [];\n  if (!firstRun && prev) {\n    if (prev.status !== null && prev.status !== undefined && prev.status !== status) {\n      const prodNote = status === 'QA PROD' ? ' :rocket: _deployed to prod_' : '';\n      changes.push('Main ticket status: ' + esc(prev.status) + ARROW + '*' + esc(status) + '*' + prodNote);\n      // Main ticket just moved to Done while its LLR is still in DEV Verification -> ping the LQA lead\n      if (/^done$/i.test(status.trim())) {\n        const stuck = llrs.filter(function (l) { const s = l.fields && l.fields.status ? l.fields.status.name : ''; return /dev verification/i.test(s); });\n        if (stuck.length) changes.push(':rotating_light: <@' + LQA_LEAD + '> main ticket is *Done* but ' + stuck.map(function (l) { return link(l.key); }).join(', ') + (stuck.length > 1 ? ' are' : ' is') + ' still in *DEV Verification*');\n      }\n    }\n    if (prev.verSig !== null && prev.verSig !== undefined && prev.verSig !== verSig) {\n      const prevVers = prev.verSig ? prev.verSig.split(';').map(parseSig) : [];\n      for (const v of versions) {\n        const p = prevVers.find(function (x) { return x.name === v.name; });\n        let event = '';\n        if (!p) changes.push('Fix version added: *' + esc(v.name) + '*' + (v.releaseDate ? ' (planned release ' + v.releaseDate + ')' : ''));\n        else if (v.released && !p.released) event = ':rocket: *released*' + (v.releaseDate ? ' on *' + v.releaseDate + '*' : '');\n        else if (!v.released && p.released) event = ':warning: release *reverted* (marked as not released again)';\n        else if (p.releaseDate !== v.releaseDate) event = ':calendar: release date moved: ' + (p.releaseDate || 'not set') + ARROW + '*' + (v.releaseDate || 'not set') + '*';\n        if (event) {\n          const gk = (v.id || v.name) + '#' + event;\n          if (!groups[gk]) { groups[gk] = { versionId: v.id || v.name, version: v, project: it.key.split('-')[0], event: event, tickets: [], keys: [], llrKeys: [] }; groupOrder.push(gk); }\n          groups[gk].tickets.push('• ' + link(it.key) + ' – ' + esc(f.summary) + ARROW + '*' + esc(status) + '*\\n' + llrBlock);\n          if (groups[gk].keys.indexOf(it.key) < 0) groups[gk].keys.push(it.key);\n          for (const l of llrs) if (groups[gk].llrKeys.indexOf(l.key) < 0) groups[gk].llrKeys.push(l.key);\n        }\n      }\n      for (const p of prevVers) {\n        if (!versions.find(function (v) { return v.name === p.name; })) changes.push('Fix version removed: *' + esc(p.name) + '*');\n      }\n    }\n  }\n  if (lqa) for (const line of lqa.lines) changes.push(line);\n  if (!changes.length) continue;\n  // LQA-only updates: reply in the version thread if the ticket was listed in one, else the ticket's own thread.\n  // Plain LQA updates are never posted as a new message (Kseniya pings still are).\n  let threadTs = state.issues[it.key].threadTs;\n  let changesText = changes.join('\\n') + '\\n' + llrText;\n  if (lqa && changes.length === lqa.lines.length) {\n    const vt = versionThreadOf(state.issues[it.key].verIds);\n    if (vt) { threadTs = vt; changesText = '• ' + link(it.key) + ' – ' + esc(f.summary) + ARROW + '*' + esc(status) + '*\\n' + changesText; }\n    if (!threadTs && !lqa.hasNa) continue;\n  }\n  out.push({ json: { kind: 'ticket', groupKey: '', key: it.key, status: status, llrKeys: llrs.map(function (l) { return l.key; }), threadTs: threadTs, changesText: changesText, text: buildText(it.key, f.summary, changes, llrText), tail: 'Fix version: ' + verLineOf(versions) } });\n}\n\n// 3) One message per version event, listing every localized ticket in that version.\n// A version with a single localized ticket that already has its own thread is posted inside that thread instead,\n// and that thread becomes the version's thread for later events.\nfor (const gk of groupOrder) {\n  const g = groups[gk];\n  const v = g.version;\n  const vs = state.versions[g.versionId] || { threadTs: '' };\n  vs.seen = now;\n  if (!vs.threadTs && g.keys.length === 1) {\n    const ti = state.issues[g.keys[0]];\n    if (ti && ti.threadTs) vs.threadTs = ti.threadTs;\n  }\n  state.versions[g.versionId] = vs;\n  const header = ':package: *Version ' + esc(v.name) + '* (' + esc(g.project) + ') – ' + g.event;\n  const body = 'Release: ' + (v.releaseDate || 'no date') + (v.released ? ', released' : ', not released') + '\\n' + g.tickets.join('\\n');\n  out.push({ json: { kind: 'version', groupKey: String(g.versionId), key: 'Version ' + v.name, status: '', llrKeys: g.llrKeys, threadTs: vs.threadTs || '', changesText: header + '\\n' + body, text: header + '\\n' + body, tail: '' } });\n}\n\n// 4) LQA lines whose product ticket was not in this run's product fetch\nfor (const key of Object.keys(lqaChanges)) {\n  const c = lqaChanges[key];\n  const pf = c.issue.fields || {};\n  let st = state.issues[key];\n  if (!st) {\n    st = { status: null, verSig: null, verIds: [], seen: now, threadTs: '', summary: pf.summary || '', llrKeys: c.llrKeys };\n    state.issues[key] = st;\n  }\n  const llrKeys = st.llrKeys && st.llrKeys.length ? st.llrKeys : c.llrKeys;\n  const versions = st.verSig ? st.verSig.split(';').map(parseSig) : (st.verSig === '' ? [] : null);\n  const llrText = llrStatusText(llrKeys.map(function (k) { const li = llrByKey[k]; return { key: k, status: li && li.fields && li.fields.status ? li.fields.status.name : '' }; }));\n  const mainStatus = pf.status ? pf.status.name : (st.status || '');\n  let threadTs = st.threadTs || '';\n  let changesText = c.lines.join('\\n') + '\\n' + llrText;\n  const vt = versionThreadOf(st.verIds);\n  if (vt) { threadTs = vt; changesText = '• ' + link(key) + ' – ' + esc(pf.summary || st.summary) + (mainStatus ? ARROW + '*' + esc(mainStatus) + '*' : '') + '\\n' + changesText; }\n  if (!threadTs && !c.hasNa) continue; // plain LQA updates only go into an existing thread\n  out.push({ json: { kind: 'ticket', groupKey: '', key: key, status: mainStatus, llrKeys: llrKeys, threadTs: threadTs, changesText: changesText, text: buildText(key, pf.summary || st.summary, c.lines, llrText), tail: 'Fix version: ' + verLineOf(versions) } });\n}\n\nconst old = function (o) { return now - ((o && o.seen) || 0) > 90 * 86400000; };\nfor (const k of Object.keys(state.issues)) if (old(state.issues[k])) delete state.issues[k];\nfor (const k of Object.keys(state.lqa)) if (old(state.lqa[k])) delete state.lqa[k];\nfor (const k of Object.keys(state.versions)) if (old(state.versions[k])) delete state.versions[k];\nfor (const k of Object.keys(state.naPinged)) if (old(state.naPinged[k])) delete state.naPinged[k];\nstate.seeded = true;\nstate.lqaSeeded = true;\nstate.naSeeded = true;\nreturn out;\n"
         }
       },
       {
@@ -4483,13 +4745,13 @@
                 "id": "lqa-text",
                 "name": "text",
                 "type": "string",
-                "value": "={{ $('Detect status and release changes').item.json.text + '\\nLQA status: ' + ((($json.issues || []).filter(i => $('Detect status and release changes').item.json.llrKeys.includes(i.key))).map(i => ($('Detect status and release changes').item.json.llrKeys.length > 1 ? i.key + ': ' : '') + '*' + (i.fields.customfield_11581 ? i.fields.customfield_11581.value : 'not set') + '*').join(', ') || 'unknown') + '\\nLQA ticket: ' + ((($json.issues || []).filter(i => i.fields && i.fields.issuetype && i.fields.issuetype.name === 'Test Plan')).length ? $json.issues.filter(i => i.fields.issuetype.name === 'Test Plan').map(i => '<https://futuremedia.atlassian.net/browse/' + i.key + '|' + i.key + '> (' + i.fields.status.name + (i.fields.duedate ? ', due ' + i.fields.duedate : '') + ')').join(', ') : 'none yet') }}"
+                "value": "={{ (() => { const d = $('Detect status and release changes').item.json; if (d.kind === 'version') return d.text; const iss = $json.issues || []; const multi = d.llrKeys.length > 1; const st = iss.filter(i => d.llrKeys.includes(i.key) && i.fields && i.fields.customfield_11581 && i.fields.customfield_11581.value).map(i => (multi ? i.key + ' ' : '') + '→ *' + i.fields.customfield_11581.value + '*'); const tp = iss.filter(i => i.fields && i.fields.issuetype && i.fields.issuetype.name === 'Test Plan').map(i => '<https://futuremedia.atlassian.net/browse/' + i.key + '|' + i.key + '> → *' + i.fields.status.name + '*' + (i.fields.duedate ? ' (due ' + i.fields.duedate + ')' : '')); let t = d.text; if (st.length) t += '\\nLQA status ' + st.join(', '); if (tp.length) t += '\\nLQA ticket: ' + tp.join(', '); if (d.tail) t += '\\n' + d.tail; return t; })() }}"
               },
               {
                 "id": "reply-text",
                 "name": "replyText",
                 "type": "string",
-                "value": "={{ $('Detect status and release changes').item.json.changesText + '\\nLQA status: ' + ((($json.issues || []).filter(i => $('Detect status and release changes').item.json.llrKeys.includes(i.key))).map(i => '*' + (i.fields.customfield_11581 ? i.fields.customfield_11581.value : 'not set') + '*').join(', ') || 'unknown') + ' · LQA ticket: ' + ((($json.issues || []).filter(i => i.fields && i.fields.issuetype && i.fields.issuetype.name === 'Test Plan')).length ? $json.issues.filter(i => i.fields.issuetype.name === 'Test Plan').map(i => '<https://futuremedia.atlassian.net/browse/' + i.key + '|' + i.key + '> (' + i.fields.status.name + ')').join(', ') : 'none yet') }}"
+                "value": "={{ (() => { const d = $('Detect status and release changes').item.json; if (d.kind === 'version') return d.changesText; const iss = $json.issues || []; const multi = d.llrKeys.length > 1; const st = iss.filter(i => d.llrKeys.includes(i.key) && i.fields && i.fields.customfield_11581 && i.fields.customfield_11581.value).map(i => (multi ? i.key + ' ' : '') + '→ *' + i.fields.customfield_11581.value + '*'); const tp = iss.filter(i => i.fields && i.fields.issuetype && i.fields.issuetype.name === 'Test Plan').map(i => '<https://futuremedia.atlassian.net/browse/' + i.key + '|' + i.key + '> → *' + i.fields.status.name + '*'); let t = d.changesText; if (st.length) t += '\\nLQA status ' + st.join(', '); if (tp.length) t += '\\nLQA ticket: ' + tp.join(', '); return t; })() }}"
               },
               {
                 "id": "key",
@@ -4628,7 +4890,7 @@
             "parameters": [
               {
                 "name": "jql",
-                "value": "={{ (function (issues) { const ks = []; (issues || []).forEach(function (i) { ((i.fields || {}).issuelinks || []).forEach(function (l) { if (l.type && l.type.id === '10079' && l.outwardIssue && ks.indexOf(l.outwardIssue.key) < 0) ks.push(l.outwardIssue.key); }); }); return 'project = INTERNAT AND (updated >= -1d' + (ks.length ? ' OR key in (' + ks.join(',') + ')' : '') + ') ORDER BY updated DESC'; })($json.issues) }}"
+                "value": "={{ (function (issues) { const ks = []; (issues || []).forEach(function (i) { ((i.fields || {}).issuelinks || []).forEach(function (l) { if (l.type && l.type.id === '10079' && l.outwardIssue && ks.indexOf(l.outwardIssue.key) < 0) ks.push(l.outwardIssue.key); }); }); return 'project = INTERNAT AND (updated >= -3d' + (ks.length ? ' OR key in (' + ks.join(',') + ')' : '') + ') ORDER BY updated DESC'; })($json.issues) }}"
               },
               {
                 "name": "fields",
@@ -4696,17 +4958,6 @@
       }
     ],
     "connections": {
-      "Every 15 minutes": {
-        "main": [
-          [
-            {
-              "node": "Fetch localized product tickets",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
       "Detect status and release changes": {
         "main": [
           [
@@ -4806,6 +5057,17 @@
             }
           ]
         ]
+      },
+      "Weekdays 9-12-15-18": {
+        "main": [
+          [
+            {
+              "node": "Fetch localized product tickets",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     },
     "nodeGroups": [
@@ -4840,19 +5102,19 @@
       }
     ],
     "authors": "Maria Sica (via MCP)",
-    "name": "Fix: never report LQA status for first-seen LL tickets",
-    "description": "The 11:03 run reported ~50 LL tickets as LQA changes because the wider LL fetch saw them for the first time. Now a first-seen LL ticket is only recorded.",
+    "name": "Single-ticket releases go into the ticket thread",
+    "description": "A version event with only one localized ticket that already has its own thread is posted as a reply in that ticket's thread instead of a new message; that thread then serves as the version thread for later events and LQA updates.",
     "autosaved": false,
-    "createdAt": "2026-11-12T11:04:42.369Z",
-    "updatedAt": "2026-11-12T11:04:42.369Z",
+    "createdAt": "2026-11-23T14:41:41.694Z",
+    "updatedAt": "2026-11-23T14:41:41.694Z",
     "workflowPublishHistory": [
       {
-        "id": 3250,
+        "id": 3329,
         "workflowId": "9h7U1BIqszUNP6Do",
-        "versionId": "7462132c-eb3d-45c6-81a9-c11e675224cf",
+        "versionId": "fc550ec6-3207-40f7-b7e7-84224ab150c0",
         "event": "activated",
         "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
-        "createdAt": "2026-11-12T11:04:43.674Z"
+        "createdAt": "2026-11-23T14:41:43.285Z"
       }
     ]
   },
