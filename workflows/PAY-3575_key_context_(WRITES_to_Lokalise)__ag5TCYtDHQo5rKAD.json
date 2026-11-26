@@ -1,0 +1,268 @@
+{
+  "id": "ag5TCYtDHQo5rKAD",
+  "name": "PAY-3575 key context (WRITES to Lokalise)",
+  "description": "One-off: tags PAY-3575/PAY-3572/payments-lokalise-sync and linguist descriptions on the 2 payments SDK keys, empty fields only.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-25T07:55:44.272Z",
+  "updatedAt": "2026-11-25T07:55:52.951Z",
+  "isArchived": false,
+  "versionId": "44d9fd63-9794-47da-94ae-2186606c0a6e",
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "d914cfe1-1bf9-4d4d-84e6-abe6a00a9721",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "e4c828d9-f06a-4345-be62-259ff78f5f47",
+      "name": "Params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: {\"project_id\": \"477663806ac7a6600df5a7.35533477\", \"tags\": [\"PAY-3575\", \"PAY-3572\", \"payments-lokalise-sync\"], \"keys\": [{\"key_id\": 987383909, \"description\": \"Where: Checkout, card payment form. Shown as a message under the card fields right after a payment attempt fails.\\nWhat: Error message. Shown when the bank or card provider declined the card, and also when the person closed the bank's security check (the extra verification step from their bank) without finishing it.\\nAudience: someone whose payment just failed and who can fix it by checking the card details or using another card.\\nGoes with: payment_failure::technical \\\"There was an error processing your payment. Please try again.\\\" \\u2013 the other error shown in the same place. Only one of the two appears at a time.\\nMeaning: \\\"card\\\" = the payment card (credit or debit card); \\\"details\\\" = the card details the person typed in (card number, expiry date, security code, name).\"}, {\"key_id\": 987383910, \"description\": \"Where: Checkout, card payment form. Shown as a message under the card fields right after a payment attempt fails.\\nWhat: Error message for a technical problem while the payment was being processed. The card was not declined; the person can try again with the same card.\\nGoes with: payment_failure::declined \\\"Your payment was declined. Please double-check the details you provided or contact your bank. Please try later or try a different card if the issue persists.\\\" \\u2013 shown in the same place instead of this one when the bank declines the card. Only one of the two appears at a time.\"}]} }];"
+      }
+    },
+    {
+      "id": "5bcd3fb1-ec4b-4850-9433-8e590aad9b48",
+      "name": "Get Current",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys?filter_key_ids={{ $json.keys.map(k => k.key_id).join(\",\") }}&include_screenshots=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "b852e9fe-e2f3-4657-bd12-0a02d1373d1a",
+      "name": "Build",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const p = $('Params').first().json;\nconst cur = ($input.first().json.body && $input.first().json.body.keys) || [];\nconst byId = {}; for (const k of cur) { byId[k.key_id] = k; }\nconst out = []; const plan = [];\nfor (const w of p.keys) {\n  const k = byId[w.key_id];\n  if (!k || k.is_archived) { plan.push({ key_id: w.key_id, skipped: 'missing or archived' }); continue; }\n  const o = { key_id: w.key_id }; const did = [];\n  if (!k.description || !String(k.description).trim()) { o.description = w.description; did.push('description'); }\n  const have = k.tags || []; const add = p.tags.filter(function (t) { return have.indexOf(t) < 0; });\n  if (add.length) { o.tags = add; o.merge_tags = true; did.push('tags:' + add.join(',')); }\n  if (did.length) { out.push(o); }\n  plan.push({ key_id: w.key_id, name: k.key_name && k.key_name.web, did: did, old_tags: have, had_screens: (k.screenshots || []).length });\n}\nreturn [{ json: { project_id: p.project_id, body: { keys: out }, count: out.length, plan: plan } }];"
+      }
+    },
+    {
+      "id": "589035ec-5b5e-4be7-91c2-cba954213f5e",
+      "name": "Write",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $json.project_id }}/keys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "4cb6G6nZVVtP4HIO",
+          "name": "Lokalise access token read-write"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "id": "5b7a2642-add1-4bd9-9d03-5e18cf0cf66c",
+      "name": "Read Back",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/{{ $(\"Params\").first().json.project_id }}/keys?filter_key_ids={{ $(\"Params\").first().json.keys.map(k => k.key_id).join(\",\") }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "624bcc93-ee76-4bba-a0dc-aa7111374722",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const p = $('Params').first().json; const b = $('Build').first().json;\nconst ks = ($input.first().json.body && $input.first().json.body.keys) || [];\nconst res = ks.map(function (k) { const w = p.keys.find(function (x) { return x.key_id === k.key_id; }) || {}; return { key_id: k.key_id, name: k.key_name && k.key_name.web, tags: k.tags, description_ok: k.description === w.description, has_all_tags: p.tags.every(function (t) { return (k.tags || []).indexOf(t) >= 0; }), kept_push_tags: ['main','to_review'].every(function (t) { return (k.tags || []).indexOf(t) >= 0; }) }; });\nreturn [{ json: { put_status: $('Write').first().json.statusCode, put_errors: $('Write').first().json.body && $('Write').first().json.body.errors, plan: b.plan, readback: res } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Params": {
+      "main": [
+        [
+          {
+            "node": "Get Current",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Current": {
+      "main": [
+        [
+          {
+            "node": "Build",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build": {
+      "main": [
+        [
+          {
+            "node": "Write",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write": {
+      "main": [
+        [
+          {
+            "node": "Read Back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Back": {
+      "main": [
+        [
+          {
+            "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "ag5TCYtDHQo5rKAD",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-25T07:55:44.280Z",
+      "updatedAt": "2026-11-25T07:55:44.280Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
