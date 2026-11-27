@@ -1,0 +1,695 @@
+{
+  "id": "jJz62lrDqrqQr3Mi",
+  "name": "i18n daily QA summary → #i18n-team",
+  "description": "Weekdays 08:00 Madrid: posts the i18n QA summary (releases, priority, totals) to #i18n-team with live / releasing / others lists in the thread.",
+  "active": true,
+  "activeVersionId": "ec2d0aed-bd9a-41f3-bb65-2d6d0b2c4471",
+  "createdAt": "2026-11-25T06:22:49.753Z",
+  "updatedAt": "2026-11-25T08:05:16.805Z",
+  "isArchived": false,
+  "versionId": "ec2d0aed-bd9a-41f3-bb65-2d6d0b2c4471",
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "6f5d5ee0-5969-4c05-8530-19370898710a",
+      "name": "Weekdays 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [
+                1,
+                2,
+                3,
+                4,
+                5
+              ],
+              "triggerAtHour": 8,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "16e11056-f8e1-4353-9103-5cedc575ca4c",
+      "name": "Search open LLR tickets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        272,
+        128
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://futuremedia.atlassian.net/rest/api/3/search/jql",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "{\"jql\":\"project = INTERNAT AND statusCategory != Done AND issueLinkType = \\\"Is the localization ticket for\\\" ORDER BY key DESC\",\"fields\":[\"summary\",\"status\",\"issuelinks\"],\"maxResults\":100}"
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "QJte7dJbX10mIzJI",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "id": "b89c699d-148c-49f6-b3d7-c4ac82b1d6ca",
+      "name": "Collect product keys",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        496,
+        128
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const issues = $input.first().json.issues || [];\nconst keys = new Set();\nfor (const i of issues) {\n  for (const l of ((i.fields && i.fields.issuelinks) || [])) {\n    if (((l.type && l.type.name) || '').trim() !== 'Localization ticket') continue;\n    const o = l.inwardIssue || l.outwardIssue;\n    if (o && o.key && o.key.indexOf('INTERNAT-') !== 0) keys.add(o.key);\n  }\n}\nconst list = Array.from(keys);\nreturn [{ json: { llrs: issues, productJql: list.length ? 'key in (' + list.join(',') + ')' : 'key = INTERNAT-1' } }];"
+      }
+    },
+    {
+      "id": "ba6386de-ff41-43b9-980b-7cd9925981ea",
+      "name": "Fetch linked product tickets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        720,
+        128
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://futuremedia.atlassian.net/rest/api/3/search/jql",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ jql: $json.productJql, fields: [\"summary\", \"status\", \"fixVersions\"], maxResults: 100 }) }}"
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "QJte7dJbX10mIzJI",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "id": "54330f1b-db43-441a-b3bf-67daec945584",
+      "name": "Build QA summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        128
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const NL = String.fromCharCode(10);\nconst llrs = $('Collect product keys').first().json.llrs || [];\nconst products = {};\nfor (const p of ($input.first().json.issues || [])) products[p.key] = p.fields || {};\nconst today = $today;\nconst todayISO = today.toISODate();\nconst win = [0, 1, 2].map(n => today.plus({ days: n }).toISODate());\nconst windowEnd = win[2];\nconst dayFmt = iso => DateTime.fromISO(iso).toFormat('d LLL');\nconst esc = s => String(s || '').split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;');\nconst nice = s => String(s || '').toLowerCase().split(' ').map(x => (x === 'qa' || x === 'stg' || x === 'uat') ? x.toUpperCase() : x).join(' ');\nconst upFirst = s => s.charAt(0).toUpperCase() + s.slice(1);\nconst stripTags = s => { s = String(s || '').trim(); while (s.charAt(0) === '[') { const j = s.indexOf(']'); if (j < 0) break; s = s.slice(j + 1).trim(); } return s; };\nconst shorten = (s, n) => s.length > n ? s.slice(0, n - 1).trim() + '…' : s;\nconst productName = s => { s = String(s || ''); const j = s.lastIndexOf('] - '); return j < 0 ? '' : stripTags(s.slice(j + 4)).split(' - ')[0].trim(); };\nconst link = k => '<https://futuremedia.atlassian.net/browse/' + k + '|' + k + '>';\nconst ORDER = ['dev verification', 'prod verification', 'in progress', 'to do', 'blocked'];\nconst rank = s => { const i = ORDER.indexOf(String(s || '').toLowerCase()); return i < 0 ? 2.5 : i; };\nconst testable = s => { const x = String(s || '').toLowerCase(); return x === 'dev verification' || x === 'prod verification'; };\nconst NEAR = ['pending qa', 'in qa', 'qa', 'ready for qa', 'in code review', 'ready for stg', 'pending prod'];\n\nconst live = [], soon = [], other = [];\nfor (const i of llrs) {\n  const f = i.fields || {};\n  const linked = (f.issuelinks || [])\n    .filter(l => ((l.type && l.type.name) || '').trim() === 'Localization ticket')\n    .map(l => l.inwardIssue || l.outwardIssue)\n    .filter(o => o && o.key && o.key.indexOf('INTERNAT-') !== 0);\n  if (!linked.length) continue;\n  const p = products[linked[0].key];\n  if (!p) continue;\n  const versions = p.fixVersions || [];\n  const released = versions.filter(v => v.released && v.releaseDate && v.releaseDate <= todayISO).sort((a, b) => b.releaseDate.localeCompare(a.releaseDate));\n  const upcoming = versions.filter(v => !v.released && v.releaseDate && v.releaseDate >= todayISO).sort((a, b) => a.releaseDate.localeCompare(b.releaseDate));\n  const done = !!(p.status && p.status.statusCategory && p.status.statusCategory.key === 'done');\n  const pStatus = (p.status && p.status.name) || '';\n  const status = (f.status && f.status.name) || '';\n  const row = { key: i.key, status: status, title: esc(shorten(stripTags(p.summary), 80)), product: esc(productName(f.summary)) };\n  if (upcoming.length && upcoming[0].releaseDate <= windowEnd) {\n    row.date = upcoming[0].releaseDate;\n    row.versions = esc(upcoming.filter(v => v.releaseDate === row.date).map(v => v.name).join(' / '));\n    soon.push(row);\n  } else if (done || released.length) {\n    row.date = released.length ? released[0].releaseDate : '';\n    live.push(row);\n  } else if (testable(status) || NEAR.indexOf(pStatus.toLowerCase()) >= 0 || upcoming.length) {\n    row.next = upcoming.length ? upcoming[0].releaseDate : '';\n    row.pStatus = pStatus;\n    other.push(row);\n  }\n}\nlive.sort((a, b) => rank(a.status) - rank(b.status) || (b.date || '').localeCompare(a.date || ''));\nsoon.sort((a, b) => a.date.localeCompare(b.date) || rank(a.status) - rank(b.status));\nother.sort((a, b) => rank(a.status) - rank(b.status));\n\nconst dayLabel = iso => iso === win[0] ? 'today' : (iso === win[1] ? 'tomorrow' : DateTime.fromISO(iso).toFormat('cccc'));\nconst soonDates = Array.from(new Set(soon.map(r => r.date))).sort();\nlet soonTitle = 'Releasing in the next 2 days';\nlet soonShort = 'releasing in the next 2 days';\nif (soonDates.length === 1) {\n  soonTitle = 'Releasing ' + dayLabel(soonDates[0]) + ', ' + dayFmt(soonDates[0]);\n  soonShort = 'releasing ' + dayLabel(soonDates[0]);\n} else if (soonDates.length > 1) {\n  soonTitle = 'Releasing ' + dayFmt(soonDates[0]) + ' – ' + dayFmt(soonDates[soonDates.length - 1]);\n  soonShort = 'releasing by ' + dayFmt(soonDates[soonDates.length - 1]);\n}\nconst multiDay = soonDates.length > 1;\nconst paren = parts => { const t = parts.filter(Boolean).join(', '); return t ? ' (' + t + ')' : ''; };\nconst tag = s => '_' + upFirst(nice(s)) + '_';\n\nconst liveLines = live.map(r => '• ' + link(r.key) + ': ' + r.title + paren([r.product, r.date ? 'live ' + dayFmt(r.date) : '']) + '. ' + tag(r.status));\nconst soonLines = soon.map(r => '• ' + link(r.key) + ': ' + r.title + paren([(r.product + ' ' + r.versions).trim(), multiDay ? dayFmt(r.date) : '']) + '. ' + tag(r.status));\nconst otherLines = other.map(r => '• ' + link(r.key) + ': ' + r.title + paren([r.product, r.next ? 'release ' + dayFmt(r.next) : (r.pStatus ? 'product ' + nice(r.pStatus) : '')]) + '. ' + tag(r.status));\n\nconst rel = {};\nfor (const r of soon) {\n  const label = (r.product + ' ' + r.versions).trim();\n  rel[r.date] = rel[r.date] || [];\n  if (rel[r.date].indexOf(label) < 0) rel[r.date].push(label);\n}\nconst relParts = [];\nif (!soon.length) {\n  relParts.push('nothing in the next 2 days');\n} else {\n  if (!rel[win[0]]) relParts.push('nothing today');\n  for (const d of win) {\n    if (rel[d]) relParts.push((d === win[0] ? 'today' : dayLabel(d) + ' (' + dayFmt(d) + ')') + ': ' + rel[d].join(' and '));\n  }\n}\n\nconst p1 = live.filter(r => testable(r.status)).map(r => link(r.key));\nconst p2 = soon.filter(r => testable(r.status)).map(r => link(r.key));\nconst pl = [];\nif (p1.length) pl.push('Already live, LLR not yet verified: ' + p1.join(', '));\nif (p2.length) pl.push(upFirst(soonShort) + ': ' + p2.join(', '));\n\nconst lines = ['*🧪 i18n QA, ' + today.toFormat('ccc d LLL') + '*', '*Releases:* ' + relParts.join(' · ')];\nif (pl.length) {\n  lines.push('*Priority:*');\n  pl.forEach((t, n) => lines.push((n + 1) + '. ' + t));\n} else {\n  lines.push('*Priority:* nothing ready to test yet');\n}\nlines.push('*Totals:* ' + live.length + ' already live · ' + soon.length + ' ' + soonShort + ' · ' + other.length + ' others');\nif (live.length + soon.length + other.length) lines.push('Full lists in the thread 🧵');\n\nconst replies = [];\nif (live.length) replies.push('*Already live, LLR not yet verified*' + NL + liveLines.join(NL));\nif (soon.length) replies.push('*' + soonTitle + '*' + NL + soonLines.join(NL));\nif (other.length) replies.push('*Others*' + NL + otherLines.join(NL));\n\nreturn [{ json: { main: lines.join(NL), replies: replies } }];"
+      }
+    },
+    {
+      "id": "5fa027b6-d21a-4a1d-84ad-cf182aeb9ba4",
+      "name": "Post summary to #i18n-team",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        1024,
+        128
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "authentication": "accessToken",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C094NS33FN0",
+          "cachedResultName": "i18n-team"
+        },
+        "messageType": "text",
+        "text": "={{ $json.main }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false,
+          "mrkdwn": true,
+          "unfurl_links": false
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "webhookId": "e8355d2f-147e-477b-ac23-005924d15841"
+    },
+    {
+      "id": "be33b5ff-ff94-41d9-b6e0-ea7012533524",
+      "name": "Prepare thread replies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1248,
+        128
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const res = $input.first().json;\nconst ts = res.message_timestamp || res.ts || (res.message && res.message.ts);\nconst replies = $('Build QA summary').first().json.replies || [];\nreturn replies.map(t => ({ json: { text: t, thread_ts: ts } }));"
+      }
+    },
+    {
+      "id": "44e40d54-2126-49bb-85f6-f73b6f63fb10",
+      "name": "Post lists in thread",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        1472,
+        128
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "authentication": "accessToken",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C094NS33FN0",
+          "cachedResultName": "i18n-team"
+        },
+        "messageType": "text",
+        "text": "={{ $json.text }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false,
+          "mrkdwn": true,
+          "unfurl_links": false,
+          "thread_ts": {
+            "replyValues": {
+              "thread_ts": "={{ $json.thread_ts }}",
+              "reply_broadcast": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CXa5wwj5tndNAnHG",
+          "name": "i18n assignment bot"
+        }
+      },
+      "webhookId": "f44ea10b-703b-4a35-b5f3-0272b1a30c91"
+    }
+  ],
+  "connections": {
+    "Weekdays 08:00": {
+      "main": [
+        [
+          {
+            "node": "Search open LLR tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search open LLR tickets": {
+      "main": [
+        [
+          {
+            "node": "Collect product keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect product keys": {
+      "main": [
+        [
+          {
+            "node": "Fetch linked product tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch linked product tickets": {
+      "main": [
+        [
+          {
+            "node": "Build QA summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build QA summary": {
+      "main": [
+        [
+          {
+            "node": "Post summary to #i18n-team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post summary to #i18n-team": {
+      "main": [
+        [
+          {
+            "node": "Prepare thread replies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare thread replies": {
+      "main": [
+        [
+          {
+            "node": "Post lists in thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [
+    {
+      "id": "0eefd12e-c9d8-4537-8da0-4635f49ca3b6",
+      "name": "Read Jira",
+      "nodeIds": [
+        "16e11056-f8e1-4353-9103-5cedc575ca4c",
+        "b89c699d-148c-49f6-b3d7-c4ac82b1d6ca",
+        "ba6386de-ff41-43b9-980b-7cd9925981ea"
+      ],
+      "description": "Open INTERNAT LLR tickets and their linked product tickets with fix versions and release dates"
+    },
+    {
+      "id": "a65587ad-f4e4-443d-a4f8-a7da652eeb65",
+      "name": "Build and post",
+      "nodeIds": [
+        "54330f1b-db43-441a-b3bf-67daec945584",
+        "5fa027b6-d21a-4a1d-84ad-cf182aeb9ba4",
+        "be33b5ff-ff94-41d9-b6e0-ea7012533524",
+        "44e40d54-2126-49bb-85f6-f73b6f63fb10"
+      ],
+      "description": "Sorts LLRs into live / releasing in 2 days / others, posts the summary and the lists in its thread"
+    }
+  ],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Madrid"
+  },
+  "staticData": {
+    "node:Weekdays 08:00": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    }
+  },
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "jJz62lrDqrqQr3Mi",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-25T06:22:49.756Z",
+      "updatedAt": "2026-11-25T06:22:49.756Z"
+    }
+  ],
+  "activeVersion": {
+    "versionId": "ec2d0aed-bd9a-41f3-bb65-2d6d0b2c4471",
+    "workflowId": "jJz62lrDqrqQr3Mi",
+    "nodes": [
+      {
+        "id": "6f5d5ee0-5969-4c05-8530-19370898710a",
+        "name": "Weekdays 08:00",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.4,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "weeks",
+                "weeksInterval": 1,
+                "triggerAtDay": [
+                  1,
+                  2,
+                  3,
+                  4,
+                  5
+                ],
+                "triggerAtHour": 8,
+                "triggerAtMinute": 0
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "16e11056-f8e1-4353-9103-5cedc575ca4c",
+        "name": "Search open LLR tickets",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          272,
+          128
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://futuremedia.atlassian.net/rest/api/3/search/jql",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "jiraSoftwareCloudApi",
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "{\"jql\":\"project = INTERNAT AND statusCategory != Done AND issueLinkType = \\\"Is the localization ticket for\\\" ORDER BY key DESC\",\"fields\":[\"summary\",\"status\",\"issuelinks\"],\"maxResults\":100}"
+        },
+        "credentials": {
+          "jiraSoftwareCloudApi": {
+            "id": "QJte7dJbX10mIzJI",
+            "name": "Jira SW Cloud account"
+          }
+        }
+      },
+      {
+        "id": "b89c699d-148c-49f6-b3d7-c4ac82b1d6ca",
+        "name": "Collect product keys",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          496,
+          128
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "const issues = $input.first().json.issues || [];\nconst keys = new Set();\nfor (const i of issues) {\n  for (const l of ((i.fields && i.fields.issuelinks) || [])) {\n    if (((l.type && l.type.name) || '').trim() !== 'Localization ticket') continue;\n    const o = l.inwardIssue || l.outwardIssue;\n    if (o && o.key && o.key.indexOf('INTERNAT-') !== 0) keys.add(o.key);\n  }\n}\nconst list = Array.from(keys);\nreturn [{ json: { llrs: issues, productJql: list.length ? 'key in (' + list.join(',') + ')' : 'key = INTERNAT-1' } }];"
+        }
+      },
+      {
+        "id": "ba6386de-ff41-43b9-980b-7cd9925981ea",
+        "name": "Fetch linked product tickets",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          720,
+          128
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://futuremedia.atlassian.net/rest/api/3/search/jql",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "jiraSoftwareCloudApi",
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ jql: $json.productJql, fields: [\"summary\", \"status\", \"fixVersions\"], maxResults: 100 }) }}"
+        },
+        "credentials": {
+          "jiraSoftwareCloudApi": {
+            "id": "QJte7dJbX10mIzJI",
+            "name": "Jira SW Cloud account"
+          }
+        }
+      },
+      {
+        "id": "54330f1b-db43-441a-b3bf-67daec945584",
+        "name": "Build QA summary",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          800,
+          128
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "const NL = String.fromCharCode(10);\nconst llrs = $('Collect product keys').first().json.llrs || [];\nconst products = {};\nfor (const p of ($input.first().json.issues || [])) products[p.key] = p.fields || {};\nconst today = $today;\nconst todayISO = today.toISODate();\nconst win = [0, 1, 2].map(n => today.plus({ days: n }).toISODate());\nconst windowEnd = win[2];\nconst dayFmt = iso => DateTime.fromISO(iso).toFormat('d LLL');\nconst esc = s => String(s || '').split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;');\nconst nice = s => String(s || '').toLowerCase().split(' ').map(x => (x === 'qa' || x === 'stg' || x === 'uat') ? x.toUpperCase() : x).join(' ');\nconst upFirst = s => s.charAt(0).toUpperCase() + s.slice(1);\nconst stripTags = s => { s = String(s || '').trim(); while (s.charAt(0) === '[') { const j = s.indexOf(']'); if (j < 0) break; s = s.slice(j + 1).trim(); } return s; };\nconst shorten = (s, n) => s.length > n ? s.slice(0, n - 1).trim() + '…' : s;\nconst productName = s => { s = String(s || ''); const j = s.lastIndexOf('] - '); return j < 0 ? '' : stripTags(s.slice(j + 4)).split(' - ')[0].trim(); };\nconst link = k => '<https://futuremedia.atlassian.net/browse/' + k + '|' + k + '>';\nconst ORDER = ['dev verification', 'prod verification', 'in progress', 'to do', 'blocked'];\nconst rank = s => { const i = ORDER.indexOf(String(s || '').toLowerCase()); return i < 0 ? 2.5 : i; };\nconst testable = s => { const x = String(s || '').toLowerCase(); return x === 'dev verification' || x === 'prod verification'; };\nconst NEAR = ['pending qa', 'in qa', 'qa', 'ready for qa', 'in code review', 'ready for stg', 'pending prod'];\n\nconst live = [], soon = [], other = [];\nfor (const i of llrs) {\n  const f = i.fields || {};\n  const linked = (f.issuelinks || [])\n    .filter(l => ((l.type && l.type.name) || '').trim() === 'Localization ticket')\n    .map(l => l.inwardIssue || l.outwardIssue)\n    .filter(o => o && o.key && o.key.indexOf('INTERNAT-') !== 0);\n  if (!linked.length) continue;\n  const p = products[linked[0].key];\n  if (!p) continue;\n  const versions = p.fixVersions || [];\n  const released = versions.filter(v => v.released && v.releaseDate && v.releaseDate <= todayISO).sort((a, b) => b.releaseDate.localeCompare(a.releaseDate));\n  const upcoming = versions.filter(v => !v.released && v.releaseDate && v.releaseDate >= todayISO).sort((a, b) => a.releaseDate.localeCompare(b.releaseDate));\n  const done = !!(p.status && p.status.statusCategory && p.status.statusCategory.key === 'done');\n  const pStatus = (p.status && p.status.name) || '';\n  const status = (f.status && f.status.name) || '';\n  const row = { key: i.key, status: status, title: esc(shorten(stripTags(p.summary), 80)), product: esc(productName(f.summary)) };\n  if (upcoming.length && upcoming[0].releaseDate <= windowEnd) {\n    row.date = upcoming[0].releaseDate;\n    row.versions = esc(upcoming.filter(v => v.releaseDate === row.date).map(v => v.name).join(' / '));\n    soon.push(row);\n  } else if (done || released.length) {\n    row.date = released.length ? released[0].releaseDate : '';\n    live.push(row);\n  } else if (testable(status) || NEAR.indexOf(pStatus.toLowerCase()) >= 0 || upcoming.length) {\n    row.next = upcoming.length ? upcoming[0].releaseDate : '';\n    row.pStatus = pStatus;\n    other.push(row);\n  }\n}\nlive.sort((a, b) => rank(a.status) - rank(b.status) || (b.date || '').localeCompare(a.date || ''));\nsoon.sort((a, b) => a.date.localeCompare(b.date) || rank(a.status) - rank(b.status));\nother.sort((a, b) => rank(a.status) - rank(b.status));\n\nconst dayLabel = iso => iso === win[0] ? 'today' : (iso === win[1] ? 'tomorrow' : DateTime.fromISO(iso).toFormat('cccc'));\nconst soonDates = Array.from(new Set(soon.map(r => r.date))).sort();\nlet soonTitle = 'Releasing in the next 2 days';\nlet soonShort = 'releasing in the next 2 days';\nif (soonDates.length === 1) {\n  soonTitle = 'Releasing ' + dayLabel(soonDates[0]) + ', ' + dayFmt(soonDates[0]);\n  soonShort = 'releasing ' + dayLabel(soonDates[0]);\n} else if (soonDates.length > 1) {\n  soonTitle = 'Releasing ' + dayFmt(soonDates[0]) + ' – ' + dayFmt(soonDates[soonDates.length - 1]);\n  soonShort = 'releasing by ' + dayFmt(soonDates[soonDates.length - 1]);\n}\nconst multiDay = soonDates.length > 1;\nconst paren = parts => { const t = parts.filter(Boolean).join(', '); return t ? ' (' + t + ')' : ''; };\nconst tag = s => '_' + upFirst(nice(s)) + '_';\n\nconst liveLines = live.map(r => '• ' + link(r.key) + ': ' + r.title + paren([r.product, r.date ? 'live ' + dayFmt(r.date) : '']) + '. ' + tag(r.status));\nconst soonLines = soon.map(r => '• ' + link(r.key) + ': ' + r.title + paren([(r.product + ' ' + r.versions).trim(), multiDay ? dayFmt(r.date) : '']) + '. ' + tag(r.status));\nconst otherLines = other.map(r => '• ' + link(r.key) + ': ' + r.title + paren([r.product, r.next ? 'release ' + dayFmt(r.next) : (r.pStatus ? 'product ' + nice(r.pStatus) : '')]) + '. ' + tag(r.status));\n\nconst rel = {};\nfor (const r of soon) {\n  const label = (r.product + ' ' + r.versions).trim();\n  rel[r.date] = rel[r.date] || [];\n  if (rel[r.date].indexOf(label) < 0) rel[r.date].push(label);\n}\nconst relParts = [];\nif (!soon.length) {\n  relParts.push('nothing in the next 2 days');\n} else {\n  if (!rel[win[0]]) relParts.push('nothing today');\n  for (const d of win) {\n    if (rel[d]) relParts.push((d === win[0] ? 'today' : dayLabel(d) + ' (' + dayFmt(d) + ')') + ': ' + rel[d].join(' and '));\n  }\n}\n\nconst p1 = live.filter(r => testable(r.status)).map(r => link(r.key));\nconst p2 = soon.filter(r => testable(r.status)).map(r => link(r.key));\nconst pl = [];\nif (p1.length) pl.push('Already live, LLR not yet verified: ' + p1.join(', '));\nif (p2.length) pl.push(upFirst(soonShort) + ': ' + p2.join(', '));\n\nconst lines = ['*🧪 i18n QA, ' + today.toFormat('ccc d LLL') + '*', '*Releases:* ' + relParts.join(' · ')];\nif (pl.length) {\n  lines.push('*Priority:*');\n  pl.forEach((t, n) => lines.push((n + 1) + '. ' + t));\n} else {\n  lines.push('*Priority:* nothing ready to test yet');\n}\nlines.push('*Totals:* ' + live.length + ' already live · ' + soon.length + ' ' + soonShort + ' · ' + other.length + ' others');\nif (live.length + soon.length + other.length) lines.push('Full lists in the thread 🧵');\n\nconst replies = [];\nif (live.length) replies.push('*Already live, LLR not yet verified*' + NL + liveLines.join(NL));\nif (soon.length) replies.push('*' + soonTitle + '*' + NL + soonLines.join(NL));\nif (other.length) replies.push('*Others*' + NL + otherLines.join(NL));\n\nreturn [{ json: { main: lines.join(NL), replies: replies } }];"
+        }
+      },
+      {
+        "id": "5fa027b6-d21a-4a1d-84ad-cf182aeb9ba4",
+        "name": "Post summary to #i18n-team",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.7,
+        "position": [
+          1024,
+          128
+        ],
+        "parameters": {
+          "resource": "message",
+          "operation": "post",
+          "authentication": "accessToken",
+          "select": "channel",
+          "channelId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "C094NS33FN0",
+            "cachedResultName": "i18n-team"
+          },
+          "messageType": "text",
+          "text": "={{ $json.main }}",
+          "otherOptions": {
+            "includeLinkToWorkflow": false,
+            "mrkdwn": true,
+            "unfurl_links": false
+          }
+        },
+        "credentials": {
+          "slackApi": {
+            "id": "CXa5wwj5tndNAnHG",
+            "name": "i18n assignment bot"
+          }
+        },
+        "webhookId": "e8355d2f-147e-477b-ac23-005924d15841"
+      },
+      {
+        "id": "be33b5ff-ff94-41d9-b6e0-ea7012533524",
+        "name": "Prepare thread replies",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1248,
+          128
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "const res = $input.first().json;\nconst ts = res.message_timestamp || res.ts || (res.message && res.message.ts);\nconst replies = $('Build QA summary').first().json.replies || [];\nreturn replies.map(t => ({ json: { text: t, thread_ts: ts } }));"
+        }
+      },
+      {
+        "id": "44e40d54-2126-49bb-85f6-f73b6f63fb10",
+        "name": "Post lists in thread",
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.7,
+        "position": [
+          1472,
+          128
+        ],
+        "parameters": {
+          "resource": "message",
+          "operation": "post",
+          "authentication": "accessToken",
+          "select": "channel",
+          "channelId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "C094NS33FN0",
+            "cachedResultName": "i18n-team"
+          },
+          "messageType": "text",
+          "text": "={{ $json.text }}",
+          "otherOptions": {
+            "includeLinkToWorkflow": false,
+            "mrkdwn": true,
+            "unfurl_links": false,
+            "thread_ts": {
+              "replyValues": {
+                "thread_ts": "={{ $json.thread_ts }}",
+                "reply_broadcast": false
+              }
+            }
+          }
+        },
+        "credentials": {
+          "slackApi": {
+            "id": "CXa5wwj5tndNAnHG",
+            "name": "i18n assignment bot"
+          }
+        },
+        "webhookId": "f44ea10b-703b-4a35-b5f3-0272b1a30c91"
+      }
+    ],
+    "connections": {
+      "Weekdays 08:00": {
+        "main": [
+          [
+            {
+              "node": "Search open LLR tickets",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Search open LLR tickets": {
+        "main": [
+          [
+            {
+              "node": "Collect product keys",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Collect product keys": {
+        "main": [
+          [
+            {
+              "node": "Fetch linked product tickets",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch linked product tickets": {
+        "main": [
+          [
+            {
+              "node": "Build QA summary",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build QA summary": {
+        "main": [
+          [
+            {
+              "node": "Post summary to #i18n-team",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Post summary to #i18n-team": {
+        "main": [
+          [
+            {
+              "node": "Prepare thread replies",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare thread replies": {
+        "main": [
+          [
+            {
+              "node": "Post lists in thread",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [
+      {
+        "id": "0eefd12e-c9d8-4537-8da0-4635f49ca3b6",
+        "name": "Read Jira",
+        "nodeIds": [
+          "16e11056-f8e1-4353-9103-5cedc575ca4c",
+          "b89c699d-148c-49f6-b3d7-c4ac82b1d6ca",
+          "ba6386de-ff41-43b9-980b-7cd9925981ea"
+        ],
+        "description": "Open INTERNAT LLR tickets and their linked product tickets with fix versions and release dates"
+      },
+      {
+        "id": "a65587ad-f4e4-443d-a4f8-a7da652eeb65",
+        "name": "Build and post",
+        "nodeIds": [
+          "54330f1b-db43-441a-b3bf-67daec945584",
+          "5fa027b6-d21a-4a1d-84ad-cf182aeb9ba4",
+          "be33b5ff-ff94-41d9-b6e0-ea7012533524",
+          "44e40d54-2126-49bb-85f6-f73b6f63fb10"
+        ],
+        "description": "Sorts LLRs into live / releasing in 2 days / others, posts the summary and the lists in its thread"
+      }
+    ],
+    "authors": "Maria Sica (via MCP)",
+    "name": "Ticket keys as clickable Jira links",
+    "description": "Updated nodes: Build QA summary",
+    "autosaved": false,
+    "createdAt": "2026-11-25T08:05:16.807Z",
+    "updatedAt": "2026-11-25T08:05:16.807Z",
+    "workflowPublishHistory": [
+      {
+        "id": 3354,
+        "workflowId": "jJz62lrDqrqQr3Mi",
+        "versionId": "ec2d0aed-bd9a-41f3-bb65-2d6d0b2c4471",
+        "event": "activated",
+        "userId": "bf7fb03f-fc43-4541-bda8-2dd165965c25",
+        "createdAt": "2026-11-25T08:05:18.427Z"
+      }
+    ]
+  },
+  "parentFolder": null
+}
