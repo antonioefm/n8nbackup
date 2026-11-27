@@ -1,0 +1,249 @@
+{
+  "id": "TOkju9zQxfYx4KkH",
+  "name": "Lokalise find ES string - RealChecker (READ ONLY)",
+  "description": "Read-only: find RealChecker keys whose Spanish text matches a word (currently avanzad / búsqueda / profund), with last-edit date and editor.",
+  "active": false,
+  "activeVersionId": null,
+  "createdAt": "2026-11-20T13:53:41.518Z",
+  "updatedAt": "2026-11-25T07:21:18.259Z",
+  "isArchived": false,
+  "versionId": "e5499804-5f51-4a61-9b48-290181129c57",
+  "versionCounter": 4,
+  "sourceWorkflowId": null,
+  "triggerCount": 0,
+  "nodes": [
+    {
+      "id": "65ceea99-0476-4cfc-a359-e1035ea9e552",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "bdd14c62-c577-4ed9-b0b9-43b2f8fce680",
+      "name": "Languages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.lokalise.com/api2/projects/964775386a3ce03ecca883.03770715/languages?limit=500",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "0b804076-6630-455d-ac20-e7911a52d441",
+      "name": "Pick UK",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const l = ($input.first().json.languages || []).find(function (x) { return String(x.lang_iso).toLowerCase() === 'es'; });\nreturn [{ json: { lang_id: l ? l.lang_id : null, iso: l ? l.lang_iso : null } }];"
+      }
+    },
+    {
+      "id": "f9e28528-07ba-40f5-8974-3776ab3db49d",
+      "name": "UK Translations",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/964775386a3ce03ecca883.03770715/translations?filter_lang_id={{ $json.lang_id }}&limit=5000&page=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "454e3e52-d883-4b30-88c1-07fa1ce1ba96",
+      "name": "Find",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const t = $input.first().json.translations || [];\nconst hits = t.filter(function (x) { return /avanzad|b[uú]squeda|profund/i.test(x.translation || ''); });\nhits.sort(function (a, b) { return String(b.modified_at_timestamp || 0) - String(a.modified_at_timestamp || 0); });\nreturn [{ json: { total: t.length, ids: hits.map(function (h) { return h.key_id; }).join(','), hits: hits.map(function (h) { return { key_id: h.key_id, es: h.translation, modified_at: h.modified_at, by: h.modified_by_email, reviewed: h.is_reviewed }; }) } }];"
+      }
+    },
+    {
+      "id": "cc9d7168-11e6-4a4c-84b5-412341d4f6c1",
+      "name": "Keys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.lokalise.com/api2/projects/964775386a3ce03ecca883.03770715/keys?include_translations=1&filter_translation_lang_ids=640,{{ $('Pick UK').first().json.lang_id }}&limit=500&filter_key_ids={{ $json.ids || '0' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VW7WtJP8PzJMR813",
+          "name": "Lokalise read-only"
+        }
+      }
+    },
+    {
+      "id": "00b2ecef-470f-4c04-966f-423425bd9e11",
+      "name": "Out",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: { keys: ($input.first().json.keys || []).map(function (k) { const o = { id: k.key_id, name: k.key_name.web, tags: k.tags, desc: k.description }; for (const t of (k.translations || [])) { o[t.language_iso] = t.translation; } return o; }) } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Languages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Languages": {
+      "main": [
+        [
+          {
+            "node": "Pick UK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick UK": {
+      "main": [
+        [
+          {
+            "node": "UK Translations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UK Translations": {
+      "main": [
+        [
+          {
+            "node": "Find",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find": {
+      "main": [
+        [
+          {
+            "node": "Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keys": {
+      "main": [
+        [
+          {
+            "node": "Out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": [],
+  "shared": [
+    {
+      "role": "workflow:owner",
+      "workflowId": "TOkju9zQxfYx4KkH",
+      "projectId": "dEuUcqimhxflYu8w",
+      "project": {
+        "id": "dEuUcqimhxflYu8w",
+        "name": "Internationalization ",
+        "type": "team",
+        "icon": {
+          "type": "icon",
+          "value": "layers"
+        },
+        "description": "",
+        "customTelemetryTags": [],
+        "creatorId": null,
+        "createdAt": "2025-09-16T08:57:53.831Z",
+        "updatedAt": "2025-09-16T09:09:05.000Z"
+      },
+      "createdAt": "2026-11-20T13:53:41.521Z",
+      "updatedAt": "2026-11-20T13:53:41.521Z"
+    }
+  ],
+  "activeVersion": null,
+  "parentFolder": null
+}
