@@ -5,10 +5,10 @@
   "active": false,
   "activeVersionId": null,
   "createdAt": "2026-10-12T11:59:08.598Z",
-  "updatedAt": "2026-10-19T20:58:36.593Z",
+  "updatedAt": "2026-11-26T12:57:59.336Z",
   "isArchived": false,
-  "versionId": "5e33d1fd-370b-455d-8433-19c16de18988",
-  "versionCounter": 6,
+  "versionId": "280cb331-afa0-4343-8a93-120b62400dcb",
+  "versionCounter": 7,
   "sourceWorkflowId": null,
   "triggerCount": 0,
   "nodes": [
@@ -1182,7 +1182,7 @@
           "conditions": [
             {
               "id": "c5eb4945-ffd8-4b87-b4ce-847bc205f892",
-              "leftValue": "={{ $json.body.refundedTransactions }}",
+              "leftValue": "={{ $json.refundsThisTicket }}",
               "rightValue": 0,
               "operator": {
                 "type": "array",
@@ -1217,7 +1217,7 @@
           "conditions": [
             {
               "id": "c5eb4945-ffd8-4b87-b4ce-847bc205f892",
-              "leftValue": "={{ $json.body.refundedTransactions }}",
+              "leftValue": "={{ $json.refundsThisTicket }}",
               "rightValue": 1,
               "operator": {
                 "type": "array",
@@ -3419,6 +3419,124 @@
       "parameters": {
         "jsCode": "// Not diverted - hand the classifier output onward so Switch and every branch\n// after it see exactly what they saw before claim detection was added.\nreturn [{ json: $('Ticket classification2').first().json, pairedItem: { item: 0 } }];"
       }
+    },
+    {
+      "id": "db07347d-b098-4ad3-a078-f1e08fab5fd3",
+      "name": "Complaint: search request",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4928,
+        2672
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "3de2485f-a178-4762-9b4e-9c71a2245af4",
+              "name": "requestType",
+              "type": "string",
+              "value": "search"
+            },
+            {
+              "id": "9ab5821c-4e52-4d3a-8cee-f4b0b14e07d8",
+              "name": "email",
+              "type": "string",
+              "value": "={{ $('Aggregate').item.json.data[0].original_ticket_content.user_email }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "1632f8f7-4593-4225-873e-33083ac9a4ac",
+      "name": "Complaint: HMAC",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        5152,
+        2672
+      ],
+      "parameters": {
+        "options": {},
+        "workflowId": {
+          "__rl": true,
+          "cachedResultName": "MyQRCode prod - HMAC",
+          "cachedResultUrl": "/workflow/rZHSL3IeeysUZDdz",
+          "mode": "list",
+          "value": "rZHSL3IeeysUZDdz"
+        },
+        "workflowInputs": {
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true,
+          "mappingMode": "defineBelow",
+          "matchingColumns": [],
+          "schema": [],
+          "value": {}
+        }
+      }
+    },
+    {
+      "id": "768c94ba-d207-452e-97c3-c068688dd66b",
+      "name": "Complaint: bot/search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        5376,
+        2672
+      ],
+      "parameters": {
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "X-Nonce",
+              "value": "={{ $json.nonce }}"
+            },
+            {
+              "name": "X-Key-Id",
+              "value": "={{ $json.keyID }}"
+            },
+            {
+              "name": "X-Signature",
+              "value": "={{ $json.signedString }}"
+            }
+          ]
+        },
+        "jsonBody": "={{ $json.sortedBody }}",
+        "method": "POST",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "sendHeaders": true,
+        "specifyBody": "json",
+        "url": "={{ $(\"Get Project Config\").first().json.payments_api_base_url }}/api/payments/v1/bot/search"
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "b1aa69d7-0c84-49a8-9404-748866f0f218",
+      "name": "Complaint: refunds on this ticket",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5600,
+        2672
+      ],
+      "parameters": {
+        "jsCode": "// Complaint macros (added 2026-11-26): count only the refunds made on this\n// ticket, i.e. refundDate on or after the ticket was created (first comment).\n// refundedTransactions is the customer's whole refund history, so counting all\n// of it told customers with an older refund on another ticket \"we refunded your\n// last two charges\". No creation time or no refundDate -> not counted -> manual.\nconst item = $input.first().json;\nconst refunded = Array.isArray(item.body && item.body.refundedTransactions) ? item.body.refundedTransactions : [];\n\nlet createdAt = null;\ntry {\n  const comments = $('Get ticket comments').first().json.comments || [];\n  const times = comments.map(c => Date.parse(c.created_at)).filter(n => !isNaN(n));\n  if (times.length) createdAt = new Date(Math.min(...times));\n} catch (e) {\n  // comments not available\n}\n\nfunction onOrAfterTicket(refundDate) {\n  if (!refundDate || !createdAt) return false;\n  const s = String(refundDate);\n  if (/^\\d{4}-\\d{2}-\\d{2}$/.test(s)) return s >= createdAt.toISOString().slice(0, 10); // date only\n  const t = Date.parse(s);\n  return !isNaN(t) && t >= createdAt.getTime() - 60 * 1000;\n}\n\nconst refundsThisTicket = refunded.filter(r => onOrAfterTicket(r && r.refundDate));\nreturn [{\n  json: { ...item, ticketCreatedAt: createdAt ? createdAt.toISOString() : null, refundsThisTicket },\n  pairedItem: { item: 0 },\n}];\n"
+      },
+      "notes": "Keeps only refundedTransactions with refundDate on or after the ticket's creation."
     }
   ],
   "connections": {
@@ -3675,7 +3793,7 @@
         ],
         [
           {
-            "node": "Has refunded transactions",
+            "node": "Complaint: search request",
             "type": "main",
             "index": 0
           }
@@ -4345,6 +4463,50 @@
         [
           {
             "node": "Case 6: Evaluate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complaint: search request": {
+      "main": [
+        [
+          {
+            "node": "Complaint: HMAC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complaint: HMAC": {
+      "main": [
+        [
+          {
+            "node": "Complaint: bot/search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complaint: bot/search": {
+      "main": [
+        [
+          {
+            "node": "Complaint: refunds on this ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complaint: refunds on this ticket": {
+      "main": [
+        [
+          {
+            "node": "Has refunded transactions",
             "type": "main",
             "index": 0
           }
